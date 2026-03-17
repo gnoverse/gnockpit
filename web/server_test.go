@@ -1,0 +1,142 @@
+package web
+
+import (
+	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"os/exec"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/gnoverse/gnockpit/node"
+)
+
+func TestHTMLEmbedded(t *testing.T) {
+	data, err := content.ReadFile("index.html")
+	if err != nil {
+		t.Fatal("index.html not embedded:", err)
+	}
+	html := string(data)
+	if !strings.Contains(html, "<title>gnockpit</title>") {
+		t.Error("missing title in index.html")
+	}
+	if !strings.Contains(html, "<script>") {
+		t.Error("missing script tag")
+	}
+	if !strings.Contains(html, "</script>") {
+		t.Error("missing closing script tag")
+	}
+}
+
+func TestJSSyntax(t *testing.T) {
+	// Extract JS from HTML and validate with node --check
+	data, err := content.ReadFile("index.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	html := string(data)
+	start := strings.Index(html, "<script>")
+	end := strings.Index(html, "</script>")
+	if start == -1 || end == -1 {
+		t.Fatal("no script block found")
+	}
+	js := html[start+len("<script>") : end]
+
+	cmd := exec.Command("node", "--check", "--input-type=module")
+	cmd.Stdin = strings.NewReader(js)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("JS syntax error: %s\n%s", err, out)
+	}
+}
+
+func TestIndexHandler(t *testing.T) {
+	c := node.NewClient("http://localhost:1", 1*time.Second)
+	srv := NewServer(c, "127.0.0.1:0", 5*time.Second)
+
+	req := httptest.NewRequest("GET", "/", nil)
+	w := httptest.NewRecorder()
+	srv.handleIndex(w, req)
+
+	if w.Code != 200 {
+		t.Errorf("status = %d, want 200", w.Code)
+	}
+	ct := w.Header().Get("Content-Type")
+	if !strings.Contains(ct, "text/html") {
+		t.Errorf("content-type = %q, want text/html", ct)
+	}
+}
+
+func TestAPIHandler(t *testing.T) {
+	c := node.NewClient("http://localhost:1", 1*time.Second)
+	srv := NewServer(c, "127.0.0.1:0", 5*time.Second)
+
+	// No snapshot yet
+	req := httptest.NewRequest("GET", "/api", nil)
+	w := httptest.NewRecorder()
+	srv.handleAPI(w, req)
+
+	if w.Code != 200 {
+		t.Errorf("status = %d, want 200", w.Code)
+	}
+	body := w.Body.String()
+	if !strings.Contains(body, "no data yet") {
+		t.Errorf("expected 'no data yet', got %q", body)
+	}
+
+	// With snapshot
+	srv.setSnapshot(&node.Snapshot{
+		GenesisSHA: "abc123",
+		Timestamp:  time.Now(),
+	})
+	w = httptest.NewRecorder()
+	srv.handleAPI(w, httptest.NewRequest("GET", "/api", nil))
+	if w.Code != 200 {
+		t.Errorf("status = %d, want 200", w.Code)
+	}
+	var snap node.Snapshot
+	if err := json.Unmarshal(w.Body.Bytes(), &snap); err != nil {
+		t.Fatal("invalid JSON:", err)
+	}
+	if snap.GenesisSHA != "abc123" {
+		t.Errorf("genesis = %q, want abc123", snap.GenesisSHA)
+	}
+}
+
+func TestSSEHandler(t *testing.T) {
+	c := node.NewClient("http://localhost:1", 1*time.Second)
+	srv := NewServer(c, "127.0.0.1:0", 5*time.Second)
+
+	// Pre-populate snapshot
+	srv.setSnapshot(&node.Snapshot{
+		GenesisSHA: "test",
+		Timestamp:  time.Now(),
+	})
+
+	ts := httptest.NewServer(http.HandlerFunc(srv.handleEvents))
+	defer ts.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	req, _ := http.NewRequestWithContext(ctx, "GET", ts.URL, nil)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.Header.Get("Content-Type") != "text/event-stream" {
+		t.Errorf("content-type = %q, want text/event-stream", resp.Header.Get("Content-Type"))
+	}
+
+	// Read first few bytes to verify we get SSE data
+	buf := make([]byte, 512)
+	n, _ := resp.Body.Read(buf)
+	data := string(buf[:n])
+	if !strings.Contains(data, "event:") {
+		t.Errorf("expected SSE event data, got %q", data)
+	}
+}
