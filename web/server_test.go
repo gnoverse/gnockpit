@@ -97,9 +97,46 @@ func TestSystemdBackendNoNameFn(t *testing.T) {
 	}
 }
 
+func TestSystemdBackendUsesCat(t *testing.T) {
+	b := NewSystemdBackend("test.service", nil)
+
+	hasCat := func(args []string) bool {
+		for i, a := range args {
+			if a == "-o" && i+1 < len(args) && args[i+1] == "cat" {
+				return true
+			}
+		}
+		return false
+	}
+	if !hasCat(b.streamArgs()) {
+		t.Errorf("streamArgs() = %v, missing -o cat", b.streamArgs())
+	}
+	if !hasCat(b.fetchArgs(100)) {
+		t.Errorf("fetchArgs(100) = %v, missing -o cat", b.fetchArgs(100))
+	}
+}
+
 func TestDockerBackendInterfaceSatisfied(t *testing.T) {
 	// Compile-time check that DockerBackend implements RuntimeBackend.
 	var _ RuntimeBackend = &DockerBackend{}
+}
+
+
+func TestDockerBackendStreamLogsIncludesSince(t *testing.T) {
+	b := &DockerBackend{ContainerName: "mycontainer"}
+	args := b.streamLogsArgs()
+	hasSince := false
+	for i, a := range args {
+		if a == "--since" && i+1 < len(args) {
+			hasSince = true
+			if args[i+1] != "1m" {
+				t.Errorf("--since value = %q, want %q", args[i+1], "1m")
+			}
+		}
+	}
+	if !hasSince {
+		t.Errorf("streamLogsArgs() = %v, missing --since flag", args)
+	}
 }
 
 func TestHandleLogsNilBackend(t *testing.T) {

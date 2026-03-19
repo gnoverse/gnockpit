@@ -43,8 +43,16 @@ func (b *SystemdBackend) resolvedName() string {
 	return "gnoland.service"
 }
 
+func (b *SystemdBackend) streamArgs() []string {
+	return []string{"-u", b.resolvedName(), "-f", "-o", "cat", "--no-pager"}
+}
+
+func (b *SystemdBackend) fetchArgs(n int) []string {
+	return []string{"-u", b.resolvedName(), "-n", fmt.Sprintf("%d", n), "--no-pager", "-o", "cat"}
+}
+
 func (b *SystemdBackend) StreamLogs(ctx context.Context) (io.ReadCloser, error) {
-	cmd := exec.CommandContext(ctx, "journalctl", "-u", b.resolvedName(), "-f", "-o", "short-iso", "--no-pager")
+	cmd := exec.CommandContext(ctx, "journalctl", b.streamArgs()...)
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		return nil, err
@@ -56,8 +64,7 @@ func (b *SystemdBackend) StreamLogs(ctx context.Context) (io.ReadCloser, error) 
 }
 
 func (b *SystemdBackend) FetchLogs(ctx context.Context, n int) ([]string, error) {
-	out, err := exec.CommandContext(ctx, "journalctl", "-u", b.resolvedName(),
-		"-n", fmt.Sprintf("%d", n), "--no-pager", "-o", "short-iso").Output()
+	out, err := exec.CommandContext(ctx, "journalctl", b.fetchArgs(n)...).Output()
 	if err != nil {
 		return nil, err
 	}
