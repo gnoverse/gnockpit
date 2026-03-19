@@ -102,6 +102,54 @@ func TestDockerBackendInterfaceSatisfied(t *testing.T) {
 	var _ RuntimeBackend = &DockerBackend{}
 }
 
+func TestHandleLogsNilBackend(t *testing.T) {
+	c := node.NewClient("http://localhost:1", 1*time.Second)
+	srv := NewServer(c, "127.0.0.1:0", 5*time.Second)
+	// Backend is nil — should return empty list, not 500
+
+	req := httptest.NewRequest("GET", "/api/logs", nil)
+	w := httptest.NewRecorder()
+	srv.handleLogs(w, req)
+
+	if w.Code != 200 {
+		t.Errorf("status = %d, want 200", w.Code)
+	}
+	var resp map[string]interface{}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatal("invalid JSON:", err)
+	}
+	lines, ok := resp["lines"]
+	if !ok {
+		t.Fatal("missing 'lines' field")
+	}
+	if lines == nil {
+		t.Error("lines should not be nil")
+	}
+}
+
+func TestHandleLogsSanitizesRootPaths(t *testing.T) {
+	c := node.NewClient("http://localhost:1", 1*time.Second)
+	srv := NewServer(c, "127.0.0.1:0", 5*time.Second)
+	srv.Backend = &mockBackend{
+		fetchLines: []string{
+			"2024-01-15T12:34:56Z gnoland[123]: loading /root/gnoland-data/config",
+			"2024-01-15T12:34:56Z gnoland[123]: normal log line",
+		},
+	}
+
+	req := httptest.NewRequest("GET", "/api/logs", nil)
+	w := httptest.NewRecorder()
+	srv.handleLogs(w, req)
+
+	body := w.Body.String()
+	if strings.Contains(body, "/root/") {
+		t.Error("response should not contain /root/ paths")
+	}
+	if !strings.Contains(body, "~/") {
+		t.Error("response should contain ~/ replacement")
+	}
+}
+
 func TestHTMLEmbedded(t *testing.T) {
 	data, err := content.ReadFile("index.html")
 	if err != nil {
