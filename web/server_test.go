@@ -97,6 +97,11 @@ func TestSystemdBackendNoNameFn(t *testing.T) {
 	}
 }
 
+func TestDockerBackendInterfaceSatisfied(t *testing.T) {
+	// Compile-time check that DockerBackend implements RuntimeBackend.
+	var _ RuntimeBackend = &DockerBackend{}
+}
+
 func TestHTMLEmbedded(t *testing.T) {
 	data, err := content.ReadFile("index.html")
 	if err != nil {
