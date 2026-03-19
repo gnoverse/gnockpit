@@ -21,15 +21,16 @@ func main() {
 
 func run() error {
 	var (
-		rpc         = flag.String("rpc", "http://127.0.0.1:26657", "RPC endpoint URL")
-		port        = flag.Int("port", 8080, "web server port")
-		addr        = flag.String("addr", "0.0.0.0", "web server bind address")
-		interval    = flag.Duration("interval", 5*time.Second, "dashboard refresh interval")
-		verbose     = flag.Bool("v", false, "verbose HTTP logging")
-		dataDir     = flag.String("data-dir", "", "gnoland data directory (auto-detected if empty)")
-		genesis     = flag.String("genesis", "", "path to genesis.json (auto-detected if empty)")
-		names       = flag.String("names", "/tmp/gnockpit-names.json", "path to persistent name registry")
-		service     = flag.String("service", "", "systemd service name (auto-detected from chain-id)")
+		rpc       = flag.String("rpc", "http://127.0.0.1:26657", "RPC endpoint URL")
+		port      = flag.Int("port", 8080, "web server port")
+		addr      = flag.String("addr", "0.0.0.0", "web server bind address")
+		interval  = flag.Duration("interval", 5*time.Second, "dashboard refresh interval")
+		verbose   = flag.Bool("v", false, "verbose HTTP logging")
+		dataDir   = flag.String("data-dir", "", "gnoland data directory (auto-detected if empty)")
+		genesis   = flag.String("genesis", "", "path to genesis.json (auto-detected if empty)")
+		names     = flag.String("names", "/tmp/gnockpit-names.json", "path to persistent name registry")
+		service   = flag.String("service", "", "systemd service name (auto-detected from chain-id)")
+		container = flag.String("container", "", "docker container name (mutually exclusive with -service)")
 	)
 	flag.Parse()
 
@@ -55,8 +56,33 @@ func run() error {
 	srv := web.NewServer(c, listenAddr, *interval)
 	srv.DataDir = findDataDir(*dataDir, *genesis)
 	srv.GenesisPath = findGenesis(*genesis, *dataDir)
-	srv.ServiceName = *service
+
+	if *service != "" && *container != "" {
+		return fmt.Errorf("-service and -container are mutually exclusive")
+	}
+	srv.Backend = buildBackend(*service, *container, srv)
+
 	return srv.Run(ctx)
+}
+
+// buildBackend constructs the appropriate RuntimeBackend based on CLI flags.
+// If neither flag is set, a SystemdBackend with lazy auto-detection from the chain-id is used.
+func buildBackend(service, container string, srv *web.Server) web.RuntimeBackend {
+	if container != "" {
+		return &web.DockerBackend{ContainerName: container}
+	}
+	// SystemdBackend: static name if -service given, lazy from chain-id otherwise.
+	var nameFn func() string
+	if service == "" {
+		nameFn = func() string {
+			snap := srv.GetSnapshot()
+			if snap != nil && snap.Status != nil && snap.Status.NodeInfo.Network != "" {
+				return snap.Status.NodeInfo.Network + ".service"
+			}
+			return ""
+		}
+	}
+	return web.NewSystemdBackend(service, nameFn)
 }
 
 func findGenesis(genesisPath, dataDir string) string {

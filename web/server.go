@@ -177,6 +177,11 @@ func (s *Server) setSnapshot(snap *node.Snapshot) {
 	s.mu.Unlock()
 }
 
+// GetSnapshot returns the most recent data snapshot. Used by main to construct backends.
+func (s *Server) GetSnapshot() *node.Snapshot {
+	return s.getSnapshot()
+}
+
 // --- Snapshot data building ---
 
 type checkData struct {
