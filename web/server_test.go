@@ -50,6 +50,53 @@ func TestBackendInterfaceSatisfied(t *testing.T) {
 	var _ RuntimeBackend = &mockBackend{}
 }
 
+func TestSystemdBackendNameCachesOnSuccess(t *testing.T) {
+	calls := 0
+	b := NewSystemdBackend("", func() string {
+		calls++
+		if calls == 1 {
+			return "" // not yet known
+		}
+		return "mychain.service"
+	})
+
+	// First call: nameFn returns "", falls back to "gnoland.service" without caching
+	name := b.resolvedName()
+	if name != "gnoland.service" {
+		t.Errorf("want gnoland.service fallback, got %q", name)
+	}
+
+	// Second call: nameFn returns a value, should cache it
+	name = b.resolvedName()
+	if name != "mychain.service" {
+		t.Errorf("want mychain.service, got %q", name)
+	}
+
+	// Third call: should use cached value without calling nameFn again
+	name = b.resolvedName()
+	if name != "mychain.service" {
+		t.Errorf("want mychain.service cached, got %q", name)
+	}
+	if calls != 2 {
+		t.Errorf("nameFn called %d times, want 2 (not called after cache hit)", calls)
+	}
+}
+
+func TestSystemdBackendStaticName(t *testing.T) {
+	b := NewSystemdBackend("explicit.service", nil)
+	if b.resolvedName() != "explicit.service" {
+		t.Errorf("want explicit.service, got %q", b.resolvedName())
+	}
+}
+
+func TestSystemdBackendNoNameFn(t *testing.T) {
+	// nil nameFn with no static name always falls back to gnoland.service
+	b := NewSystemdBackend("", nil)
+	if b.resolvedName() != "gnoland.service" {
+		t.Errorf("want gnoland.service, got %q", b.resolvedName())
+	}
+}
+
 func TestHTMLEmbedded(t *testing.T) {
 	data, err := content.ReadFile("index.html")
 	if err != nil {
