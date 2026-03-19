@@ -144,6 +144,7 @@ type SystemInfo struct {
 	GitBranch      string `json:"git_branch,omitempty"`
 	GitSHA         string `json:"git_sha,omitempty"`
 	BinaryHash     string `json:"binary_hash,omitempty"`
+	Seeds          string `json:"seeds,omitempty"`
 }
 
 // BlockInfo holds signing info for a recent block.

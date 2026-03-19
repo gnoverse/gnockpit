@@ -182,7 +182,8 @@ a.rpc-link.blue { color: var(--blue); }
   <h2 data-section="connect">Connect</h2>
   <div class="section-body"><div style="font-size:13px">
     <div class="kv">
-      <span class="k">seed</span><span class="v" id="c-seed" style="cursor:pointer;user-select:all" title="Click to copy" onclick="copyText(this)">-</span>
+      <span class="k">our p2p</span><span class="v" id="c-seed" style="cursor:pointer;user-select:all" title="Click to copy" onclick="copyText(this)">-</span>
+      <span class="k">seeds</span><span class="v" id="c-seeds" style="font-size:11px">-</span>
       <span class="k">genesis sha256</span><span class="v hash" id="c-genesis" style="cursor:pointer;user-select:all" title="Click to copy" onclick="copyText(this)">-</span>
     </div>
   </div></div>
@@ -245,8 +246,8 @@ a.rpc-link.blue { color: var(--blue); }
 </div>
 
 <div class="card">
-  <h2 data-section="logs" style="display:inline">Logs</h2>
-  <div class="section-body"><div style="float:right;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+  <h2 data-section="logs">Logs</h2>
+  <div class="section-body"><div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:8px">
     <span id="logs-status" style="font-size:11px;color:var(--fg2)"></span>
     <select id="logs-level" style="background:var(--bg);color:var(--fg);border:1px solid var(--border);border-radius:4px;padding:1px 4px;font-size:11px;font-family:inherit"><option value="DEBUG">&ge;DEBUG</option><option value="INFO" selected>&ge;INFO</option><option value="WARN">&ge;WARN</option><option value="ERROR">&ge;ERROR</option></select>
     <input id="logs-filter" type="text" placeholder="filter..." style="background:var(--bg);color:var(--fg);border:1px solid var(--border);border-radius:4px;padding:1px 6px;font-size:11px;font-family:inherit;width:100px">
@@ -909,8 +910,70 @@ function renderNetwork() {
     }
   }
 
+  // Check if "us" was shown in the validator list
+  var weAreInValset = false;
+  if (votes && votes.validators) {
+    for (var vi = 0; vi < votes.validators.length; vi++) {
+      if (votes.validators[vi].name && votes.validators[vi].name.indexOf('(us)') !== -1) {
+        weAreInValset = true;
+        break;
+      }
+    }
+  }
+
+  // If we're NOT in the validator set, show ourselves as "this node" row
+  if (!weAreInValset && lastStatus && lastStatus.node_info) {
+    var thisSep = document.createElement('tr');
+    thisSep.className = 'sep';
+    var thisSepTd = document.createElement('td');
+    thisSepTd.colSpan = 7;
+    thisSepTd.textContent = 'this node (full node)';
+    thisSep.appendChild(thisSepTd);
+    tbody.appendChild(thisSep);
+
+    var thisTr = document.createElement('tr');
+    var thisName = mkEl('td', null, null);
+    thisName.appendChild(document.createTextNode(lastStatus.node_info.moniker || 'unknown'));
+    thisName.appendChild(mkEl('span', ' (this host)', 'this-host'));
+    thisTr.appendChild(thisName);
+    var thisAddr = lastStatus.validator_info ? lastStatus.validator_info.address : '';
+    thisTr.appendChild(createCell({ text: thisAddr ? shortAddr(thisAddr) : '-', style: 'font-size:11px;color:var(--fg2)', popover: thisAddr }));
+    var thisIP = '';
+    if (lastStatus.node_info.net_address) {
+      var na = lastStatus.node_info.net_address;
+      var atIdx = na.indexOf('@');
+      if (atIdx > 0) { var hp = na.substring(atIdx + 1); var ci = hp.lastIndexOf(':'); thisIP = ci > 0 ? hp.substring(0, ci) : hp; }
+    }
+    thisTr.appendChild(createCell({ text: thisIP }));
+    // Consensus
+    var thisCons = document.createElement('td');
+    thisCons.style.fontSize = '12px';
+    if (votes) {
+      thisCons.appendChild(mkEl('span', votes.height, 'ok'));
+      thisCons.appendChild(document.createTextNode('/' + votes.round + '/' + votes.step));
+    }
+    thisTr.appendChild(thisCons);
+    thisTr.appendChild(createCell({ text: '-' })); // Sign%
+    thisTr.appendChild(createCell({ text: '-' })); // Speed
+    // Status
+    var thisStatus = document.createElement('td');
+    thisStatus.style.cssText = 'font-size:12px;white-space:nowrap';
+    var thisDbtn = mkEl('button', '\ud83d\udca1', 'diag-btn');
+    thisDbtn.style.opacity = '0.2'; thisDbtn.style.cursor = 'default'; thisDbtn.disabled = true;
+    thisStatus.appendChild(thisDbtn);
+    var thisBadge = mkEl('span', 'OK', null);
+    thisBadge.style.cssText = 'display:inline-block;width:24px;text-align:center;font-weight:bold;margin:0 4px;color:var(--green)';
+    thisStatus.appendChild(thisBadge);
+    var thisTag = mkEl('span', 'local', null);
+    thisTag.style.cssText = 'padding:1px 5px;border-radius:3px;font-size:10px;display:inline-block;background:rgba(88,166,255,0.15);color:var(--blue)';
+    thisStatus.appendChild(thisTag);
+    thisTr.appendChild(thisStatus);
+    tbody.appendChild(thisTr);
+  }
+
   // Update header with total count
   var totalNodes = (votes && votes.validators ? votes.validators.length : 0);
+  if (!weAreInValset) totalNodes++; // count ourselves
   var otherPeers = [];
   if (peers) {
     for (var i = 0; i < peers.length; i++) {
@@ -1280,6 +1343,7 @@ function pctColor(pct, warnAt, critAt) {
 
 function handleStatus(d) {
     setConnectionStatus('green', 'connected');
+    var hadStatus = !!lastStatus;
     lastStatus = d;
     if (d.sync_info) {
       var h = d.sync_info.latest_block_height;
@@ -1302,7 +1366,7 @@ function handleStatus(d) {
 
       var titleNet = $('d-network') ? $('d-network').textContent : '';
       if (titleNet && titleNet !== '-') {
-        document.title = 'gnockpit \u00b7 ' + titleNet + ' \u00b7 block ' + h;
+        document.title = titleNet + ' \u2014 gnockpit \u00b7 block ' + h;
       }
 
       var bt = d.sync_info.latest_block_time || '';
@@ -1352,8 +1416,8 @@ function handleStatus(d) {
       }
       nidEl.className = 'v';
       if (network !== '-') {
-        $('page-title').textContent = 'gnockpit \u00b7 ' + network;
-        document.title = 'gnockpit \u00b7 ' + network;
+        $('page-title').textContent = network + ' \u2014 gnockpit';
+        document.title = network + ' \u2014 gnockpit';
       }
       setText('d-p2p', netAddr || '-');
       setText('d-version', d.node_info.version || '-');
@@ -1378,6 +1442,8 @@ function handleStatus(d) {
       if (d.validator_info.pub_key && d.validator_info.pub_key.value)
         setText('d-pubkey', d.validator_info.pub_key.value);
     }
+    // Re-render network if this is the first status (so "this node" row appears)
+    if (!hadStatus && lastPeers) renderNetwork();
 }
 
 function handleSigning(d) {
@@ -1439,6 +1505,11 @@ function handleChecks(d) {
     if (lastStatus && lastStatus.node_info) {
       var na = lastStatus.node_info.net_address || '';
       setText('c-seed', na || '-');
+    }
+    if (d.system && d.system.seeds) {
+      setText('c-seeds', d.system.seeds);
+    } else {
+      setText('c-seeds', 'none configured');
     }
     var ahEl = $('d-apphash');
     if (d.apphash_b2 && d.apphash_b2 !== '') {
@@ -1515,47 +1586,62 @@ function handleVotes(d) {
     renderNetwork();
 }
 
+var logQueue = [];
+var logFlushScheduled = false;
+
 function handleLogLine(line) {
     if (!lastLogLines) lastLogLines = [];
     lastLogLines.push(line);
-    // Keep only the last 200 lines
     if (lastLogLines.length > 200) lastLogLines.shift();
-    appendLogLine(line);
+    if (logsPaused) return;
+    logQueue.push(line);
+    if (!logFlushScheduled) {
+      logFlushScheduled = true;
+      requestAnimationFrame(flushLogQueue);
+    }
 }
 
-function appendLogLine(raw) {
-    if (logsPaused) return;
+function flushLogQueue() {
+    logFlushScheduled = false;
     var body = $('logs-body');
     var textFilter = (logsText || $('logs-filter').value).toLowerCase();
-    if (textFilter && raw.toLowerCase().indexOf(textFilter) === -1) return;
-    var p = parseLine(raw);
-    if (p.level && (LOG_LEVELS[p.level] || 0) < (LOG_LEVELS[logsMinLevel] || 0)) return;
-    var div = document.createElement('div');
-    div.className = 'log-line'; if (p.level) div.setAttribute('data-level', p.level);
-    var left = mkEl('span', null, 'log-left');
-    if (p.time) {
-      left.appendChild(mkEl('span', p.time + ' ', 'log-time'));
-      left.appendChild(mkEl('span', p.level, 'log-' + p.level.toLowerCase()));
-    }
-    div.appendChild(left);
-    var right = mkEl('span', null, 'log-right');
-    right.appendChild(mkEl('span', p.msg, 'log-msg'));
-    if (p.json) {
-      try {
-        var obj = JSON.parse(p.json);
-        var jSpan = mkEl('span', null, 'log-json' + (logsIndent ? ' indented' : ''));
-        colorizeVal(obj, jSpan, logsIndent ? 0 : -1);
-        right.appendChild(jSpan);
-      } catch(e) {
-        right.appendChild(mkEl('span', p.json, 'log-json'));
+    var frag = document.createDocumentFragment();
+    var count = 0;
+    for (var qi = 0; qi < logQueue.length; qi++) {
+      var raw = logQueue[qi];
+      if (textFilter && raw.toLowerCase().indexOf(textFilter) === -1) continue;
+      var p = parseLine(raw);
+      if (p.level && (LOG_LEVELS[p.level] || 0) < (LOG_LEVELS[logsMinLevel] || 0)) continue;
+      var div = document.createElement('div');
+      div.className = 'log-line'; if (p.level) div.setAttribute('data-level', p.level);
+      var left = mkEl('span', null, 'log-left');
+      if (p.time) {
+        left.appendChild(mkEl('span', p.time + ' ', 'log-time'));
+        left.appendChild(mkEl('span', p.level, 'log-' + p.level.toLowerCase()));
       }
+      div.appendChild(left);
+      var right = mkEl('span', null, 'log-right');
+      right.appendChild(mkEl('span', p.msg, 'log-msg'));
+      if (p.json) {
+        try {
+          var obj = JSON.parse(p.json);
+          var jSpan = mkEl('span', null, 'log-json' + (logsIndent ? ' indented' : ''));
+          colorizeVal(obj, jSpan, logsIndent ? 0 : -1);
+          right.appendChild(jSpan);
+        } catch(e) {
+          right.appendChild(mkEl('span', p.json, 'log-json'));
+        }
+      }
+      div.appendChild(right);
+      frag.appendChild(div);
+      count++;
     }
-    div.appendChild(right);
-    body.appendChild(div);
-    // Remove oldest if exceeding 200 visible lines
-    while (body.children.length > 200) body.removeChild(body.firstChild);
-    // Auto-scroll
-    body.scrollTop = body.scrollHeight;
+    logQueue = [];
+    if (count > 0) {
+      body.appendChild(frag);
+      while (body.children.length > 200) body.removeChild(body.firstChild);
+      body.scrollTop = body.scrollHeight;
+    }
 }
 
 function connect() {
@@ -1958,6 +2044,7 @@ setInterval(function() {
   }
 }, 1000);
 </script>
-<div style="text-align:center;padding:16px;font-size:11px;color:var(--fg2)"><a href="https://github.com/gnoverse/gnockpit" target="_blank" style="color:var(--fg2);text-decoration:none">gnockpit</a> — gno.land validator cockpit</div>
+<div style="text-align:center;padding:16px;font-size:11px;color:var(--fg2)"><a href="https://github.com/gnoverse/gnockpit" target="_blank" style="color:var(--fg2);text-decoration:none">gnockpit</a> <span id="gnockpit-version"></span></div>
+<script>fetch('/api/version').then(function(r){return r.json()}).then(function(d){if(d.version)document.getElementById('gnockpit-version').textContent=d.version}).catch(function(){})</script>
 </body>
 </html>

@@ -23,6 +23,9 @@ import (
 //go:embed index.html
 var content embed.FS
 
+// Version is set at build time via -ldflags or computed at startup.
+var Version = ""
+
 const (
 	rpcPort     = "26657"
 	peerTimeout = 3 * time.Second
@@ -511,6 +514,23 @@ func (s *Server) collectSystemInfo(ctx context.Context) *node.SystemInfo {
 		}
 	}
 
+	// Seeds from config
+	if dataDir := s.dataDir(); dataDir != "" {
+		if data, err := os.ReadFile(dataDir + "/config/config.toml"); err == nil {
+			for _, line := range strings.Split(string(data), "\n") {
+				line = strings.TrimSpace(line)
+				if strings.HasPrefix(line, "seeds") && strings.Contains(line, "=") {
+					val := strings.SplitN(line, "=", 2)[1]
+					val = strings.Trim(strings.TrimSpace(val), "\"")
+					if val != "" {
+						si.Seeds = val
+					}
+					break
+				}
+			}
+		}
+	}
+
 	return si
 }
 
@@ -781,7 +801,6 @@ func (s *Server) logStreamLoop(ctx context.Context) {
 		for scanner.Scan() {
 			line := scanner.Text()
 			s.broadcastWS(wsMsg{Type: "log", Data: strings.ReplaceAll(line, "/root/", "~/")})
-			// Parse peer activity from log lines for real-time "last seen"
 			s.parseLogEvent(line)
 		}
 
@@ -1195,12 +1214,21 @@ func (s *Server) gnolandBinary() string {
 
 func (s *Server) Run(ctx context.Context) error {
 	s.genesisSHA = s.computeGenesisSHA()
+	if Version == "" {
+		if out, err := exec.Command("git", "describe", "--tags", "--always", "--dirty").Output(); err == nil {
+			Version = strings.TrimSpace(string(out))
+		}
+	}
 	go s.publishLoop(ctx)
 	go s.logStreamLoop(ctx)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", s.handleIndex)
 	mux.HandleFunc("/api", s.handleAPI)
+	mux.HandleFunc("/api/version", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]string{"version": Version})
+	})
 	mux.HandleFunc("/api/logs", s.handleLogs)
 	mux.HandleFunc("/api/diagnose", s.handleDiagnose)
 	mux.HandleFunc("/api/diagnoses", s.handleDiagnoseList)
