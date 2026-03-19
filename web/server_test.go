@@ -3,6 +3,7 @@ package web
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os/exec"
@@ -12,6 +13,42 @@ import (
 
 	"github.com/gnoverse/gnockpit/node"
 )
+
+// mockBackend is a test double for RuntimeBackend.
+type mockBackend struct {
+	streamLines []string
+	fetchLines  []string
+	uptime      time.Duration
+	memKB       int
+	streamErr   error
+	fetchErr    error
+}
+
+func (m *mockBackend) StreamLogs(ctx context.Context) (io.ReadCloser, error) {
+	if m.streamErr != nil {
+		return nil, m.streamErr
+	}
+	return io.NopCloser(strings.NewReader(strings.Join(m.streamLines, "\n"))), nil
+}
+
+func (m *mockBackend) FetchLogs(ctx context.Context, n int) ([]string, error) {
+	if m.fetchErr != nil {
+		return nil, m.fetchErr
+	}
+	return m.fetchLines, nil
+}
+
+func (m *mockBackend) ServiceUptime(ctx context.Context) (time.Duration, error) {
+	return m.uptime, nil
+}
+
+func (m *mockBackend) ProcessMemory(ctx context.Context) (int, error) {
+	return m.memKB, nil
+}
+
+func TestBackendInterfaceSatisfied(t *testing.T) {
+	var _ RuntimeBackend = &mockBackend{}
+}
 
 func TestHTMLEmbedded(t *testing.T) {
 	data, err := content.ReadFile("index.html")
