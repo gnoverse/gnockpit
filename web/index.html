@@ -1490,7 +1490,20 @@ function handleSigning(d) {
         box.appendChild(hSpan);
         box.appendChild(sSpan);
         var tip = '#' + b.height + ' \u2014 ' + b.signers + '/' + b.total + ' signed';
-        if (b.missing && b.missing.length > 0) tip += '\nMissing: ' + b.missing.join(', ');
+        if (b.time) {
+          var d = new Date(b.time);
+          var pad = function(n) { return n < 10 ? '0' + n : '' + n; };
+          tip += '\nTime: ' + d.getUTCFullYear() + '-' + pad(d.getUTCMonth()+1) + '-' + pad(d.getUTCDate()) +
+                 ' ' + pad(d.getUTCHours()) + ':' + pad(d.getUTCMinutes()) + ':' + pad(d.getUTCSeconds()) + ' UTC';
+        }
+        if (b.block_ms !== 0) tip += '\nBlock time: ' + b.block_ms + 'ms';
+        if (b.missing && b.missing.length > 0) {
+          tip += '\nMissing:';
+          for (var j = 0; j < b.missing.length; j++) {
+            var m = b.missing[j];
+            tip += '\n  ' + (m.name ? m.name + ' (' + m.address + ')' : m.address);
+          }
+        }
         box.setAttribute('data-popover', tip);
         body.appendChild(box);
       }
