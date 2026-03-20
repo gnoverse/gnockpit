@@ -117,8 +117,11 @@ func (c *Client) GetNetInfo(ctx context.Context) ([]Peer, error) {
 		NPeers string `json:"n_peers"`
 		Peers  []struct {
 			NodeInfo struct {
-				Moniker string `json:"moniker"`
-				ID      string `json:"id"`
+				Moniker    string `json:"moniker"`
+				ID         string `json:"id"`
+				Version    string `json:"version"`
+				Software   string `json:"software"`
+				NetAddress string `json:"net_address"`
 			} `json:"node_info"`
 			RemoteIP string `json:"remote_ip"`
 		} `json:"peers"`
@@ -132,6 +135,7 @@ func (c *Client) GetNetInfo(ctx context.Context) ([]Peer, error) {
 			Moniker:  p.NodeInfo.Moniker,
 			RemoteIP: p.RemoteIP,
 			NodeID:   p.NodeInfo.ID,
+			Version:  p.NodeInfo.Version,
 		}
 	}
 	return peers, nil

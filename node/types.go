@@ -38,6 +38,7 @@ type Peer struct {
 	Moniker    string `json:"moniker"`
 	RemoteIP   string `json:"remote_ip"`
 	NodeID     string `json:"node_id"`
+	Version    string `json:"version,omitempty"`     // software version from net_info
 	P2PAddress string `json:"p2p_address,omitempty"` // nodeID@ip:port
 	// Populated by network/consensus queries
 	ValAddress     string `json:"val_address,omitempty"` // validator address if known
