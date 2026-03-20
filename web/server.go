@@ -260,8 +260,13 @@ func (s *Server) buildSnapshotMsg(snap *node.Snapshot) wsMsg {
 // --- HTTP Handlers ---
 
 func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
+	// Redirect bare "/" to "/?v=<hash>" to bust aggressive browser caches.
 	if r.URL.Path != "/" {
 		http.NotFound(w, r)
+		return
+	}
+	if r.URL.Query().Get("v") != Version && Version != "" {
+		http.Redirect(w, r, "/?v="+Version, http.StatusFound)
 		return
 	}
 	data, err := content.ReadFile("index.html")
