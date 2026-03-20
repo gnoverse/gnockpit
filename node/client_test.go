@@ -228,6 +228,80 @@ func TestGetBlockAppHash(t *testing.T) {
 	}
 }
 
+func TestGetSigningStatsMissingValidators(t *testing.T) {
+	const (
+		addr1 = "g1uhv7wr7nku89se3t7v8fpquc7n5sf8rfkywxpc" // known name
+		addr2 = "g1vta7dwp4guuhkfzksenfcheky4xf9hue8mgne4" // unknown
+		addr3 = "g1manfred0000000000000000000000000000000a" // known name, will sign
+	)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/validators":
+			fmt.Fprintf(w, `{"jsonrpc":"2.0","result":{"validators":[
+				{"address":%q,"pub_key":{"type":"ed25519","value":"AA"},"voting_power":"1"},
+				{"address":%q,"pub_key":{"type":"ed25519","value":"BB"},"voting_power":"1"},
+				{"address":%q,"pub_key":{"type":"ed25519","value":"CC"},"voting_power":"1"}
+			]}}`, addr1, addr2, addr3)
+		default: // /block?height=2
+			fmt.Fprintf(w, `{"jsonrpc":"2.0","result":{"block_meta":{"header":{
+				"height":"2","time":"2026-03-20T14:32:01.123456789Z","proposer_address":%q
+			}},"block":{"last_commit":{"precommits":[
+				{"validator_address":%q},
+				null,
+				null
+			]}}}}`, addr3, addr3)
+		}
+	}))
+	defer srv.Close()
+
+	c := NewClient(srv.URL, 5*time.Second)
+	c.Names.Register(addr1, "validator-one")
+	c.Names.Register(addr3, "validator-three")
+
+	stats, err := c.GetSigningStats(context.Background(), 2, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(stats.RecentBlocks) != 1 {
+		t.Fatalf("got %d blocks, want 1", len(stats.RecentBlocks))
+	}
+	b := stats.RecentBlocks[0]
+	if b.Signers != 1 {
+		t.Errorf("signers = %d, want 1", b.Signers)
+	}
+	if len(b.Missing) != 2 {
+		t.Fatalf("len(missing) = %d, want 2", len(b.Missing))
+	}
+
+	// Build a map for order-independent assertions
+	byAddr := map[string]MissingValidator{}
+	for _, m := range b.Missing {
+		byAddr[m.Address] = m
+	}
+
+	m1, ok := byAddr[addr1]
+	if !ok {
+		t.Fatalf("addr1 not in missing")
+	}
+	if m1.Name != "validator-one" {
+		t.Errorf("m1.Name = %q, want validator-one", m1.Name)
+	}
+	if m1.Address != addr1 {
+		t.Errorf("m1.Address = %q, want %s", m1.Address, addr1)
+	}
+
+	m2, ok := byAddr[addr2]
+	if !ok {
+		t.Fatalf("addr2 not in missing")
+	}
+	if m2.Name != "" {
+		t.Errorf("m2.Name = %q, want empty (unknown validator)", m2.Name)
+	}
+	if m2.Address != addr2 {
+		t.Errorf("m2.Address = %q, want %s", m2.Address, addr2)
+	}
+}
+
 func TestVerboseLogging(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprint(w, `{"jsonrpc":"2.0","result":{"node_info":{},"sync_info":{},"validator_info":{}}}`)

@@ -148,15 +148,21 @@ type SystemInfo struct {
 	Seeds          string `json:"seeds,omitempty"`
 }
 
+// MissingValidator identifies a validator that did not sign a block.
+type MissingValidator struct {
+	Name    string `json:"name"`    // moniker, or empty if unknown
+	Address string `json:"address"` // full bech32 address
+}
+
 // BlockInfo holds signing info for a recent block.
 type BlockInfo struct {
-	Height   string   `json:"height"`
-	Time     string   `json:"time"`
-	Signers  int      `json:"signers"`
-	Total    int      `json:"total"`
-	Missing  []string `json:"missing,omitempty"` // validator names that didn't sign
-	Proposer string   `json:"proposer"`          // proposer name
-	BlockMs  int      `json:"block_ms"`          // time since previous block in ms
+	Height   string             `json:"height"`
+	Time     string             `json:"time"`
+	Signers  int                `json:"signers"`
+	Total    int                `json:"total"`
+	Missing  []MissingValidator `json:"missing,omitempty"`
+	Proposer string             `json:"proposer"`          // proposer name
+	BlockMs  int                `json:"block_ms"`          // time since previous block in ms; 0 for oldest block in window
 }
 
 // ValidatorPerf tracks per-validator performance metrics.

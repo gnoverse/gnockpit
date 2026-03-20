@@ -279,13 +279,13 @@ func (c *Client) GetSigningStats(ctx context.Context, currentHeight int, window 
 		bi.Signers = len(signed)
 		for addr := range valAddrs {
 			if !signed[addr] {
-				name := addr[:12] + "..."
+				mv := MissingValidator{Address: addr}
 				if c.Names != nil {
-					if n := c.Names.Name(addr); n != "" {
-						name = n
+					if n := c.Names.Name(addr); n != addr {
+						mv.Name = n
 					}
 				}
-				bi.Missing = append(bi.Missing, name)
+				bi.Missing = append(bi.Missing, mv)
 			}
 		}
 		stats.RecentBlocks = append(stats.RecentBlocks, bi)
