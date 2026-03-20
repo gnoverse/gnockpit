@@ -1491,10 +1491,10 @@ function handleSigning(d) {
         box.appendChild(sSpan);
         var tip = '#' + b.height + ' \u2014 ' + b.signers + '/' + b.total + ' signed';
         if (b.time) {
-          var d = new Date(b.time);
+          var dt = new Date(b.time);
           var pad = function(n) { return n < 10 ? '0' + n : '' + n; };
-          tip += '\nTime: ' + d.getUTCFullYear() + '-' + pad(d.getUTCMonth()+1) + '-' + pad(d.getUTCDate()) +
-                 ' ' + pad(d.getUTCHours()) + ':' + pad(d.getUTCMinutes()) + ':' + pad(d.getUTCSeconds()) + ' UTC';
+          tip += '\nTime: ' + dt.getUTCFullYear() + '-' + pad(dt.getUTCMonth()+1) + '-' + pad(dt.getUTCDate()) +
+                 ' ' + pad(dt.getUTCHours()) + ':' + pad(dt.getUTCMinutes()) + ':' + pad(dt.getUTCSeconds()) + ' UTC';
         }
         if (b.block_ms !== 0) tip += '\nBlock time: ' + b.block_ms + 'ms';
         if (b.missing && b.missing.length > 0) {
