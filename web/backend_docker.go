@@ -66,6 +66,22 @@ func (b *DockerBackend) ServiceUptime(ctx context.Context) (time.Duration, error
 	return time.Since(t), nil
 }
 
+func (b *DockerBackend) binaryHashArgs() []string {
+	return []string{"exec", b.ContainerName, "sha256sum", "/usr/local/bin/gnoland"}
+}
+
+func (b *DockerBackend) BinaryHash(ctx context.Context) (string, error) {
+	out, err := exec.CommandContext(ctx, "docker", b.binaryHashArgs()...).Output()
+	if err != nil {
+		return "", err
+	}
+	parts := strings.Fields(string(out))
+	if len(parts) == 0 {
+		return "", fmt.Errorf("unexpected sha256sum output: %q", out)
+	}
+	return parts[0][:12], nil
+}
+
 func (b *DockerBackend) ProcessMemory(ctx context.Context) (int, error) {
 	out, err := exec.CommandContext(ctx, "docker", "inspect", b.ContainerName,
 		"--format", "{{.State.Pid}}").Output()

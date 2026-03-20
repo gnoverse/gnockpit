@@ -16,4 +16,6 @@ type RuntimeBackend interface {
 	ServiceUptime(ctx context.Context) (time.Duration, error)
 	// ProcessMemory returns the resident set size of the gnoland process in KB. Returns 0 if unknown.
 	ProcessMemory(ctx context.Context) (int, error)
+	// BinaryHash returns the first 12 hex chars of the SHA256 of the gnoland binary. Returns "" if unavailable.
+	BinaryHash(ctx context.Context) (string, error)
 }

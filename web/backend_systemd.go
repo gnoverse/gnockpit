@@ -85,6 +85,27 @@ func (b *SystemdBackend) ServiceUptime(ctx context.Context) (time.Duration, erro
 	return time.Since(t), nil
 }
 
+func (b *SystemdBackend) BinaryHash(ctx context.Context) (string, error) {
+	bin := ""
+	if _, err := os.Stat("/usr/local/bin/gnoland"); err == nil {
+		bin = "/usr/local/bin/gnoland"
+	} else if out, err := exec.Command("which", "gnoland").Output(); err == nil {
+		bin = strings.TrimSpace(string(out))
+	}
+	if bin == "" {
+		return "", fmt.Errorf("gnoland binary not found")
+	}
+	out, err := exec.CommandContext(ctx, "sha256sum", bin).Output()
+	if err != nil {
+		return "", err
+	}
+	parts := strings.Fields(string(out))
+	if len(parts) == 0 {
+		return "", fmt.Errorf("unexpected sha256sum output: %q", out)
+	}
+	return parts[0][:12], nil
+}
+
 func (b *SystemdBackend) ProcessMemory(ctx context.Context) (int, error) {
 	out, err := exec.CommandContext(ctx, "systemctl", "show", b.resolvedName(),
 		"--property=MainPID", "--value").Output()

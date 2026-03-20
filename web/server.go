@@ -490,12 +490,9 @@ func (s *Server) collectSystemInfo(ctx context.Context) *node.SystemInfo {
 			si.GitSHA = strings.TrimSpace(string(out))
 		}
 	}
-	if bin := s.gnolandBinary(); bin != "" {
-		if out, err := exec.CommandContext(ctx, "sha256sum", bin).Output(); err == nil {
-			parts := strings.Fields(string(out))
-			if len(parts) > 0 {
-				si.BinaryHash = parts[0][:12]
-			}
+	if s.Backend != nil {
+		if hash, err := s.Backend.BinaryHash(ctx); err == nil {
+			si.BinaryHash = hash
 		}
 	}
 
@@ -1166,19 +1163,6 @@ func (s *Server) gnoRootDir() string {
 	return ""
 }
 
-// gnolandBinary tries to find the gnoland binary path.
-func (s *Server) gnolandBinary() string {
-	for _, p := range []string{"/usr/local/bin/gnoland"} {
-		if _, err := os.Stat(p); err == nil {
-			return p
-		}
-	}
-	// Try which
-	if out, err := exec.Command("which", "gnoland").Output(); err == nil {
-		return strings.TrimSpace(string(out))
-	}
-	return ""
-}
 
 func (s *Server) Run(ctx context.Context) error {
 	s.genesisSHA = s.computeGenesisSHA()

@@ -16,12 +16,14 @@ import (
 
 // mockBackend is a test double for RuntimeBackend.
 type mockBackend struct {
-	streamLines []string
-	fetchLines  []string
-	uptime      time.Duration
-	memKB       int
-	streamErr   error
-	fetchErr    error
+	streamLines    []string
+	fetchLines     []string
+	uptime         time.Duration
+	memKB          int
+	binaryHash     string
+	streamErr      error
+	fetchErr       error
+	binaryHashErr  error
 }
 
 func (m *mockBackend) StreamLogs(ctx context.Context) (io.ReadCloser, error) {
@@ -44,6 +46,10 @@ func (m *mockBackend) ServiceUptime(ctx context.Context) (time.Duration, error) 
 
 func (m *mockBackend) ProcessMemory(ctx context.Context) (int, error) {
 	return m.memKB, nil
+}
+
+func (m *mockBackend) BinaryHash(ctx context.Context) (string, error) {
+	return m.binaryHash, m.binaryHashErr
 }
 
 func TestBackendInterfaceSatisfied(t *testing.T) {
@@ -121,6 +127,20 @@ func TestDockerBackendInterfaceSatisfied(t *testing.T) {
 	var _ RuntimeBackend = &DockerBackend{}
 }
 
+
+func TestDockerBackendBinaryHashArgs(t *testing.T) {
+	b := &DockerBackend{ContainerName: "mycontainer"}
+	args := b.binaryHashArgs()
+	want := []string{"exec", "mycontainer", "sha256sum", "/usr/local/bin/gnoland"}
+	if len(args) != len(want) {
+		t.Fatalf("binaryHashArgs() = %v, want %v", args, want)
+	}
+	for i, a := range args {
+		if a != want[i] {
+			t.Errorf("args[%d] = %q, want %q", i, a, want[i])
+		}
+	}
+}
 
 func TestDockerBackendStreamLogsIncludesSince(t *testing.T) {
 	b := &DockerBackend{ContainerName: "mycontainer"}
