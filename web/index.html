@@ -115,6 +115,12 @@ a.rpc-link.blue { color: var(--blue); }
 .log-json-num { color: var(--yellow); }
 .log-json-bool { color: var(--yellow); font-weight: bold; }
 .log-json-sep { color: var(--fg2); opacity: 0.5; }
+.log-module { color: var(--fg2); font-size: 10px; margin-left: 4px; opacity: 0.7; }
+#mod-filter { position: relative; display: inline-block; font-size: 11px; }
+#mod-filter summary { cursor: pointer; color: var(--fg2); padding: 1px 4px; border: 1px solid var(--border); border-radius: 4px; list-style: none; user-select: none; }
+#mod-filter summary::-webkit-details-marker { display: none; }
+#mod-list { position: absolute; right: 0; top: 22px; background: var(--bg2); border: 1px solid var(--border); border-radius: 6px; padding: 6px 10px; z-index: 50; min-width: 120px; white-space: nowrap; box-shadow: 0 4px 12px rgba(0,0,0,0.4); }
+#mod-list label { display: block; cursor: pointer; padding: 2px 0; color: var(--fg); }
 #logs-body { overflow-x: auto; }
 #logs-body.no-scroll { overflow-x: hidden; }
 #logs-body.no-scroll .log-line { white-space: normal; flex-wrap: wrap; }
@@ -247,17 +253,22 @@ a.rpc-link.blue { color: var(--blue); }
 
 <div class="card">
   <h2 data-section="logs">Logs</h2>
-  <div class="section-body"><div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:8px">
+  <div class="section-body">
+  <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:8px">
     <span id="logs-status" style="font-size:11px;color:var(--fg2)"></span>
     <select id="logs-level" style="background:var(--bg);color:var(--fg);border:1px solid var(--border);border-radius:4px;padding:1px 4px;font-size:11px;font-family:inherit"><option value="DEBUG">&ge;DEBUG</option><option value="INFO" selected>&ge;INFO</option><option value="WARN">&ge;WARN</option><option value="ERROR">&ge;ERROR</option></select>
     <input id="logs-filter" type="text" placeholder="filter..." style="background:var(--bg);color:var(--fg);border:1px solid var(--border);border-radius:4px;padding:1px 6px;font-size:11px;font-family:inherit;width:100px">
     <label style="font-size:12px;color:var(--fg2);cursor:pointer"><input type="checkbox" id="logs-compact" style="margin-right:3px">compact</label>
     <label style="font-size:12px;color:var(--fg2);cursor:pointer"><input type="checkbox" id="logs-indent" style="margin-right:3px">indent</label>
     <label style="font-size:12px;color:var(--fg2);cursor:pointer"><input type="checkbox" id="logs-wrap" style="margin-right:3px" checked>wrap</label>
+    <details id="mod-filter"><summary>modules</summary><div id="mod-list"><label><input type="checkbox" id="mod-all" checked> all</label></div></details>
     <button id="logs-pause" style="background:var(--bg);color:var(--yellow);border:1px solid var(--border);border-radius:4px;padding:2px 10px;cursor:pointer;font-size:12px;font-family:inherit">pause</button>
   </div>
-  <div id="logs-body" style="margin-top:10px;max-height:400px;overflow-y:auto;font-size:11px;background:var(--bg);border:1px solid var(--border);border-radius:4px;padding:8px"></div>
-</div></div>
+  <div id="logs-body" style="height:400px;overflow-y:auto;font-size:11px;background:var(--bg);border:1px solid var(--border);border-radius:4px;padding:8px;position:relative">
+    <div id="logs-empty" style="position:absolute;top:0;left:0;right:0;bottom:0;display:flex;align-items:center;justify-content:center;color:var(--fg2);font-size:12px;text-align:center;pointer-events:none"></div>
+  </div>
+  </div>
+</div>
 
 <div class="card">
   <h2 id="node-state-header" data-section="node-state">Node State</h2>
@@ -1589,15 +1600,52 @@ function handleVotes(d) {
 var logQueue = [];
 var logFlushScheduled = false;
 
-function handleLogLine(line) {
+function handleLogLine(entry) {
     if (!lastLogLines) lastLogLines = [];
-    lastLogLines.push(line);
+    lastLogLines.push(entry);
     if (lastLogLines.length > 200) lastLogLines.shift();
+    if (entry.module) addModule(entry.module);
     if (logsPaused) return;
-    logQueue.push(line);
+    logQueue.push(entry);
     if (!logFlushScheduled) {
       logFlushScheduled = true;
       requestAnimationFrame(flushLogQueue);
+    }
+}
+
+function buildLogDiv(entry) {
+    var div = document.createElement('div');
+    div.className = 'log-line';
+    if (entry.level) div.setAttribute('data-level', entry.level);
+    var left = mkEl('span', null, 'log-left');
+    if (entry.time) {
+      left.appendChild(mkEl('span', entry.time + ' ', 'log-time'));
+      left.appendChild(mkEl('span', entry.level, 'log-' + entry.level.toLowerCase()));
+    }
+    if (entry.module) left.appendChild(mkEl('span', ' [' + entry.module + ']', 'log-module'));
+    div.appendChild(left);
+    var right = mkEl('span', null, 'log-right');
+    right.appendChild(mkEl('span', entry.msg, 'log-msg'));
+    if (entry.extra && Object.keys(entry.extra).length > 0) {
+      var jSpan = mkEl('span', null, 'log-json' + (logsIndent ? ' indented' : ''));
+      colorizeVal(entry.extra, jSpan, logsIndent ? 0 : -1);
+      right.appendChild(jSpan);
+    }
+    div.appendChild(right);
+    return div;
+}
+
+function updateEmptyState() {
+    var body = $('logs-body');
+    var empty = $('logs-empty');
+    var hasLines = body.querySelector('.log-line') !== null;
+    empty.style.display = hasLines ? 'none' : '';
+    if (!hasLines) {
+      if (!lastLogLines || lastLogLines.length === 0) {
+        empty.textContent = 'No logs received. Start gnockpit with -systemd or -container flag.';
+      } else {
+        empty.textContent = 'All logs are hidden by active filters.';
+      }
     }
 }
 
@@ -1608,38 +1656,20 @@ function flushLogQueue() {
     var frag = document.createDocumentFragment();
     var count = 0;
     for (var qi = 0; qi < logQueue.length; qi++) {
-      var raw = logQueue[qi];
-      if (textFilter && raw.toLowerCase().indexOf(textFilter) === -1) continue;
-      var p = parseLine(raw);
-      if (p.level && (LOG_LEVELS[p.level] || 0) < (LOG_LEVELS[logsMinLevel] || 0)) continue;
-      var div = document.createElement('div');
-      div.className = 'log-line'; if (p.level) div.setAttribute('data-level', p.level);
-      var left = mkEl('span', null, 'log-left');
-      if (p.time) {
-        left.appendChild(mkEl('span', p.time + ' ', 'log-time'));
-        left.appendChild(mkEl('span', p.level, 'log-' + p.level.toLowerCase()));
-      }
-      div.appendChild(left);
-      var right = mkEl('span', null, 'log-right');
-      right.appendChild(mkEl('span', p.msg, 'log-msg'));
-      if (p.json) {
-        try {
-          var obj = JSON.parse(p.json);
-          var jSpan = mkEl('span', null, 'log-json' + (logsIndent ? ' indented' : ''));
-          colorizeVal(obj, jSpan, logsIndent ? 0 : -1);
-          right.appendChild(jSpan);
-        } catch(e) {
-          right.appendChild(mkEl('span', p.json, 'log-json'));
-        }
-      }
-      div.appendChild(right);
-      frag.appendChild(div);
+      var entry = logQueue[qi];
+      var searchStr = (entry.msg + ' ' + JSON.stringify(entry.extra || {})).toLowerCase();
+      if (textFilter && searchStr.indexOf(textFilter) === -1) continue;
+      if (entry.level && (LOG_LEVELS[entry.level] || 0) < (LOG_LEVELS[logsMinLevel] || 0)) continue;
+      if (entry.module && knownModules.size > 0 && !activeModules.has(entry.module)) continue;
+      frag.appendChild(buildLogDiv(entry));
       count++;
     }
     logQueue = [];
     if (count > 0) {
       body.appendChild(frag);
-      while (body.children.length > 200) body.removeChild(body.firstChild);
+      var lines = body.querySelectorAll('.log-line');
+      while (lines.length > 200) { body.removeChild(lines[0]); lines = body.querySelectorAll('.log-line'); }
+      updateEmptyState();
       body.scrollTop = body.scrollHeight;
     }
 }
@@ -1698,7 +1728,26 @@ ovCb.addEventListener('change', function() {
 
 // Logs
 var lastLogLines = null;
+var knownModules = new Set();
+var activeModules = new Set();
 var lastUpdateTime = 0;
+
+function addModule(mod) {
+  if (!mod || knownModules.has(mod)) return;
+  knownModules.add(mod);
+  activeModules.add(mod);
+  var list = $('mod-list');
+  var lbl = document.createElement('label');
+  var cb = document.createElement('input');
+  cb.type = 'checkbox'; cb.checked = true; cb.value = mod;
+  cb.addEventListener('change', function() {
+    if (this.checked) activeModules.add(mod); else activeModules.delete(mod);
+    if (lastLogLines) renderLogs(lastLogLines);
+  });
+  lbl.appendChild(cb);
+  lbl.appendChild(document.createTextNode(' ' + mod));
+  list.appendChild(lbl);
+}
 var serverTimeOffset = 0; // server UTC - local UTC in ms
 var genesisTimeMs = 0;
 
@@ -1743,87 +1792,22 @@ function colorizeVal(val, parent, depth) {
   }
 }
 
-function parseLine(raw) {
-  // Input: "2026-03-14T09:35:04+00:00 moul-gnoland1 gnoland[PID]: 2026-03-14T09:35:04.187Z        LEVEL        Message        {json}"
-  // Strip systemd prefix: everything before "gnoland[" then the timestamp after ]:
-  var m = raw.match(/gnoland\[\d+\]:\s*(\S+)\s+(DEBUG|INFO|WARN|ERROR)\s+(.+)/);
-  if (!m) return { time: '', level: '', msg: raw, json: '', module: '', raw: raw };
-  var time = m[1].replace(/^\d{4}-\d{2}-\d{2}T/, '').replace(/Z$/, '');
-  var level = m[2];
-  var rest = m[3].trim();
-  var module = '';
-  // Split message from JSON
-  var jsonStr = '';
-  var msgPart = rest;
-  var jIdx = rest.indexOf('{');
-  if (jIdx > 0) {
-    msgPart = rest.substring(0, jIdx).trim();
-    jsonStr = rest.substring(jIdx);
-    // Try to pretty-format and shorten
-    try {
-      var obj = JSON.parse(jsonStr);
-      // Shorten long hex values
-      for (var k in obj) {
-        if (typeof obj[k] === 'string' && obj[k].length > 40 && /^[0-9A-Fa-f]+$/.test(obj[k]))
-          obj[k] = obj[k].substring(0, 16) + '...';
-      }
-      jsonStr = JSON.stringify(obj);
-    } catch(e) { /* keep raw */ }
-  }
-  // Extract module from JSON if present
-  try {
-    var jObj = jsonStr ? JSON.parse(jsonStr) : null;
-    if (jObj && jObj.module) module = jObj.module;
-  } catch(e) {}
-  return { time: time, level: level, msg: msgPart, json: jsonStr, module: module, raw: raw };
-}
-
-function renderLogs(lines) {
+function renderLogs(entries) {
   var body = $('logs-body');
-  clearChildren(body);
-
-  // Parse all lines and collect modules
-  var parsed = [];
-  var modules = {};
-  for (var i = 0; i < lines.length; i++) {
-    var p = parseLine(lines[i]);
-    parsed.push(p);
-    if (p.module) modules[p.module] = true;
-  }
-
-  // Filter
+  // Remove existing log-line elements, preserving #logs-empty
+  var existing = body.querySelectorAll('.log-line');
+  for (var j = 0; j < existing.length; j++) body.removeChild(existing[j]);
   var textFilter = (logsText || $('logs-filter').value).toLowerCase();
-
-  for (var i = 0; i < parsed.length; i++) {
-    var p = parsed[i];
-    if (p.level && (LOG_LEVELS[p.level] || 0) < (LOG_LEVELS[logsMinLevel] || 0)) continue;
-    if (textFilter && p.raw.toLowerCase().indexOf(textFilter) === -1) continue;
-
-    var div = document.createElement('div');
-    div.className = 'log-line'; if (p.level) div.setAttribute('data-level', p.level);
-    // Left: time + level
-    var left = mkEl('span', null, 'log-left');
-    if (p.time) {
-      left.appendChild(mkEl('span', p.time + ' ', 'log-time'));
-      left.appendChild(mkEl('span', p.level, 'log-' + p.level.toLowerCase()));
-    }
-    div.appendChild(left);
-    // Right: message + pretty JSON
-    var right = mkEl('span', null, 'log-right');
-    right.appendChild(mkEl('span', p.msg, 'log-msg'));
-    if (p.json) {
-      try {
-        var obj = JSON.parse(p.json);
-        var jSpan = mkEl('span', null, 'log-json' + (logsIndent ? ' indented' : ''));
-        colorizeVal(obj, jSpan, logsIndent ? 0 : -1);
-        right.appendChild(jSpan);
-      } catch(e) {
-        right.appendChild(mkEl('span', p.json, 'log-json'));
-      }
-    }
-    div.appendChild(right);
-    body.appendChild(div);
+  for (var i = 0; i < entries.length; i++) {
+    var entry = entries[i];
+    if (entry.module) addModule(entry.module);
+    if (entry.level && (LOG_LEVELS[entry.level] || 0) < (LOG_LEVELS[logsMinLevel] || 0)) continue;
+    if (entry.module && knownModules.size > 0 && !activeModules.has(entry.module)) continue;
+    var searchStr = (entry.msg + ' ' + JSON.stringify(entry.extra || {})).toLowerCase();
+    if (textFilter && searchStr.indexOf(textFilter) === -1) continue;
+    body.appendChild(buildLogDiv(entry));
   }
+  updateEmptyState();
   body.scrollTop = body.scrollHeight;
 }
 
@@ -1874,6 +1858,15 @@ $('logs-filter').value = logsText;
 $('logs-filter').addEventListener('input', function() { logsText = this.value; saveURL(); if (lastLogLines) renderLogs(lastLogLines); });
 $('logs-level').value = logsMinLevel;
 $('logs-level').addEventListener('change', function() { logsMinLevel = this.value; saveURL(); if (lastLogLines) renderLogs(lastLogLines); });
+
+$('mod-all').addEventListener('change', function() {
+  var checked = this.checked;
+  var cbs = $('mod-list').querySelectorAll('input[type=checkbox]');
+  for (var i = 0; i < cbs.length; i++) { cbs[i].checked = checked; }
+  if (checked) { knownModules.forEach(function(m) { activeModules.add(m); }); }
+  else { activeModules.clear(); }
+  if (lastLogLines) renderLogs(lastLogLines);
+});
 
 // Init indent state from URL
 var indentCb = $('logs-indent');

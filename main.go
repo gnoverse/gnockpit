@@ -30,8 +30,9 @@ var (
 	flagWebAddr    string
 	flagDataDir    string
 	flagGenesisPath string
-	flagNamesPath  string
-	flagService    string
+	flagNamesPath   string
+	flagService     string
+	flagContainer   string
 )
 
 func main() {
@@ -55,6 +56,7 @@ func rootCmd() *cobra.Command {
 	root.PersistentFlags().StringVar(&flagGenesisPath, "genesis", "", "path to genesis.json (auto-detected if empty)")
 	root.PersistentFlags().StringVar(&flagNamesPath, "names", "/tmp/gnockpit-names.json", "path to persistent name registry")
 	root.PersistentFlags().StringVar(&flagService, "service", "", "systemd service name (auto-detected from chain-id)")
+	root.PersistentFlags().StringVar(&flagContainer, "container", "", "docker container name (mutually exclusive with -service)")
 
 	root.AddCommand(statusCmd())
 	root.AddCommand(peersCmd())
@@ -84,6 +86,26 @@ func rpcPort() string {
 		}
 	}
 	return "26657"
+}
+
+// buildBackend constructs the appropriate RuntimeBackend based on CLI flags.
+// If neither flag is set, a SystemdBackend with lazy auto-detection from the chain-id is used.
+func buildBackend(service, container string, srv *web.Server) web.RuntimeBackend {
+	if container != "" {
+		return &web.DockerBackend{ContainerName: container}
+	}
+	// SystemdBackend: static name if -service given, lazy from chain-id otherwise.
+	var nameFn func() string
+	if service == "" {
+		nameFn = func() string {
+			snap := srv.GetSnapshot()
+			if snap != nil && snap.Status != nil && snap.Status.NodeInfo.Network != "" {
+				return snap.Status.NodeInfo.Network + ".service"
+			}
+			return ""
+		}
+	}
+	return web.NewSystemdBackend(service, nameFn)
 }
 
 // findGenesis tries common genesis.json locations relative to data-dir or cwd.
@@ -628,7 +650,10 @@ func webCmd() *cobra.Command {
 			srv := web.NewServer(c, addr, flagInterval)
 			srv.DataDir = findDataDir()
 			srv.GenesisPath = findGenesis()
-			srv.ServiceName = flagService
+			if flagService != "" && flagContainer != "" {
+				return fmt.Errorf("-service and -container are mutually exclusive")
+			}
+			srv.Backend = buildBackend(flagService, flagContainer, srv)
 			return srv.Run(ctx)
 		},
 	}

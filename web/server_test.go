@@ -3,6 +3,7 @@ package web
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os/exec"
@@ -12,6 +13,238 @@ import (
 
 	"github.com/gnoverse/gnockpit/node"
 )
+
+// mockBackend is a test double for RuntimeBackend.
+type mockBackend struct {
+	streamLines []string
+	fetchLines  []string
+	uptime      time.Duration
+	memKB       int
+	streamErr   error
+	fetchErr    error
+}
+
+func (m *mockBackend) StreamLogs(ctx context.Context) (io.ReadCloser, error) {
+	if m.streamErr != nil {
+		return nil, m.streamErr
+	}
+	return io.NopCloser(strings.NewReader(strings.Join(m.streamLines, "\n"))), nil
+}
+
+func (m *mockBackend) FetchLogs(ctx context.Context, n int) ([]string, error) {
+	if m.fetchErr != nil {
+		return nil, m.fetchErr
+	}
+	return m.fetchLines, nil
+}
+
+func (m *mockBackend) ServiceUptime(ctx context.Context) (time.Duration, error) {
+	return m.uptime, nil
+}
+
+func (m *mockBackend) ProcessMemory(ctx context.Context) (int, error) {
+	return m.memKB, nil
+}
+
+func TestBackendInterfaceSatisfied(t *testing.T) {
+	var _ RuntimeBackend = &mockBackend{}
+}
+
+func TestSystemdBackendNameCachesOnSuccess(t *testing.T) {
+	calls := 0
+	b := NewSystemdBackend("", func() string {
+		calls++
+		if calls == 1 {
+			return "" // not yet known
+		}
+		return "mychain.service"
+	})
+
+	// First call: nameFn returns "", falls back to "gnoland.service" without caching
+	name := b.resolvedName()
+	if name != "gnoland.service" {
+		t.Errorf("want gnoland.service fallback, got %q", name)
+	}
+
+	// Second call: nameFn returns a value, should cache it
+	name = b.resolvedName()
+	if name != "mychain.service" {
+		t.Errorf("want mychain.service, got %q", name)
+	}
+
+	// Third call: should use cached value without calling nameFn again
+	name = b.resolvedName()
+	if name != "mychain.service" {
+		t.Errorf("want mychain.service cached, got %q", name)
+	}
+	if calls != 2 {
+		t.Errorf("nameFn called %d times, want 2 (not called after cache hit)", calls)
+	}
+}
+
+func TestSystemdBackendStaticName(t *testing.T) {
+	b := NewSystemdBackend("explicit.service", nil)
+	if b.resolvedName() != "explicit.service" {
+		t.Errorf("want explicit.service, got %q", b.resolvedName())
+	}
+}
+
+func TestSystemdBackendNoNameFn(t *testing.T) {
+	// nil nameFn with no static name always falls back to gnoland.service
+	b := NewSystemdBackend("", nil)
+	if b.resolvedName() != "gnoland.service" {
+		t.Errorf("want gnoland.service, got %q", b.resolvedName())
+	}
+}
+
+func TestSystemdBackendUsesCat(t *testing.T) {
+	b := NewSystemdBackend("test.service", nil)
+
+	hasCat := func(args []string) bool {
+		for i, a := range args {
+			if a == "-o" && i+1 < len(args) && args[i+1] == "cat" {
+				return true
+			}
+		}
+		return false
+	}
+	if !hasCat(b.streamArgs()) {
+		t.Errorf("streamArgs() = %v, missing -o cat", b.streamArgs())
+	}
+	if !hasCat(b.fetchArgs(100)) {
+		t.Errorf("fetchArgs(100) = %v, missing -o cat", b.fetchArgs(100))
+	}
+}
+
+func TestDockerBackendInterfaceSatisfied(t *testing.T) {
+	// Compile-time check that DockerBackend implements RuntimeBackend.
+	var _ RuntimeBackend = &DockerBackend{}
+}
+
+
+func TestDockerBackendStreamLogsIncludesSince(t *testing.T) {
+	b := &DockerBackend{ContainerName: "mycontainer"}
+	args := b.streamLogsArgs()
+	hasSince := false
+	for i, a := range args {
+		if a == "--since" && i+1 < len(args) {
+			hasSince = true
+			if args[i+1] != "1m" {
+				t.Errorf("--since value = %q, want %q", args[i+1], "1m")
+			}
+		}
+	}
+	if !hasSince {
+		t.Errorf("streamLogsArgs() = %v, missing --since flag", args)
+	}
+}
+
+func TestHandleLogsNilBackend(t *testing.T) {
+	c := node.NewClient("http://localhost:1", 1*time.Second)
+	srv := NewServer(c, "127.0.0.1:0", 5*time.Second)
+	// Backend is nil — should return empty array [], not null or 500
+
+	req := httptest.NewRequest("GET", "/api/logs", nil)
+	w := httptest.NewRecorder()
+	srv.handleLogs(w, req)
+
+	if w.Code != 200 {
+		t.Errorf("status = %d, want 200", w.Code)
+	}
+	var respFull map[string]json.RawMessage
+	if err := json.Unmarshal(w.Body.Bytes(), &respFull); err != nil {
+		t.Fatal("invalid JSON:", err)
+	}
+	linesRaw, ok := respFull["lines"]
+	if !ok {
+		t.Fatal("missing 'lines' field")
+	}
+	var lines []json.RawMessage
+	if err := json.Unmarshal(linesRaw, &lines); err != nil {
+		t.Fatalf("'lines' is not a JSON array: %s", linesRaw)
+	}
+	if lines == nil {
+		t.Error("lines must be [] not null")
+	}
+}
+
+func TestHandleLogsSanitizesRootPaths(t *testing.T) {
+	c := node.NewClient("http://localhost:1", 1*time.Second)
+	srv := NewServer(c, "127.0.0.1:0", 5*time.Second)
+	srv.Backend = &mockBackend{
+		fetchLines: []string{
+			`{"level":"info","ts":0,"msg":"loading /root/gnoland-data/config","module":"node"}`,
+			`{"level":"info","ts":0,"msg":"normal log line","module":"node"}`,
+		},
+	}
+
+	req := httptest.NewRequest("GET", "/api/logs", nil)
+	w := httptest.NewRecorder()
+	srv.handleLogs(w, req)
+
+	body := w.Body.String()
+	if strings.Contains(body, "/root/") {
+		t.Error("response should not contain /root/ paths")
+	}
+	if !strings.Contains(body, "~/") {
+		t.Error("response should contain ~/ replacement")
+	}
+}
+
+func TestHandleLogsReturnsLogEntries(t *testing.T) {
+	c := node.NewClient("http://localhost:1", 1*time.Second)
+	srv := NewServer(c, "127.0.0.1:0", 5*time.Second)
+	srv.Backend = &mockBackend{
+		fetchLines: []string{
+			`{"level":"info","ts":0,"msg":"hello","module":"test"}`,
+		},
+	}
+
+	req := httptest.NewRequest("GET", "/api/logs", nil)
+	w := httptest.NewRecorder()
+	srv.handleLogs(w, req)
+
+	var resp struct {
+		Lines []LogEntry `json:"lines"`
+		Count int        `json:"count"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatal("invalid JSON:", err)
+	}
+	if resp.Count != 1 {
+		t.Errorf("count = %d, want 1", resp.Count)
+	}
+	if len(resp.Lines) != 1 {
+		t.Fatalf("len(lines) = %d, want 1", len(resp.Lines))
+	}
+	if resp.Lines[0].Level != "INFO" {
+		t.Errorf("Level = %q, want INFO", resp.Lines[0].Level)
+	}
+	if resp.Lines[0].Module != "test" {
+		t.Errorf("Module = %q, want test", resp.Lines[0].Module)
+	}
+}
+
+func TestParseLogEventPeerExtraction(t *testing.T) {
+	c := node.NewClient("http://localhost:1", 1*time.Second)
+	srv := NewServer(c, "127.0.0.1:0", 5*time.Second)
+
+	entry := LogEntry{
+		Msg:   "dial peer",
+		Level: "INFO",
+		Extra: map[string]interface{}{"peer": "abc123@1.2.3.4:26656"},
+	}
+	srv.parseLogEvent(entry)
+
+	var foundIP string
+	srv.peerActivity.Range(func(k, v interface{}) bool {
+		foundIP = k.(string)
+		return true
+	})
+	if foundIP != "1.2.3.4" {
+		t.Errorf("peerActivity IP = %q, want 1.2.3.4", foundIP)
+	}
+}
 
 func TestHTMLEmbedded(t *testing.T) {
 	data, err := content.ReadFile("index.html")

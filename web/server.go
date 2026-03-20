@@ -73,9 +73,9 @@ type Server struct {
 	chainDataTime  time.Time
 
 	// Configurable paths (set by caller before Run)
-	DataDir     string // gnoland data directory (for disk stats)
-	GenesisPath string // path to genesis.json (for hash computation)
-	ServiceName string // systemd service name (auto-detected from chain-id if empty)
+	DataDir     string         // gnoland data directory (for disk stats)
+	GenesisPath string         // path to genesis.json (for hash computation)
+	Backend     RuntimeBackend // log and process metrics backend (nil = unavailable)
 
 	// Peer activity from log parsing
 	peerActivity   sync.Map // IP -> time.Time (last seen)
@@ -178,6 +178,11 @@ func (s *Server) setSnapshot(snap *node.Snapshot) {
 	s.mu.Lock()
 	s.snapshot = snap
 	s.mu.Unlock()
+}
+
+// GetSnapshot returns the most recent data snapshot. Used by main to construct backends.
+func (s *Server) GetSnapshot() *node.Snapshot {
+	return s.getSnapshot()
 }
 
 // --- Snapshot data building ---
@@ -401,11 +406,9 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) collectSystemInfo(ctx context.Context) *node.SystemInfo {
 	si := &node.SystemInfo{}
-	svcName := s.serviceName()
-	dataDir := s.dataDir()
 
 	// Disk usage
-	dfPath := dataDir
+	dfPath := s.DataDir
 	if dfPath == "" {
 		dfPath = "/"
 	}
@@ -454,36 +457,18 @@ func (s *Server) collectSystemInfo(ctx context.Context) *node.SystemInfo {
 		}
 	}
 
-	if out, err := exec.CommandContext(ctx, "systemctl", "show", svcName, "--property=ActiveEnterTimestamp", "--value").Output(); err == nil {
-		ts := strings.TrimSpace(string(out))
-		if t, err := time.Parse("Mon 2006-01-02 15:04:05 MST", ts); err == nil {
-			si.GnolandUptime = time.Since(t).Truncate(time.Second).String()
+	if s.Backend != nil {
+		if uptime, err := s.Backend.ServiceUptime(ctx); err == nil {
+			si.GnolandUptime = uptime.Truncate(time.Second).String()
 		}
-	}
-
-	// Gnoland process memory (RSS)
-	if out, err := exec.CommandContext(ctx, "systemctl", "show", svcName, "--property=MainPID", "--value").Output(); err == nil {
-		pid := strings.TrimSpace(string(out))
-		if pid != "" && pid != "0" {
-			if mem, err := os.ReadFile("/proc/" + pid + "/status"); err == nil {
-				for _, line := range strings.Split(string(mem), "\n") {
-					if strings.HasPrefix(line, "VmRSS:") {
-						parts := strings.Fields(line)
-						if len(parts) >= 2 {
-							var kb int
-							fmt.Sscanf(parts[1], "%d", &kb)
-							si.GnolandMem = fmt.Sprintf("%.1fG", float64(kb)/1024/1024)
-						}
-						break
-					}
-				}
-			}
+		if kb, err := s.Backend.ProcessMemory(ctx); err == nil && kb > 0 {
+			si.GnolandMem = fmt.Sprintf("%.1fG", float64(kb)/1024/1024)
 		}
 	}
 
 	// Chain data size (cached, updated max once per minute)
-	if dataDir != "" && time.Since(s.chainDataTime) > time.Minute {
-		if out, err := exec.CommandContext(ctx, "du", "-sh", dataDir).Output(); err == nil {
+	if s.DataDir != "" && time.Since(s.chainDataTime) > time.Minute {
+		if out, err := exec.CommandContext(ctx, "du", "-sh", s.DataDir).Output(); err == nil {
 			parts := strings.Fields(string(out))
 			if len(parts) > 0 {
 				s.chainDataSize = parts[0]
@@ -515,7 +500,7 @@ func (s *Server) collectSystemInfo(ctx context.Context) *node.SystemInfo {
 	}
 
 	// Seeds from config
-	if dataDir := s.dataDir(); dataDir != "" {
+	if dataDir := s.DataDir; dataDir != "" {
 		if data, err := os.ReadFile(dataDir + "/config/config.toml"); err == nil {
 			for _, line := range strings.Split(string(data), "\n") {
 				line = strings.TrimSpace(line)
@@ -777,6 +762,9 @@ func (s *Server) publishLoop(ctx context.Context) {
 // --- Log Streaming ---
 
 func (s *Server) logStreamLoop(ctx context.Context) {
+	if s.Backend == nil {
+		return
+	}
 	for {
 		select {
 		case <-ctx.Done():
@@ -784,61 +772,51 @@ func (s *Server) logStreamLoop(ctx context.Context) {
 		default:
 		}
 
-		cmd := exec.CommandContext(ctx, "journalctl", "-u", s.serviceName(), "-f", "-o", "short-iso", "--no-pager")
-		stdout, err := cmd.StdoutPipe()
+		rc, err := s.Backend.StreamLogs(ctx)
 		if err != nil {
-			log.Printf("journalctl pipe error: %v", err)
-			time.Sleep(2 * time.Second)
-			continue
-		}
-		if err := cmd.Start(); err != nil {
-			log.Printf("journalctl start error: %v", err)
+			log.Printf("log stream error: %v", err)
 			time.Sleep(2 * time.Second)
 			continue
 		}
 
-		scanner := bufio.NewScanner(stdout)
+		scanner := bufio.NewScanner(rc)
 		for scanner.Scan() {
-			line := scanner.Text()
-			s.broadcastWS(wsMsg{Type: "log", Data: strings.ReplaceAll(line, "/root/", "~/")})
-			s.parseLogEvent(line)
+			entry := parseGnolandLog(scanner.Text())
+			entry.Msg = strings.ReplaceAll(entry.Msg, "/root/", "~/")
+			s.broadcastWS(wsMsg{Type: "log", Data: entry})
+			s.parseLogEvent(entry)
 		}
 
-		cmd.Wait()
-		log.Printf("journalctl exited, restarting in 2s")
+		rc.Close()
+		log.Printf("log stream ended, restarting in 2s")
 		time.Sleep(2 * time.Second)
 	}
 }
 
 // parseLogEvent extracts structured events from log lines
-func (s *Server) parseLogEvent(line string) {
+// parseLogEvent extracts structured events from a parsed log entry.
+func (s *Server) parseLogEvent(entry LogEntry) {
 	now := time.Now()
-	// Rate limit: don't broadcast more than once per second
+	// Rate limit: don't trigger snapshot refresh more than once per second.
 	if now.Sub(s.lastLogEvent) < time.Second {
 		return
 	}
 
-	// Extract peer IP from "peer": "nodeID@IP:port" patterns
-	if idx := strings.Index(line, `"peer": "`); idx > 0 {
-		rest := line[idx+9:]
-		if atIdx := strings.Index(rest, "@"); atIdx > 0 {
-			hostPort := rest[atIdx+1:]
-			if endIdx := strings.IndexAny(hostPort, `"`); endIdx > 0 {
-				hp := hostPort[:endIdx]
-				if colonIdx := strings.LastIndex(hp, ":"); colonIdx > 0 {
-					ip := hp[:colonIdx]
-					s.peerActivity.Store(ip, now)
-				}
+	// Extract peer IP from the "peer" extra field ("nodeID@IP:port").
+	if peer, ok := entry.Extra["peer"].(string); ok {
+		if at := strings.Index(peer, "@"); at > 0 {
+			hostPort := peer[at+1:]
+			if col := strings.LastIndex(hostPort, ":"); col > 0 {
+				s.peerActivity.Store(hostPort[:col], now)
 			}
 		}
 	}
 
-	// Detect consensus events and broadcast updates
-	if strings.Contains(line, "enterNewRound") || strings.Contains(line, "enterPrevote") ||
-		strings.Contains(line, "enterPrecommit") || strings.Contains(line, "finalizing commit") ||
-		strings.Contains(line, "executed block") {
+	// Consensus events: trigger an immediate snapshot refresh.
+	if strings.Contains(entry.Msg, "enterNewRound") || strings.Contains(entry.Msg, "enterPrevote") ||
+		strings.Contains(entry.Msg, "enterPrecommit") || strings.Contains(entry.Msg, "finalizing commit") ||
+		strings.Contains(entry.Msg, "executed block") {
 		s.lastLogEvent = now
-		// Trigger an immediate snapshot refresh
 		go func() {
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
@@ -868,20 +846,32 @@ func (s *Server) parseLogEvent(line string) {
 func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 	defer cancel()
-	n := r.URL.Query().Get("n")
-	if n == "" {
-		n = "200"
-	}
-	out, err := exec.CommandContext(ctx, "journalctl", "-u", s.serviceName(), "-n", n, "--no-pager", "-o", "short-iso").Output()
+
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Access-Control-Allow-Origin", "*")
+
+	if s.Backend == nil {
+		json.NewEncoder(w).Encode(map[string]interface{}{"lines": []LogEntry{}, "count": 0})
+		return
+	}
+
+	nInt := 200
+	if n := r.URL.Query().Get("n"); n != "" {
+		fmt.Sscanf(n, "%d", &nInt) // invalid values leave nInt at 200 (intentional)
+	}
+
+	lines, err := s.Backend.FetchLogs(ctx, nInt)
 	if err != nil {
 		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 		return
 	}
-	sanitized := strings.ReplaceAll(strings.TrimSpace(string(out)), "/root/", "~/")
-	lines := strings.Split(sanitized, "\n")
-	json.NewEncoder(w).Encode(map[string]interface{}{"lines": lines, "count": len(lines)})
+	entries := make([]LogEntry, len(lines))
+	for i, l := range lines {
+		e := parseGnolandLog(l)
+		e.Msg = strings.ReplaceAll(e.Msg, "/root/", "~/")
+		entries[i] = e
+	}
+	json.NewEncoder(w).Encode(map[string]interface{}{"lines": entries, "count": len(entries)})
 }
 
 // --- Diagnose API ---
@@ -1157,28 +1147,6 @@ func (s *Server) computeGenesisSHA() string {
 		}
 		h := sha256.Sum256(data)
 		return fmt.Sprintf("%x", h)
-	}
-	return ""
-}
-
-// serviceName returns the systemd service name, auto-detecting from chain-id if needed.
-func (s *Server) serviceName() string {
-	if s.ServiceName != "" {
-		return s.ServiceName
-	}
-	// Auto-detect: query RPC for chain-id, use "<chain-id>.service"
-	snap := s.getSnapshot()
-	if snap != nil && snap.Status != nil && snap.Status.NodeInfo.Network != "" {
-		s.ServiceName = snap.Status.NodeInfo.Network + ".service"
-		return s.ServiceName
-	}
-	return "gnoland.service" // fallback
-}
-
-// dataDir returns the data directory path.
-func (s *Server) dataDir() string {
-	if s.DataDir != "" {
-		return s.DataDir
 	}
 	return ""
 }
