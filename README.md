@@ -39,6 +39,24 @@ gnockpit \
 | `-interval` | `5s` | Dashboard refresh interval |
 | `-v` | false | Verbose HTTP logging |
 
+## Name Registry
+
+gnockpit maps validator addresses to human-readable monikers for display in the dashboard. It builds this registry automatically from two sources:
+
+- **Genesis file** — validator names are seeded at startup from `genesis.json`
+- **Peer RPC queries** — when gnockpit queries a peer's `/status` endpoint, it records their address + moniker
+
+Discoveries are persisted to the file specified by `-names` (default: `/tmp/gnockpit-names.json`) and survive restarts.
+
+You can also pre-populate or edit the file manually to assign names to validators gnockpit hasn't discovered yet:
+
+```json
+{
+  "g1a1b2c3d4e5f6...": "my-validator",
+  "g1x9y8z7w6v5u4...": "peer-node-alpha"
+}
+```
+
 ## Features
 
 - Live WebSocket dashboard with real-time updates
