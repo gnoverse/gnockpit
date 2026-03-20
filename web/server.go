@@ -761,9 +761,10 @@ func (s *Server) logStreamLoop(ctx context.Context) {
 
 		scanner := bufio.NewScanner(rc)
 		for scanner.Scan() {
-			line := scanner.Text()
-			s.broadcastWS(wsMsg{Type: "log", Data: strings.ReplaceAll(line, "/root/", "~/")})
-			s.parseLogEvent(line)
+			entry := parseGnolandLog(scanner.Text())
+			entry.Msg = strings.ReplaceAll(entry.Msg, "/root/", "~/")
+			s.broadcastWS(wsMsg{Type: "log", Data: entry})
+			s.parseLogEvent(entry)
 		}
 
 		rc.Close()
@@ -773,34 +774,29 @@ func (s *Server) logStreamLoop(ctx context.Context) {
 }
 
 // parseLogEvent extracts structured events from log lines
-func (s *Server) parseLogEvent(line string) {
+// parseLogEvent extracts structured events from a parsed log entry.
+func (s *Server) parseLogEvent(entry LogEntry) {
 	now := time.Now()
-	// Rate limit: don't broadcast more than once per second
+	// Rate limit: don't trigger snapshot refresh more than once per second.
 	if now.Sub(s.lastLogEvent) < time.Second {
 		return
 	}
 
-	// Extract peer IP from "peer": "nodeID@IP:port" patterns
-	if idx := strings.Index(line, `"peer": "`); idx > 0 {
-		rest := line[idx+9:]
-		if atIdx := strings.Index(rest, "@"); atIdx > 0 {
-			hostPort := rest[atIdx+1:]
-			if endIdx := strings.IndexAny(hostPort, `"`); endIdx > 0 {
-				hp := hostPort[:endIdx]
-				if colonIdx := strings.LastIndex(hp, ":"); colonIdx > 0 {
-					ip := hp[:colonIdx]
-					s.peerActivity.Store(ip, now)
-				}
+	// Extract peer IP from the "peer" extra field ("nodeID@IP:port").
+	if peer, ok := entry.Extra["peer"].(string); ok {
+		if at := strings.Index(peer, "@"); at > 0 {
+			hostPort := peer[at+1:]
+			if col := strings.LastIndex(hostPort, ":"); col > 0 {
+				s.peerActivity.Store(hostPort[:col], now)
 			}
 		}
 	}
 
-	// Detect consensus events and broadcast updates
-	if strings.Contains(line, "enterNewRound") || strings.Contains(line, "enterPrevote") ||
-		strings.Contains(line, "enterPrecommit") || strings.Contains(line, "finalizing commit") ||
-		strings.Contains(line, "executed block") {
+	// Consensus events: trigger an immediate snapshot refresh.
+	if strings.Contains(entry.Msg, "enterNewRound") || strings.Contains(entry.Msg, "enterPrevote") ||
+		strings.Contains(entry.Msg, "enterPrecommit") || strings.Contains(entry.Msg, "finalizing commit") ||
+		strings.Contains(entry.Msg, "executed block") {
 		s.lastLogEvent = now
-		// Trigger an immediate snapshot refresh
 		go func() {
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
@@ -835,7 +831,7 @@ func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Access-Control-Allow-Origin", "*")
 
 	if s.Backend == nil {
-		json.NewEncoder(w).Encode(map[string]interface{}{"lines": []string{}, "count": 0})
+		json.NewEncoder(w).Encode(map[string]interface{}{"lines": []LogEntry{}, "count": 0})
 		return
 	}
 
@@ -849,11 +845,13 @@ func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 		return
 	}
-	sanitized := make([]string, len(lines))
+	entries := make([]LogEntry, len(lines))
 	for i, l := range lines {
-		sanitized[i] = strings.ReplaceAll(l, "/root/", "~/")
+		e := parseGnolandLog(l)
+		e.Msg = strings.ReplaceAll(e.Msg, "/root/", "~/")
+		entries[i] = e
 	}
-	json.NewEncoder(w).Encode(map[string]interface{}{"lines": sanitized, "count": len(sanitized)})
+	json.NewEncoder(w).Encode(map[string]interface{}{"lines": entries, "count": len(entries)})
 }
 
 // --- Diagnose API ---

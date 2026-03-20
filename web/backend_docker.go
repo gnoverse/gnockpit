@@ -15,12 +15,16 @@ type DockerBackend struct {
 	ContainerName string
 }
 
+func (b *DockerBackend) streamLogsArgs() []string {
+	return []string{"logs", b.ContainerName, "-f", "--since", "1m"}
+}
+
 func (b *DockerBackend) StreamLogs(ctx context.Context) (io.ReadCloser, error) {
 	r, w, err := os.Pipe()
 	if err != nil {
 		return nil, err
 	}
-	cmd := exec.CommandContext(ctx, "docker", "logs", b.ContainerName, "-f", "--timestamps")
+	cmd := exec.CommandContext(ctx, "docker", b.streamLogsArgs()...)
 	// Combine stdout and stderr: gnoland may write to either stream.
 	cmd.Stdout = w
 	cmd.Stderr = w
@@ -37,7 +41,7 @@ func (b *DockerBackend) StreamLogs(ctx context.Context) (io.ReadCloser, error) {
 
 func (b *DockerBackend) FetchLogs(ctx context.Context, n int) ([]string, error) {
 	out, err := exec.CommandContext(ctx, "docker", "logs", b.ContainerName,
-		"--tail", fmt.Sprintf("%d", n), "--timestamps").CombinedOutput()
+		"--tail", fmt.Sprintf("%d", n)).CombinedOutput()
 	if err != nil {
 		return nil, err
 	}

@@ -142,7 +142,7 @@ func TestDockerBackendStreamLogsIncludesSince(t *testing.T) {
 func TestHandleLogsNilBackend(t *testing.T) {
 	c := node.NewClient("http://localhost:1", 1*time.Second)
 	srv := NewServer(c, "127.0.0.1:0", 5*time.Second)
-	// Backend is nil — should return empty list, not 500
+	// Backend is nil — should return empty array [], not null or 500
 
 	req := httptest.NewRequest("GET", "/api/logs", nil)
 	w := httptest.NewRecorder()
@@ -151,16 +151,20 @@ func TestHandleLogsNilBackend(t *testing.T) {
 	if w.Code != 200 {
 		t.Errorf("status = %d, want 200", w.Code)
 	}
-	var resp map[string]interface{}
-	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+	var respFull map[string]json.RawMessage
+	if err := json.Unmarshal(w.Body.Bytes(), &respFull); err != nil {
 		t.Fatal("invalid JSON:", err)
 	}
-	lines, ok := resp["lines"]
+	linesRaw, ok := respFull["lines"]
 	if !ok {
 		t.Fatal("missing 'lines' field")
 	}
+	var lines []json.RawMessage
+	if err := json.Unmarshal(linesRaw, &lines); err != nil {
+		t.Fatalf("'lines' is not a JSON array: %s", linesRaw)
+	}
 	if lines == nil {
-		t.Error("lines should not be nil")
+		t.Error("lines must be [] not null")
 	}
 }
 
@@ -169,8 +173,8 @@ func TestHandleLogsSanitizesRootPaths(t *testing.T) {
 	srv := NewServer(c, "127.0.0.1:0", 5*time.Second)
 	srv.Backend = &mockBackend{
 		fetchLines: []string{
-			"2024-01-15T12:34:56Z gnoland[123]: loading /root/gnoland-data/config",
-			"2024-01-15T12:34:56Z gnoland[123]: normal log line",
+			`{"level":"info","ts":0,"msg":"loading /root/gnoland-data/config","module":"node"}`,
+			`{"level":"info","ts":0,"msg":"normal log line","module":"node"}`,
 		},
 	}
 
@@ -184,6 +188,61 @@ func TestHandleLogsSanitizesRootPaths(t *testing.T) {
 	}
 	if !strings.Contains(body, "~/") {
 		t.Error("response should contain ~/ replacement")
+	}
+}
+
+func TestHandleLogsReturnsLogEntries(t *testing.T) {
+	c := node.NewClient("http://localhost:1", 1*time.Second)
+	srv := NewServer(c, "127.0.0.1:0", 5*time.Second)
+	srv.Backend = &mockBackend{
+		fetchLines: []string{
+			`{"level":"info","ts":0,"msg":"hello","module":"test"}`,
+		},
+	}
+
+	req := httptest.NewRequest("GET", "/api/logs", nil)
+	w := httptest.NewRecorder()
+	srv.handleLogs(w, req)
+
+	var resp struct {
+		Lines []LogEntry `json:"lines"`
+		Count int        `json:"count"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatal("invalid JSON:", err)
+	}
+	if resp.Count != 1 {
+		t.Errorf("count = %d, want 1", resp.Count)
+	}
+	if len(resp.Lines) != 1 {
+		t.Fatalf("len(lines) = %d, want 1", len(resp.Lines))
+	}
+	if resp.Lines[0].Level != "INFO" {
+		t.Errorf("Level = %q, want INFO", resp.Lines[0].Level)
+	}
+	if resp.Lines[0].Module != "test" {
+		t.Errorf("Module = %q, want test", resp.Lines[0].Module)
+	}
+}
+
+func TestParseLogEventPeerExtraction(t *testing.T) {
+	c := node.NewClient("http://localhost:1", 1*time.Second)
+	srv := NewServer(c, "127.0.0.1:0", 5*time.Second)
+
+	entry := LogEntry{
+		Msg:   "dial peer",
+		Level: "INFO",
+		Extra: map[string]interface{}{"peer": "abc123@1.2.3.4:26656"},
+	}
+	srv.parseLogEvent(entry)
+
+	var foundIP string
+	srv.peerActivity.Range(func(k, v interface{}) bool {
+		foundIP = k.(string)
+		return true
+	})
+	if foundIP != "1.2.3.4" {
+		t.Errorf("peerActivity IP = %q, want 1.2.3.4", foundIP)
 	}
 }
 

@@ -45,8 +45,9 @@ func parseGnolandLog(line string) LogEntry {
 	if v, ok := raw["ts"]; ok {
 		json.Unmarshal(v, &ts) //nolint:errcheck
 	}
-	// Sub-second precision is intentionally discarded; second-level is sufficient for display.
-	t := time.Unix(int64(ts), 0).UTC().Format(time.RFC3339)
+	sec := int64(ts)
+	nsec := int64((ts - float64(sec)) * 1e9)
+	t := time.Unix(sec, nsec).UTC().Format("01-02 15:04:05.000")
 
 	// Extra: all fields except the core ones.
 	var full map[string]interface{}

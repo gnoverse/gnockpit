@@ -6,12 +6,12 @@ import (
 )
 
 func TestParseGnolandLogJSON(t *testing.T) {
-	// ts=0 → 1970-01-01T00:00:00Z (deterministic)
+	// ts=0 → 1970-01-01 epoch (deterministic)
 	line := `{"level":"info","ts":0,"msg":"Starting multi","module":"proxy","impl":"multi"}`
 	e := parseGnolandLog(line)
 
-	if e.Time != "1970-01-01T00:00:00Z" {
-		t.Errorf("Time = %q, want %q", e.Time, "1970-01-01T00:00:00Z")
+	if e.Time != "01-01 00:00:00.000" {
+		t.Errorf("Time = %q, want %q", e.Time, "01-01 00:00:00.000")
 	}
 	if e.Level != "INFO" {
 		t.Errorf("Level = %q, want INFO", e.Level)
