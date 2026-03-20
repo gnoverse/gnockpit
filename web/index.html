@@ -1616,6 +1616,14 @@ var logFlushScheduled = false;
 
 function handleLogLine(entry) {
     if (!lastLogLines) lastLogLines = [];
+    // Truncate huge extra values to prevent memory bloat
+    if (entry.extra) {
+      var ek = Object.keys(entry.extra);
+      for (var i = 0; i < ek.length; i++) {
+        var v = entry.extra[ek[i]];
+        if (typeof v === 'string' && v.length > 200) entry.extra[ek[i]] = v.substring(0, 200) + '...';
+      }
+    }
     lastLogLines.push(entry);
     if (lastLogLines.length > 200) lastLogLines.shift();
     if (entry.module) addModule(entry.module);
@@ -1681,8 +1689,7 @@ function flushLogQueue() {
     logQueue = [];
     if (count > 0) {
       body.appendChild(frag);
-      var lines = body.querySelectorAll('.log-line');
-      while (lines.length > 200) { body.removeChild(lines[0]); lines = body.querySelectorAll('.log-line'); }
+      while (body.children.length > 201) { body.removeChild(body.firstChild); }
       updateEmptyState();
       body.scrollTop = body.scrollHeight;
     }
