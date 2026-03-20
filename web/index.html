@@ -2052,6 +2052,6 @@ setInterval(function() {
 }, 1000);
 </script>
 <div style="text-align:center;padding:16px;font-size:11px;color:var(--fg2)"><a href="https://github.com/gnoverse/gnockpit" target="_blank" style="color:var(--fg2);text-decoration:none">gnockpit</a> <a id="gnockpit-version" href="#" target="_blank" style="color:var(--fg2);text-decoration:none"></a></div>
-<script>fetch('/api/version').then(function(r){return r.json()}).then(function(d){if(d.version){var el=document.getElementById('gnockpit-version');el.textContent=d.version;var hash=d.version.replace(/-dirty$/,'').split('-').pop();if(hash)el.href='https://github.com/gnoverse/gnockpit/tree/'+hash}}).catch(function(){})</script>
+<script>fetch('/api/version').then(function(r){return r.json()}).then(function(d){if(d.version){var el=document.getElementById('gnockpit-version');el.textContent=d.version;var clean=d.version.replace(/-dirty$/,'');var m=clean.match(/g([0-9a-f]+)$/);var hash=m?m[1]:clean;if(hash)el.href='https://github.com/gnoverse/gnockpit/commit/'+hash}}).catch(function(){})</script>
 </body>
 </html>
