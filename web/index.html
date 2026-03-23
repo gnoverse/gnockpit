@@ -196,7 +196,9 @@ a.rpc-link.blue { color: var(--blue); }
   #peers-compact-label { display:flex; align-items:center; }
 }
 @media (max-width: 480px) {
-  #peers-cards { grid-template-columns:1fr; }
+  #peers-cards { display:grid !important; grid-template-columns:1fr; }
+  #peers-compact-label { display:none !important; }
+  #network-card .table-wrap { display:none !important; }
   #network-card .table-wrap th:nth-child(2),
   #network-card .table-wrap th:nth-child(3),
   #network-card .table-wrap td:nth-child(2),
@@ -204,6 +206,11 @@ a.rpc-link.blue { color: var(--blue); }
 }
 @media (min-width: 769px) {
   #peers-compact-label { display:none; }
+  #peers-cards { display:none; }
+  /* Restore original desktop peers header: block with float:right label */
+  #network-card .card-header-row { display:block; margin-bottom:0; overflow:hidden; }
+  #network-card .card-header-row h2 { display:inline; }
+  #network-card .card-header-row label:last-child { float:right; }
 }
 </style>
 </head>
