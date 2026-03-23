@@ -135,6 +135,7 @@ a.rpc-link.blue { color: var(--blue); }
 .doctor-item .di-detail { word-break: break-word; }
 .doctor-item .di-title { word-break: break-word; }
 .top-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px; margin-bottom: 16px; }
+.ns-grid { display:grid; grid-template-columns:1fr 1fr; gap:8px 32px; }
 .top-grid > :first-child { } /* config */
 .table-wrap { overflow-x: auto; }
 @media (max-width: 1100px) {
@@ -143,6 +144,7 @@ a.rpc-link.blue { color: var(--blue); }
 }
 @media (max-width: 700px) {
   .top-grid { grid-template-columns: 1fr; }
+  .ns-grid { grid-template-columns:1fr; }
   body { padding: 10px; font-size: 13px; }
   .status-bar { gap: 12px; font-size: 11px; }
   .kv { grid-template-columns: 110px 1fr; }
@@ -198,7 +200,7 @@ a.rpc-link.blue { color: var(--blue); }
 
 <div class="card">
   <h2 data-section="network-state">Network State</h2>
-  <div class="section-body"><div style="display:grid;grid-template-columns:1fr 1fr;gap:8px 32px">
+  <div class="section-body"><div class="ns-grid">
     <div class="kv">
       <span class="k">block height</span><span class="v" id="d-block">-</span>
       <span class="k">block time</span><span class="v" id="d-time">-</span>
