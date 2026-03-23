@@ -1125,6 +1125,190 @@ function renderNetwork() {
 
   runDoctor();
   window.scrollTo(0, scrollY);
+
+  // ---- Peers card view (mobile/tablet)
+  function buildPeersCards() {
+    var container = $('peers-cards');
+    clearChildren(container);
+
+    function healthClass(mp, signRate) {
+      if (!mp) return 'warn';
+      if (typeof signRate === 'number' && signRate < 80) return 'err';
+      if (typeof signRate === 'number' && signRate < 100) return 'warn';
+      return 'ok';
+    }
+
+    function makeCard(data) {
+      // data: { name, isUs, dotClass, healthText, healthCls, address, ip,
+      //         consensus, signRate, signCls, speed, speedCls,
+      //         rpcUrl, rpcText, rpcCls }
+      var card = document.createElement('div');
+      card.className = 'peer-card ' + (data.rpcUrl ? 'has-rpc' : 'no-rpc');
+
+      // Top row
+      var top = document.createElement('div');
+      top.className = 'peer-card-top';
+      var nameSpan = document.createElement('span');
+      nameSpan.className = 'peer-card-name';
+      var dot = mkEl('span', '', 'dot ' + data.dotClass);
+      dot.style.cssText = 'display:inline-block;width:7px;height:7px;border-radius:50%;margin-right:4px';
+      dot.style.background = data.dotClass === 'green' ? 'var(--green)' : data.dotClass === 'red' ? 'var(--red)' : 'var(--yellow)';
+      nameSpan.appendChild(dot);
+      nameSpan.appendChild(document.createTextNode(data.name));
+      if (data.isUs) nameSpan.appendChild(mkEl('span', ' (this host)', 'this-host'));
+      var healthSpan = mkEl('span', data.healthText, data.healthCls);
+      healthSpan.style.fontSize = '11px';
+      top.appendChild(nameSpan);
+      top.appendChild(healthSpan);
+      card.appendChild(top);
+
+      // KV body
+      var kv = document.createElement('div');
+      kv.className = 'peer-card-kv';
+      var fields = [
+        ['address', data.address],
+        ['ip',      data.ip],
+        ['consensus', data.consensus],
+        ['sign%',   { text: data.signRate, cls: data.signCls }],
+        ['speed',   { text: data.speed,    cls: data.speedCls }],
+        ['status',  { text: data.healthText, cls: data.healthCls }]
+      ];
+      for (var fi = 0; fi < fields.length; fi++) {
+        var fk = document.createElement('span');
+        fk.className = 'peer-card-k';
+        fk.textContent = fields[fi][0];
+        kv.appendChild(fk);
+        var fv = document.createElement('span');
+        fv.className = 'peer-card-v';
+        var fval = fields[fi][1];
+        if (typeof fval === 'object' && fval !== null) {
+          fv.textContent = fval.text || '-';
+          if (fval.cls) fv.className += ' ' + fval.cls;
+        } else {
+          fv.textContent = fval || '-';
+          fv.style.color = 'var(--fg2)';
+        }
+        kv.appendChild(fv);
+      }
+      card.appendChild(kv);
+
+      // Footer (RPC)
+      var footer = document.createElement('div');
+      footer.className = 'peer-card-footer';
+      var rpcLabel = mkEl('span', 'rpc', 'peer-card-rpc-label');
+      var rpcVal = mkEl('span', data.rpcText, 'peer-card-rpc-val ' + (data.rpcCls || 'fg2'));
+      var hint = mkEl('span', '\u2197', 'peer-card-hint');
+      footer.appendChild(rpcLabel);
+      footer.appendChild(rpcVal);
+      footer.appendChild(hint);
+      card.appendChild(footer);
+
+      // Click handler
+      if (data.rpcUrl) {
+        card.addEventListener('click', function() { window.open(data.rpcUrl + '/status', '_blank'); });
+      } else {
+        card.addEventListener('click', function() {
+          card.style.animation = 'none';
+          card.offsetHeight; // reflow to restart animation
+          card.style.animation = 'no-rpc-flash 0.6s ease-out forwards';
+        });
+      }
+      return card;
+    }
+
+    // Section: validators
+    if (votes && votes.validators && votes.validators.length > 0) {
+      var vSep = document.createElement('div');
+      vSep.className = 'peer-card-sep';
+      vSep.textContent = 'validators (' + votes.validators.length + ')';
+      container.appendChild(vSep);
+
+      for (var i = 0; i < sortedVals.length; i++) {
+        var v = sortedVals[i];
+        var isUs = v.name && v.name.indexOf(' (us)') !== -1;
+        var cleanName = v.name ? v.name.replace(' (us)', '') : '';
+        var mp = peerByName[cleanName] || peerByAddr[v.address] || null;
+
+        var signRate = typeof v.sign_rate === 'number' ? v.sign_rate : null;
+        var hCls = healthClass(mp || isUs, signRate);
+        var hText = hCls === 'ok' ? 'healthy' : hCls === 'warn' ? 'warn' : 'unhealthy';
+        var dotCls = hCls === 'ok' ? 'green' : hCls === 'warn' ? 'yellow' : 'red';
+
+        var ip = mp ? mp.remote_ip : '';
+        if (isUs && !ip && lastStatus && lastStatus.node_info && lastStatus.node_info.net_address) {
+          var na = lastStatus.node_info.net_address;
+          var atIdx = na.indexOf('@');
+          if (atIdx > 0) { var hp = na.substring(atIdx+1); var ci = hp.lastIndexOf(':'); ip = ci > 0 ? hp.substring(0,ci) : hp; }
+        }
+
+        var peerH = mp ? mp.peer_height : (isUs && votes ? votes.height : '');
+        var consStr = peerH ? peerH + '/' + (mp ? mp.peer_round : votes.round) + '/' + (mp ? mp.peer_step : votes.step) : '-';
+
+        var speedText = '-', speedCls = '';
+        if (typeof v.avg_block_ms === 'number' && v.avg_block_ms > 0) {
+          speedText = (v.avg_block_ms/1000).toFixed(1) + 's';
+          speedCls = v.avg_block_ms <= 3600 ? 'ok' : v.avg_block_ms <= 6000 ? 'warn' : 'err';
+        }
+
+        var rpcUrl = mp && mp.remote_ip ? 'http://' + mp.remote_ip + ':26657' : '';
+        var rpcText = rpcUrl ? (mp.height === 'timeout' ? '\u2717 not reachable' : '\u2713 ' + rpcUrl) : '\u2014';
+        var rpcCls = rpcUrl ? (mp.height === 'timeout' ? 'err' : 'ok') : 'fg2';
+
+        container.appendChild(makeCard({
+          name: cleanName || shortAddr(v.address),
+          isUs: isUs,
+          dotClass: dotCls,
+          healthText: hText,
+          healthCls: hCls,
+          address: shortAddr(v.address),
+          ip: ip,
+          consensus: consStr,
+          signRate: signRate !== null ? signRate + '%' : '-',
+          signCls: signRate !== null ? (signRate >= 100 ? 'ok' : signRate >= 80 ? 'warn' : 'err') : '',
+          speed: speedText,
+          speedCls: speedCls,
+          rpcUrl: rpcUrl,
+          rpcText: rpcText,
+          rpcCls: rpcCls
+        }));
+      }
+    }
+
+    // Section: other peers
+    if (!onlyVals && otherPeers.length > 0) {
+      var pSep = document.createElement('div');
+      pSep.className = 'peer-card-sep';
+      pSep.textContent = 'other peers (' + otherPeers.length + ')';
+      container.appendChild(pSep);
+
+      for (var j = 0; j < otherPeers.length; j++) {
+        var p = otherPeers[j];
+        var pRpcUrl = p.remote_ip ? 'http://' + p.remote_ip + ':26657' : '';
+        var pRpcText = pRpcUrl ? (p.height === 'timeout' ? '\u2717 not reachable' : '\u2713 ' + pRpcUrl) : '\u2014';
+        var pRpcCls = pRpcUrl ? (p.height === 'timeout' ? 'err' : 'ok') : 'fg2';
+        var pConsStr = p.peer_height ? p.peer_height + '/' + p.peer_round + '/' + p.peer_step : '-';
+
+        container.appendChild(makeCard({
+          name: p.moniker || shortAddr(p.val_address || ''),
+          isUs: false,
+          dotClass: 'green',
+          healthText: 'peer',
+          healthCls: 'ok',
+          address: p.val_address ? shortAddr(p.val_address) : '-',
+          ip: p.remote_ip || '-',
+          consensus: pConsStr,
+          signRate: '-',
+          signCls: '',
+          speed: '-',
+          speedCls: '',
+          rpcUrl: pRpcUrl,
+          rpcText: pRpcText,
+          rpcCls: pRpcCls
+        }));
+      }
+    }
+  }
+  buildPeersCards();
 }
 
 // Build a list of all known names for highlighting in doctor text
