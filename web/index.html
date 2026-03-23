@@ -1230,7 +1230,7 @@ function renderNetwork() {
         var mp = peerByName[cleanName] || peerByAddr[v.address] || null;
 
         var signRate = typeof v.sign_rate === 'number' ? v.sign_rate : null;
-        var hCls = healthClass(mp || isUs, signRate);
+        var hCls = isUs ? 'ok' : healthClass(mp, signRate);
         var hText = hCls === 'ok' ? 'healthy' : hCls === 'warn' ? 'warn' : 'unhealthy';
         var dotCls = hCls === 'ok' ? 'green' : hCls === 'warn' ? 'yellow' : 'red';
 
