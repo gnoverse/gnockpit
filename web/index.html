@@ -1975,6 +1975,35 @@ ovCb.addEventListener('change', function() {
   renderNetwork();
 });
 
+// Compact peers toggle (mobile/tablet)
+function applyPeersCompact(compact) {
+  var cards = $('peers-cards');
+  var wrap = document.querySelector('#network-card .table-wrap');
+  if (!cards || !wrap) return;
+  // These only apply when the media query is active (≤768px).
+  // At >768px, CSS always shows the table regardless.
+  if (compact) {
+    cards.style.display = 'none';
+    wrap.style.display = '';
+  } else {
+    cards.style.display = '';
+    wrap.style.display = '';
+    // CSS media query re-hides the table at ≤768px when display is unset
+  }
+}
+
+var peersCompactCb = $('peers-compact');
+var peersCompact = false;
+try { peersCompact = localStorage.getItem('peers-compact') === 'true'; } catch(e) {}
+peersCompactCb.checked = peersCompact;
+applyPeersCompact(peersCompact);
+
+peersCompactCb.addEventListener('change', function() {
+  peersCompact = peersCompactCb.checked;
+  try { localStorage.setItem('peers-compact', peersCompact ? 'true' : 'false'); } catch(e) {}
+  applyPeersCompact(peersCompact);
+});
+
 // Logs
 var lastLogLines = null;
 var knownModules = new Set();
