@@ -197,6 +197,10 @@ a.rpc-link.blue { color: var(--blue); }
 }
 @media (max-width: 480px) {
   #peers-cards { grid-template-columns:1fr; }
+  #network-card .table-wrap th:nth-child(2),
+  #network-card .table-wrap th:nth-child(3),
+  #network-card .table-wrap td:nth-child(2),
+  #network-card .table-wrap td:nth-child(3) { display:none; }
 }
 @media (min-width: 769px) {
   #peers-compact-label { display:none; }
@@ -1984,11 +1988,10 @@ function applyPeersCompact(compact) {
   // At >768px, CSS always shows the table regardless.
   if (compact) {
     cards.style.display = 'none';
-    wrap.style.display = '';
+    wrap.style.display = 'block'; // override 768px media query
   } else {
     cards.style.display = '';
-    wrap.style.display = '';
-    // CSS media query re-hides the table at ≤768px when display is unset
+    wrap.style.display = ''; // let CSS media query hide it at ≤768px
   }
 }
 
