@@ -172,7 +172,9 @@ a.rpc-link.blue { color: var(--blue); }
   .top-grid { grid-template-columns: 1fr; }
   .ns-grid { grid-template-columns:1fr; }
   body { padding: 10px; font-size: 13px; }
-  .status-bar { gap: 12px; font-size: 11px; }
+  p.subtitle { display: none; }
+  .status-bar { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 12px; font-size: 11px; padding: 8px 12px; }
+  .status-bar .sb-right { grid-column: 1 / -1; margin-left: 0; }
   .kv { grid-template-columns: 110px 1fr; }
   th, td { padding: 3px 4px; font-size: 12px; }
 }
