@@ -434,13 +434,29 @@ function saveURL() {
 }
 
 function $(id) { return document.getElementById(id); }
+var flashPending = [];
+var flashRafId = 0;
+function scheduleFlash(el) {
+  el.classList.remove('changed');
+  flashPending.push(el);
+  if (!flashRafId) {
+    flashRafId = requestAnimationFrame(function() {
+      var pending = flashPending;
+      flashPending = [];
+      flashRafId = 0;
+      // Second RAF: browser committed the removal in the previous frame's style pass,
+      // so adding 'changed' here reliably restarts the animation.
+      requestAnimationFrame(function() {
+        for (var i = 0; i < pending.length; i++) pending[i].classList.add('changed');
+      });
+    });
+  }
+}
 function setText(id, text) {
   var el = $(id);
   if (el.textContent !== text) {
     el.textContent = text;
-    el.classList.remove('changed');
-    void el.offsetWidth;
-    el.classList.add('changed');
+    scheduleFlash(el);
   }
 }
 function setTextWithClass(id, text, cls) {
@@ -449,7 +465,7 @@ function setTextWithClass(id, text, cls) {
   el.textContent = text;
   el.className = cls;
   if (changed) {
-    el.classList.add('changed');
+    scheduleFlash(el);
   }
 }
 function clearChildren(el) { while (el.firstChild) el.removeChild(el.firstChild); }
@@ -1831,13 +1847,12 @@ function handleChecks(d) {
     }
 }
 
-function handlePeers(d) {
+function setPeers(d) {
     lastPeers = d;
     if (lastPeers) lastPeers.sort(function(a, b) { return (a.moniker || '').localeCompare(b.moniker || ''); });
-    renderNetwork();
 }
 
-function handleVotes(d) {
+function setVotes(d) {
     lastVotes = d;
     // Build dynamic validator address→name lookup from server data
     if (d && d.validators) {
@@ -1848,8 +1863,11 @@ function handleVotes(d) {
         }
       }
     }
-    renderNetwork();
 }
+
+function handlePeers(d) { setPeers(d); renderNetwork(); }
+
+function handleVotes(d) { setVotes(d); renderNetwork(); }
 
 var logQueue = [];
 var logFlushScheduled = false;
@@ -1931,7 +1949,7 @@ function flushLogQueue() {
       body.appendChild(frag);
       while (body.children.length > 201) { body.removeChild(body.firstChild); }
       updateEmptyState();
-      body.scrollTop = body.scrollHeight;
+      requestAnimationFrame(function() { body.scrollTop = body.scrollHeight; });
     }
 }
 
@@ -1950,8 +1968,9 @@ function connect() {
       case 'snapshot':
         if (msg.data.status) handleStatus(msg.data.status);
         if (msg.data.time) handleTime(msg.data.time);
-        if (msg.data.peers) handlePeers(msg.data.peers);
-        if (msg.data.votes) handleVotes(msg.data.votes);
+        if (msg.data.peers) setPeers(msg.data.peers);
+        if (msg.data.votes) setVotes(msg.data.votes);
+        if (msg.data.peers || msg.data.votes) renderNetwork();
         if (msg.data.checks) handleChecks(msg.data.checks);
         break;
       case 'status': handleStatus(msg.data); break;
@@ -2097,7 +2116,7 @@ function renderLogs(entries) {
     body.appendChild(buildLogDiv(entry));
   }
   updateEmptyState();
-  body.scrollTop = body.scrollHeight;
+  requestAnimationFrame(function() { body.scrollTop = body.scrollHeight; });
 }
 
 function fetchLogs(n) {
