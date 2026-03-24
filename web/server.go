@@ -1262,6 +1262,10 @@ func (s *Server) handlePushSubscribe(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid request body", http.StatusBadRequest)
 		return
 	}
+	if req.Endpoint == "" || req.P256dh == "" || req.Auth == "" {
+		http.Error(w, "endpoint, p256dh and auth are required", http.StatusBadRequest)
+		return
+	}
 	sub := push.Subscription{
 		ID:       generateID(),
 		Endpoint: req.Endpoint,
@@ -1285,6 +1289,10 @@ func (s *Server) handlePushSubscribe(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handlePushEntities(w http.ResponseWriter, r *http.Request) {
+	if s.PushManager == nil {
+		http.Error(w, "push not configured", http.StatusServiceUnavailable)
+		return
+	}
 	snap := s.getSnapshot()
 	resp := push.EntitiesResponse{}
 

@@ -569,3 +569,40 @@ func TestHandlePushEntities_ReturnsJSON(t *testing.T) {
 		t.Errorf("expected 0 validators with no snapshot, got %d", len(entities.Validators))
 	}
 }
+
+func TestHandlePushEntities_WithSnapshot(t *testing.T) {
+	srv, _ := newSrvWithPush(t)
+	srv.setSnapshot(&node.Snapshot{
+		Status: &node.Status{NodeInfo: node.NodeInfo{Moniker: "my-node"}},
+		Peers:  []node.Peer{{NodeID: "peer1", Moniker: "peer-alpha", RemoteIP: "1.2.3.4"}},
+		Consensus: &node.ConsensusState{
+			Votes: []node.VoteInfo{{Address: "g1aaa", Name: "alice"}},
+		},
+		Timestamp: time.Now(),
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/push/entities", nil)
+	w := httptest.NewRecorder()
+	srv.handlePushEntities(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+	var entities push.EntitiesResponse
+	if err := json.NewDecoder(w.Body).Decode(&entities); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	// Local node first, then peer.
+	if len(entities.Peers) != 2 {
+		t.Fatalf("expected 2 peers (local + 1 remote), got %d", len(entities.Peers))
+	}
+	if !entities.Peers[0].IsLocal {
+		t.Error("expected first peer to be local node")
+	}
+	if entities.Peers[1].NodeID != "peer1" {
+		t.Errorf("expected peer1, got %q", entities.Peers[1].NodeID)
+	}
+	if len(entities.Validators) != 1 || entities.Validators[0].ValAddress != "g1aaa" {
+		t.Errorf("expected 1 validator g1aaa, got %v", entities.Validators)
+	}
+}

@@ -2722,6 +2722,13 @@ async function pushSaveSettings() {
         const p = await Notification.requestPermission();
         if (p !== 'granted') { alert('Notification permission denied.'); return; }
     }
+    // Delete the old server-side subscription before creating a new one to avoid orphaned rows.
+    if (_pushSubID) {
+        const del = await fetch('/api/push/subscribe?id=' + _pushSubID, { method: 'DELETE' });
+        if (!del.ok) { alert('Failed to update subscription. See console for details.'); return; }
+        _pushSubID = null;
+        localStorage.removeItem('gnockpitPushSubID');
+    }
     const sw = await navigator.serviceWorker.ready;
     let pushSub = await sw.pushManager.getSubscription();
     if (!pushSub) {
