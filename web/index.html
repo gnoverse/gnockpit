@@ -2323,46 +2323,42 @@ wrapCb.addEventListener('change', function() {
 
 // Logs mobile controls
 (function() {
-  var mc = document.getElementById('logs-mobile-controls');
+  var mc = $('logs-mobile-controls');
   if (!mc) return;
 
   // Sync initial state from existing JS vars
   function syncMobileState() {
-    var lt = document.getElementById('lm-level-text');
-    if (lt) lt.textContent = '≥' + logsMinLevel;
-    var cc = document.getElementById('lm-compact-cb');
-    if (cc) cc.checked = logsCompact;
-    var wc = document.getElementById('lm-wrap-cb');
-    if (wc) wc.checked = logsWrap;
-    var ic = document.getElementById('lm-indent-cb');
-    if (ic) ic.checked = logsIndent;
-    var fi = document.getElementById('lm-filter');
-    if (fi) fi.value = logsText;
-    var pb = document.getElementById('lm-pause-btn');
-    if (pb) {
-      var paused = document.getElementById('logs-pause') && document.getElementById('logs-pause').textContent === 'resume';
-      pb.textContent = paused ? '▶' : '⏸';
-      pb.style.borderColor = paused ? 'var(--green)' : 'var(--blue)';
-      pb.style.color = paused ? 'var(--green)' : 'var(--blue)';
-    }
+    $('lm-level-text').textContent = '≥' + logsMinLevel;
+    $('lm-compact-cb').checked = logsCompact;
+    $('lm-wrap-cb').checked = logsWrap;
+    $('lm-indent-cb').checked = logsIndent;
+    $('lm-filter').value = logsText;
+    setPauseIcon($('lm-pause-btn'), logsPaused);
   }
+
+  function setPauseIcon(btn, paused) {
+    btn.textContent = paused ? '▶' : '⏸';
+    btn.style.borderColor = paused ? 'var(--green)' : 'var(--blue)';
+    btn.style.color = paused ? 'var(--green)' : 'var(--blue)';
+  }
+
   syncMobileState();
 
   // Dropdown open/close
   var menus = ['lm-level-menu', 'lm-modules-menu', 'lm-format-menu'];
-  function closeAll() { menus.forEach(function(id) { var el = document.getElementById(id); if (el) el.style.display = 'none'; }); }
+  function closeAll() { menus.forEach(function(id) { $(id).style.display = 'none'; }); }
 
-  document.getElementById('lm-level-btn').addEventListener('click', function(e) {
+  $('lm-level-btn').addEventListener('click', function(e) {
     e.stopPropagation();
-    var m = document.getElementById('lm-level-menu');
+    var m = $('lm-level-menu');
     m.style.display = m.style.display === 'none' ? 'block' : 'none';
-    document.getElementById('lm-modules-menu').style.display = 'none';
-    document.getElementById('lm-format-menu').style.display = 'none';
+    $('lm-modules-menu').style.display = 'none';
+    $('lm-format-menu').style.display = 'none';
   });
 
-  document.getElementById('lm-modules-btn').addEventListener('click', function(e) {
+  $('lm-modules-btn').addEventListener('click', function(e) {
     e.stopPropagation();
-    var m = document.getElementById('lm-modules-menu');
+    var m = $('lm-modules-menu');
     if (m.style.display !== 'none') { m.style.display = 'none'; return; }
     // Rebuild from live state each open — mod-list is dynamic (addModule adds checkboxes live)
     m.innerHTML = '';
@@ -2381,67 +2377,64 @@ wrapCb.addEventListener('change', function() {
       m.appendChild(lbl);
     });
     m.style.display = 'block';
-    document.getElementById('lm-level-menu').style.display = 'none';
-    document.getElementById('lm-format-menu').style.display = 'none';
+    $('lm-level-menu').style.display = 'none';
+    $('lm-format-menu').style.display = 'none';
   });
 
-  document.getElementById('lm-format-btn').addEventListener('click', function(e) {
+  $('lm-format-btn').addEventListener('click', function(e) {
     e.stopPropagation();
-    var m = document.getElementById('lm-format-menu');
+    var m = $('lm-format-menu');
     m.style.display = m.style.display === 'none' ? 'block' : 'none';
-    document.getElementById('lm-level-menu').style.display = 'none';
-    document.getElementById('lm-modules-menu').style.display = 'none';
+    $('lm-level-menu').style.display = 'none';
+    $('lm-modules-menu').style.display = 'none';
   });
 
   document.addEventListener('click', closeAll);
 
   // Level select
-  document.getElementById('lm-level-menu').addEventListener('click', function(e) {
+  $('lm-level-menu').addEventListener('click', function(e) {
     var t = e.target.closest('[data-level]');
     if (!t) return;
     logsMinLevel = t.getAttribute('data-level');
-    document.getElementById('lm-level-text').textContent = '≥' + logsMinLevel;
-    document.getElementById('logs-level').value = logsMinLevel;
+    $('lm-level-text').textContent = '≥' + logsMinLevel;
+    $('logs-level').value = logsMinLevel;
     saveURL();
     if (lastLogLines) renderLogs(lastLogLines);
     closeAll();
   });
 
   // Format toggles
-  document.getElementById('lm-compact-cb').addEventListener('change', function() {
+  $('lm-compact-cb').addEventListener('change', function() {
     logsCompact = this.checked;
-    document.getElementById('logs-compact').checked = logsCompact;
+    $('logs-compact').checked = logsCompact;
     if (logsCompact) $('logs-body').classList.add('compact'); else $('logs-body').classList.remove('compact');
     saveURL();
   });
-  document.getElementById('lm-wrap-cb').addEventListener('change', function() {
+  $('lm-wrap-cb').addEventListener('change', function() {
     logsWrap = this.checked;
-    document.getElementById('logs-wrap').checked = logsWrap;
+    $('logs-wrap').checked = logsWrap;
     if (logsWrap) $('logs-body').classList.add('no-scroll'); else $('logs-body').classList.remove('no-scroll');
     saveURL();
   });
-  document.getElementById('lm-indent-cb').addEventListener('change', function() {
+  $('lm-indent-cb').addEventListener('change', function() {
     logsIndent = this.checked;
-    document.getElementById('logs-indent').checked = logsIndent;
+    $('logs-indent').checked = logsIndent;
     saveURL();
     if (lastLogLines) renderLogs(lastLogLines);
   });
 
   // Filter input
-  document.getElementById('lm-filter').addEventListener('input', function() {
+  $('lm-filter').addEventListener('input', function() {
     logsText = this.value;
-    document.getElementById('logs-filter').value = logsText;
+    $('logs-filter').value = logsText;
     saveURL();
     if (lastLogLines) renderLogs(lastLogLines);
   });
 
   // Pause/play
-  document.getElementById('lm-pause-btn').addEventListener('click', function() {
-    document.getElementById('logs-pause').click();
-    var paused = document.getElementById('logs-pause').textContent === 'resume';
-    this.textContent = paused ? '▶' : '⏸';
-    this.style.borderColor = paused ? 'var(--green)' : 'var(--blue)';
-    this.style.color = paused ? 'var(--green)' : 'var(--blue)';
+  $('lm-pause-btn').addEventListener('click', function() {
+    $('logs-pause').click();
+    setPauseIcon(this, logsPaused);
   });
 })();
 
