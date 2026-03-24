@@ -171,7 +171,10 @@ a.rpc-link.blue { color: var(--blue); }
   .top-grid { grid-template-columns: 1fr 1fr; }
   .top-grid > :first-child { grid-column: 1 / -1; } /* config full width */
 }
-@media (max-width: 700px) {
+@media (max-width: 768px) {
+  #peers-cards { display:grid; grid-template-columns:1fr 1fr; }
+  #network-card .table-wrap { display:none; }
+  #peers-compact-label { display:flex; align-items:center; }
   .top-grid { grid-template-columns: 1fr; }
   .ns-grid { grid-template-columns:1fr; }
   body { padding: 10px; font-size: 13px; }
@@ -185,30 +188,7 @@ a.rpc-link.blue { color: var(--blue); }
   #ns-compact-label { display: flex; align-items: center; font-size: 11px; color: var(--fg2); cursor: pointer; }
   #node-compact-label { display: flex; align-items: center; font-size: 11px; color: var(--fg2); cursor: pointer; }
   .logs-desktop-controls { display: none !important; }
-  #logs-mobile-controls { display: block; margin-bottom: 8px; }
-}
-@media (min-width: 701px) {
-  #ns-compact-label { display: none; }
-  #node-compact-label { display: none; }
-}
-@media (max-width: 450px) {
-  .kv { grid-template-columns: 1fr; }
-  .kv .k { font-size: 11px; margin-bottom: -2px; }
-  .kv .v { margin-bottom: 6px; }
-  .status-bar { flex-direction: column; gap: 4px; align-items: flex-start; }
-  .status-bar .sb-right { margin-left: 0; }
-  /* Card-style table on mobile: 2-col grid per row */
-  :not(#network-card) .table-wrap table thead { display: none; }
-  :not(#network-card) .table-wrap table, :not(#network-card) .table-wrap table tbody { display: block; }
-  :not(#network-card) .table-wrap table tr { display: grid; grid-template-columns: 1fr 1fr; gap: 0 8px; padding: 6px 0; border-bottom: 1px solid var(--border); }
-  :not(#network-card) .table-wrap table tr.sep { display: block; padding: 8px 0 2px; }
-  :not(#network-card) .table-wrap table td { padding: 1px 0; font-size: 11px; overflow: hidden; text-overflow: ellipsis; }
-  :not(#network-card) .table-wrap table td:empty { display: none; }
-}
-@media (max-width: 768px) {
-  #peers-cards { display:grid; grid-template-columns:1fr 1fr; }
-  #network-card .table-wrap { display:none; }
-  #peers-compact-label { display:flex; align-items:center; }
+  #logs-mobile-controls { display: block !important; margin-bottom: 8px; }
 }
 @media (max-width: 480px) {
   #peers-cards { display:grid !important; grid-template-columns:1fr; }
@@ -218,6 +198,17 @@ a.rpc-link.blue { color: var(--blue); }
   #network-card .table-wrap th:nth-child(3),
   #network-card .table-wrap td:nth-child(2),
   #network-card .table-wrap td:nth-child(3) { display:none; }
+  .kv { grid-template-columns: 1fr; }
+  .kv .k { font-size: 11px; margin-bottom: -2px; }
+  .kv .v { margin-bottom: 6px; }
+  .status-bar { grid-template-columns: 1fr; gap: 4px; }
+  /* Card-style table on smartphone: 2-col grid per row */
+  :not(#network-card) .table-wrap table thead { display: none; }
+  :not(#network-card) .table-wrap table, :not(#network-card) .table-wrap table tbody { display: block; }
+  :not(#network-card) .table-wrap table tr { display: grid; grid-template-columns: 1fr 1fr; gap: 0 8px; padding: 6px 0; border-bottom: 1px solid var(--border); }
+  :not(#network-card) .table-wrap table tr.sep { display: block; padding: 8px 0 2px; }
+  :not(#network-card) .table-wrap table td { padding: 1px 0; font-size: 11px; overflow: hidden; text-overflow: ellipsis; }
+  :not(#network-card) .table-wrap table td:empty { display: none; }
 }
 @media (min-width: 769px) {
   #peers-compact-label { display:none; }
@@ -226,6 +217,8 @@ a.rpc-link.blue { color: var(--blue); }
   #network-card .card-header-row { display:block; margin-bottom:0; overflow:hidden; }
   #network-card .card-header-row h2 { display:inline; }
   #network-card .card-header-row label:last-child { float:right; }
+  #ns-compact-label { display: none; }
+  #node-compact-label { display: none; }
 }
 </style>
 </head>
@@ -421,7 +414,7 @@ a.rpc-link.blue { color: var(--blue); }
 // Collapsible sections
 (function() {
   // isMobile is a page-load snapshot — intentionally not reactive to resize
-  var isMobile = window.innerWidth <= 700;
+  var isMobile = window.innerWidth <= 768;
   var storageKey = isMobile ? 'gnockpit-collapsed-mobile' : 'gnockpit-collapsed';
   var collapsed = {};
   try { collapsed = JSON.parse(localStorage.getItem(storageKey) || '{}'); } catch(e) {}
@@ -2263,7 +2256,7 @@ compactCb.addEventListener('change', function() {
   var cb = document.getElementById('ns-compact-cb');
   if (!cb) return;
   // isMobile is a page-load snapshot — intentionally not reactive to resize
-  var isMobile = window.innerWidth <= 700;
+  var isMobile = window.innerWidth <= 768;
   // Default compact ON on mobile: null (first visit) !== '0' → true
   var on = isMobile ? (localStorage.getItem('ns-compact') !== '0') : false;
   if (on) nsCard.classList.add('compact-on');
@@ -2281,7 +2274,7 @@ compactCb.addEventListener('change', function() {
   if (!cb) return;
   // isMobile is a page-load snapshot — intentionally not reactive to resize
   // Default compact ON on mobile: null (first visit) !== '0' → true
-  var isMobile = window.innerWidth <= 700;
+  var isMobile = window.innerWidth <= 768;
   var on = isMobile ? (localStorage.getItem('node-compact') !== '0') : false;
   if (on) nodeCard.classList.add('compact-on');
   cb.checked = on;
