@@ -11,6 +11,7 @@ import (
 
 	"github.com/gnoverse/gnockpit/node"
 	"github.com/gnoverse/gnockpit/web"
+	"github.com/gnoverse/gnockpit/web/push"
 	"github.com/spf13/cobra"
 )
 
@@ -26,8 +27,10 @@ var (
 	flagFollow     bool
 	flagInterval   time.Duration
 	flagTimeout    time.Duration
-	flagWebPort    int
-	flagWebAddr    string
+	flagWebPort       int
+	flagWebAddr       string
+	flagDBPath        string
+	flagChainStuckSecs int
 	flagDataDir    string
 	flagGenesisPath string
 	flagNamesPath   string
@@ -654,10 +657,26 @@ func webCmd() *cobra.Command {
 				return fmt.Errorf("-service and -container are mutually exclusive")
 			}
 			srv.Backend = buildBackend(flagService, flagContainer, srv)
+
+			db, err := push.OpenDB(flagDBPath)
+			if err != nil {
+				return fmt.Errorf("open push database: %w", err)
+			}
+			defer db.Close()
+			pushMgr, err := push.NewManager(db, flagChainStuckSecs)
+			if err != nil {
+				return fmt.Errorf("init push manager: %w", err)
+			}
+			srv.PushManager = pushMgr
+
 			return srv.Run(ctx)
 		},
 	}
 	cmd.Flags().IntVar(&flagWebPort, "port", 8080, "web server port")
 	cmd.Flags().StringVar(&flagWebAddr, "addr", "0.0.0.0", "web server bind address")
+	cmd.Flags().StringVar(&flagDBPath, "db-path", "/tmp/gnockpit.db",
+		"SQLite database path for push notifications; use a persistent path in production so VAPID keys survive reboots")
+	cmd.Flags().IntVar(&flagChainStuckSecs, "chain-stuck-secs", 30,
+		"seconds without a new block before the chain-stuck alert fires")
 	return cmd
 }
