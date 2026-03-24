@@ -184,6 +184,8 @@ a.rpc-link.blue { color: var(--blue); }
   #connect-card { order: 99; }
   #ns-compact-label { display: flex; align-items: center; font-size: 11px; color: var(--fg2); cursor: pointer; }
   #node-compact-label { display: flex; align-items: center; font-size: 11px; color: var(--fg2); cursor: pointer; }
+  .logs-desktop-controls { display: none !important; }
+  #logs-mobile-controls { display: block; margin-bottom: 8px; }
 }
 @media (min-width: 701px) {
   #ns-compact-label { display: none; }
@@ -329,7 +331,7 @@ a.rpc-link.blue { color: var(--blue); }
 <div class="card">
   <h2 data-section="logs">Logs</h2>
   <div class="section-body">
-  <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:8px">
+  <div class="logs-desktop-controls" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:8px">
     <span id="logs-status" style="font-size:11px;color:var(--fg2)"></span>
     <select id="logs-level" style="background:var(--bg);color:var(--fg);border:1px solid var(--border);border-radius:4px;padding:1px 4px;font-size:11px;font-family:inherit"><option value="DEBUG">&ge;DEBUG</option><option value="INFO" selected>&ge;INFO</option><option value="WARN">&ge;WARN</option><option value="ERROR">&ge;ERROR</option></select>
     <input id="logs-filter" type="text" placeholder="filter..." style="background:var(--bg);color:var(--fg);border:1px solid var(--border);border-radius:4px;padding:1px 6px;font-size:11px;font-family:inherit;width:100px">
@@ -338,6 +340,47 @@ a.rpc-link.blue { color: var(--blue); }
     <label style="font-size:12px;color:var(--fg2);cursor:pointer"><input type="checkbox" id="logs-wrap" style="margin-right:3px" checked>wrap</label>
     <details id="mod-filter"><summary>modules</summary><div id="mod-list"><label><input type="checkbox" id="mod-all" checked> all</label></div></details>
     <button id="logs-pause" style="background:var(--bg);color:var(--yellow);border:1px solid var(--border);border-radius:4px;padding:2px 10px;cursor:pointer;font-size:12px;font-family:inherit">pause</button>
+  </div>
+  <div id="logs-mobile-controls" style="display:none">
+    <!-- Row 1: level · modules · format · pause -->
+    <div style="display:flex;gap:5px;align-items:stretch;margin-bottom:6px;position:relative">
+      <button id="lm-level-btn" style="flex:1;background:var(--bg);border:1px solid var(--border);color:var(--fg);padding:6px 6px;border-radius:4px;font-family:inherit;font-size:11px;cursor:pointer;display:flex;align-items:center;justify-content:space-between">
+        <span id="lm-level-text">≥INFO</span><span style="color:var(--fg2);font-size:9px">▾</span>
+      </button>
+      <div id="lm-level-menu" style="display:none;position:absolute;top:calc(100% + 4px);left:0;min-width:100px;background:var(--bg2);border:1px solid var(--border);border-radius:4px;z-index:200">
+        <div data-level="DEBUG" style="padding:7px 12px;cursor:pointer;font-size:11px;color:var(--fg2)">≥DEBUG</div>
+        <div data-level="INFO"  style="padding:7px 12px;cursor:pointer;font-size:11px">≥INFO</div>
+        <div data-level="WARN"  style="padding:7px 12px;cursor:pointer;font-size:11px;color:var(--yellow)">≥WARN</div>
+        <div data-level="ERROR" style="padding:7px 12px;cursor:pointer;font-size:11px;color:var(--red)">≥ERROR</div>
+      </div>
+
+      <button id="lm-modules-btn" style="flex:1;background:var(--bg);border:1px solid var(--border);color:var(--fg);padding:6px 6px;border-radius:4px;font-family:inherit;font-size:11px;cursor:pointer;display:flex;align-items:center;justify-content:space-between">
+        <span>modules</span><span style="color:var(--fg2);font-size:9px">▾</span>
+      </button>
+      <div id="lm-modules-menu" style="display:none;position:absolute;top:calc(100% + 4px);left:calc(33% + 5px);min-width:140px;background:var(--bg2);border:1px solid var(--border);border-radius:4px;z-index:200">
+        <!-- populated dynamically by JS -->
+      </div>
+
+      <button id="lm-format-btn" style="flex:1;background:var(--bg);border:1px solid var(--border);color:var(--fg);padding:6px 6px;border-radius:4px;font-family:inherit;font-size:11px;cursor:pointer;display:flex;align-items:center;justify-content:space-between">
+        <span>format</span><span style="color:var(--fg2);font-size:9px">▾</span>
+      </button>
+      <div id="lm-format-menu" style="display:none;position:absolute;top:calc(100% + 4px);right:40px;min-width:130px;background:var(--bg2);border:1px solid var(--border);border-radius:4px;z-index:200">
+        <label style="display:flex;align-items:center;justify-content:space-between;padding:7px 12px;cursor:pointer;font-size:11px">
+          <span>compact</span><input type="checkbox" id="lm-compact-cb">
+        </label>
+        <label style="display:flex;align-items:center;justify-content:space-between;padding:7px 12px;cursor:pointer;font-size:11px">
+          <span>wrap</span><input type="checkbox" id="lm-wrap-cb">
+        </label>
+        <label style="display:flex;align-items:center;justify-content:space-between;padding:7px 12px;cursor:pointer;font-size:11px">
+          <span>indent</span><input type="checkbox" id="lm-indent-cb">
+        </label>
+      </div>
+
+      <button id="lm-pause-btn" style="background:var(--bg);border:1px solid var(--blue);color:var(--blue);padding:6px 10px;border-radius:4px;font-size:15px;cursor:pointer;flex-shrink:0;line-height:1">⏸</button>
+    </div>
+
+    <!-- Row 2: filter -->
+    <input id="lm-filter" type="text" placeholder="filter..." style="background:var(--bg);color:var(--fg);border:1px solid var(--border);border-radius:4px;padding:6px 8px;width:100%;box-sizing:border-box;font-family:inherit;font-size:11px">
   </div>
   <div id="logs-body" style="height:400px;overflow-y:auto;font-size:11px;background:var(--bg);border:1px solid var(--border);border-radius:4px;padding:8px;position:relative">
     <div id="logs-empty" style="position:absolute;top:0;left:0;right:0;bottom:0;display:flex;align-items:center;justify-content:center;color:var(--fg2);font-size:12px;text-align:center;pointer-events:none"></div>
@@ -2277,6 +2320,130 @@ wrapCb.addEventListener('change', function() {
   else $('logs-body').classList.remove('no-scroll');
   saveURL();
 });
+
+// Logs mobile controls
+(function() {
+  var mc = document.getElementById('logs-mobile-controls');
+  if (!mc) return;
+
+  // Sync initial state from existing JS vars
+  function syncMobileState() {
+    var lt = document.getElementById('lm-level-text');
+    if (lt) lt.textContent = '≥' + logsMinLevel;
+    var cc = document.getElementById('lm-compact-cb');
+    if (cc) cc.checked = logsCompact;
+    var wc = document.getElementById('lm-wrap-cb');
+    if (wc) wc.checked = logsWrap;
+    var ic = document.getElementById('lm-indent-cb');
+    if (ic) ic.checked = logsIndent;
+    var fi = document.getElementById('lm-filter');
+    if (fi) fi.value = logsText;
+    var pb = document.getElementById('lm-pause-btn');
+    if (pb) {
+      var paused = document.getElementById('logs-pause') && document.getElementById('logs-pause').textContent === 'resume';
+      pb.textContent = paused ? '▶' : '⏸';
+      pb.style.borderColor = paused ? 'var(--green)' : 'var(--blue)';
+      pb.style.color = paused ? 'var(--green)' : 'var(--blue)';
+    }
+  }
+  syncMobileState();
+
+  // Dropdown open/close
+  var menus = ['lm-level-menu', 'lm-modules-menu', 'lm-format-menu'];
+  function closeAll() { menus.forEach(function(id) { var el = document.getElementById(id); if (el) el.style.display = 'none'; }); }
+
+  document.getElementById('lm-level-btn').addEventListener('click', function(e) {
+    e.stopPropagation();
+    var m = document.getElementById('lm-level-menu');
+    m.style.display = m.style.display === 'none' ? 'block' : 'none';
+    document.getElementById('lm-modules-menu').style.display = 'none';
+    document.getElementById('lm-format-menu').style.display = 'none';
+  });
+
+  document.getElementById('lm-modules-btn').addEventListener('click', function(e) {
+    e.stopPropagation();
+    var m = document.getElementById('lm-modules-menu');
+    if (m.style.display !== 'none') { m.style.display = 'none'; return; }
+    // Rebuild from live state each open — mod-list is dynamic (addModule adds checkboxes live)
+    m.innerHTML = '';
+    knownModules.forEach(function(mod) {
+      var lbl = document.createElement('label');
+      lbl.style.cssText = 'display:flex;align-items:center;justify-content:space-between;padding:6px 12px;cursor:pointer;font-size:11px';
+      var cb = document.createElement('input');
+      cb.type = 'checkbox'; cb.checked = activeModules.has(mod); cb.value = mod;
+      cb.addEventListener('change', function() {
+        // Proxy to the real checkbox in #mod-list so its event listener updates activeModules
+        var orig = document.querySelector('#mod-list input[value="' + mod + '"]');
+        if (orig && orig.checked !== this.checked) { orig.checked = this.checked; orig.dispatchEvent(new Event('change')); }
+      });
+      lbl.appendChild(document.createTextNode(mod));
+      lbl.appendChild(cb);
+      m.appendChild(lbl);
+    });
+    m.style.display = 'block';
+    document.getElementById('lm-level-menu').style.display = 'none';
+    document.getElementById('lm-format-menu').style.display = 'none';
+  });
+
+  document.getElementById('lm-format-btn').addEventListener('click', function(e) {
+    e.stopPropagation();
+    var m = document.getElementById('lm-format-menu');
+    m.style.display = m.style.display === 'none' ? 'block' : 'none';
+    document.getElementById('lm-level-menu').style.display = 'none';
+    document.getElementById('lm-modules-menu').style.display = 'none';
+  });
+
+  document.addEventListener('click', closeAll);
+
+  // Level select
+  document.getElementById('lm-level-menu').addEventListener('click', function(e) {
+    var t = e.target.closest('[data-level]');
+    if (!t) return;
+    logsMinLevel = t.getAttribute('data-level');
+    document.getElementById('lm-level-text').textContent = '≥' + logsMinLevel;
+    document.getElementById('logs-level').value = logsMinLevel;
+    saveURL();
+    if (lastLogLines) renderLogs(lastLogLines);
+    closeAll();
+  });
+
+  // Format toggles
+  document.getElementById('lm-compact-cb').addEventListener('change', function() {
+    logsCompact = this.checked;
+    document.getElementById('logs-compact').checked = logsCompact;
+    if (logsCompact) $('logs-body').classList.add('compact'); else $('logs-body').classList.remove('compact');
+    saveURL();
+  });
+  document.getElementById('lm-wrap-cb').addEventListener('change', function() {
+    logsWrap = this.checked;
+    document.getElementById('logs-wrap').checked = logsWrap;
+    if (logsWrap) $('logs-body').classList.add('no-scroll'); else $('logs-body').classList.remove('no-scroll');
+    saveURL();
+  });
+  document.getElementById('lm-indent-cb').addEventListener('change', function() {
+    logsIndent = this.checked;
+    document.getElementById('logs-indent').checked = logsIndent;
+    saveURL();
+    if (lastLogLines) renderLogs(lastLogLines);
+  });
+
+  // Filter input
+  document.getElementById('lm-filter').addEventListener('input', function() {
+    logsText = this.value;
+    document.getElementById('logs-filter').value = logsText;
+    saveURL();
+    if (lastLogLines) renderLogs(lastLogLines);
+  });
+
+  // Pause/play
+  document.getElementById('lm-pause-btn').addEventListener('click', function() {
+    document.getElementById('logs-pause').click();
+    var paused = document.getElementById('logs-pause').textContent === 'resume';
+    this.textContent = paused ? '▶' : '⏸';
+    this.style.borderColor = paused ? 'var(--green)' : 'var(--blue)';
+    this.style.color = paused ? 'var(--green)' : 'var(--blue)';
+  });
+})();
 
 // Diagnosis reports stored by IP
 var diagReports = {};
