@@ -41,6 +41,7 @@ type Peer struct {
 	Version    string `json:"version,omitempty"`     // software version from net_info
 	P2PAddress string `json:"p2p_address,omitempty"` // nodeID@ip:port
 	// Populated by network/consensus queries
+	CatchingUp     bool   `json:"catching_up,omitempty"`
 	ValAddress     string `json:"val_address,omitempty"` // validator address if known
 	ValPubKey      string `json:"val_pubkey,omitempty"`  // base64 pubkey if known
 	Role           string `json:"role,omitempty"`        // "val", "val?", "full"
