@@ -282,6 +282,12 @@ func TestHTMLEmbedded(t *testing.T) {
 	if !strings.Contains(html, "</script>") {
 		t.Error("missing closing script tag")
 	}
+	if !strings.Contains(html, `<link rel="manifest"`) {
+		t.Error("missing manifest link in index.html")
+	}
+	if !strings.Contains(html, `<meta name="theme-color"`) {
+		t.Error("missing theme-color meta in index.html")
+	}
 }
 
 func TestJSSyntax(t *testing.T) {
