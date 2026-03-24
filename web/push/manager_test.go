@@ -63,22 +63,29 @@ func TestManager_SendPush_RemovesGoneSubscription(t *testing.T) {
 		t.Fatalf("NewManager: %v", err)
 	}
 
-	db.SaveSubscription(push.Subscription{
-		ID:     "dead",
+	if err := db.SaveSubscription(push.Subscription{
+		ID:       "dead",
 		Endpoint: srv.URL,
-		P256dh: "BNNL5ZaTfK81qhXOx23-wewhigUeFb632jN6LvRWCFH1ubQr77FE_9qV1FuojuRmHP42zmf34rXgW80OvUVDgTk",
-		Auth:   "zqbxT6JKstKSY9JKibZLSQ",
-	})
-	db.SaveSubscriptionAlerts("dead", []push.SubscriptionAlert{
+		P256dh:   "BNNL5ZaTfK81qhXOx23-wewhigUeFb632jN6LvRWCFH1ubQr77FE_9qV1FuojuRmHP42zmf34rXgW80OvUVDgTk",
+		Auth:     "zqbxT6JKstKSY9JKibZLSQ",
+	}); err != nil {
+		t.Fatalf("SaveSubscription: %v", err)
+	}
+	if err := db.SaveSubscriptionAlerts("dead", []push.SubscriptionAlert{
 		{SubscriptionID: "dead", AlertType: push.AlertChainStuck, EntityID: ""},
-	})
+	}); err != nil {
+		t.Fatalf("SaveSubscriptionAlerts: %v", err)
+	}
 
 	m.NotifyAlert(push.Alert{
 		Type: push.AlertChainStuck, EntityID: "", Firing: true,
 		Title: "Test", Body: "test",
 	})
 
-	subs, _ := db.AllSubscriptions()
+	subs, err := db.AllSubscriptions()
+	if err != nil {
+		t.Fatalf("AllSubscriptions: %v", err)
+	}
 	if len(subs) != 0 {
 		t.Errorf("expected dead subscription removed after 410, got %d", len(subs))
 	}
