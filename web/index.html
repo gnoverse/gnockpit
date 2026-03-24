@@ -2674,15 +2674,17 @@ function renderAlertsForm() {
                              'You will be asked for permission when saving.';
     document.getElementById('alerts-unsub-btn').style.display = _pushSubID ? '' : 'none';
 
+    const entities = _pushEntities || { validators: [], peers: [] };
     const alertDefs = [
         { type: 'chain_stuck',             label: 'Chain stuck',             entities: [] },
-        { type: 'validator_missing_votes', label: 'Validator missing votes', entities: _pushEntities.validators || [] },
-        { type: 'node_unreachable',        label: 'Node unreachable',        entities: _pushEntities.peers || [] },
-        { type: 'node_out_of_sync',        label: 'Node out of sync',        entities: _pushEntities.peers || [] },
+        { type: 'validator_missing_votes', label: 'Validator missing votes', entities: entities.validators || [] },
+        { type: 'node_unreachable',        label: 'Node unreachable',        entities: entities.peers || [] },
+        { type: 'node_out_of_sync',        label: 'Node out of sync',        entities: entities.peers || [] },
     ];
 
     document.getElementById('alerts-form').innerHTML = alertDefs.map(def => {
         if (def.entities.length === 0) {
+            // Global alert (chain_stuck) or entity list not yet loaded.
             return `<div style="display:flex; align-items:center; gap:10px; padding:10px 0; border-bottom:1px solid var(--border,#333);">
                 <input type="checkbox" id="chk-${def.type}" data-type="${def.type}" data-entity="">
                 <label for="chk-${def.type}" style="flex:1; cursor:pointer;">${def.label}</label>
@@ -2753,7 +2755,8 @@ async function pushSaveSettings() {
 
 async function pushUnsubscribe() {
     if (!_pushSubID) return;
-    await fetch('/api/push/subscribe?id=' + _pushSubID, { method: 'DELETE' });
+    const r = await fetch('/api/push/subscribe?id=' + _pushSubID, { method: 'DELETE' });
+    if (!r.ok) { alert('Failed to unsubscribe. See console for details.'); return; }
     const sw = await navigator.serviceWorker.ready;
     const pushSub = await sw.pushManager.getSubscription();
     if (pushSub) await pushSub.unsubscribe();
