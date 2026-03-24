@@ -137,6 +137,9 @@ a.rpc-link.blue { color: var(--blue); }
 .top-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px; margin-bottom: 16px; }
 .ns-grid { display:grid; grid-template-columns:1fr 1fr; gap:8px 32px; }
 .card-header-row { display:flex; align-items:center; gap:12px; margin-bottom:8px; }
+[data-compact="show-only"] { display: none; }
+.compact-on [data-compact="hide"] { display: none; }
+.compact-on [data-compact="show-only"] { display: initial; }
 .card-header-row h2 { flex:1; margin-bottom:0; }
 .card-header-row label { font-size:12px; color:var(--fg2); cursor:pointer; white-space:nowrap; }
 /* ---- Peers card view (≤768px) */
@@ -179,6 +182,10 @@ a.rpc-link.blue { color: var(--blue); }
   th, td { padding: 3px 4px; font-size: 12px; }
   .card-stack { display: flex; flex-direction: column; }
   #connect-card { order: 99; }
+  #ns-compact-label { display: flex; align-items: center; font-size: 11px; color: var(--fg2); cursor: pointer; }
+}
+@media (min-width: 701px) {
+  #ns-compact-label { display: none; }
 }
 @media (max-width: 450px) {
   .kv { grid-template-columns: 1fr; }
@@ -252,28 +259,33 @@ a.rpc-link.blue { color: var(--blue); }
 </div>
 
 <div class="card">
-  <h2 data-section="network-state">Network State</h2>
+  <div class="card-header-row" id="ns-header-row">
+    <h2 data-section="network-state">Network State</h2>
+    <label id="ns-compact-label"><input type="checkbox" id="ns-compact-cb" style="margin-right:3px">compact</label>
+  </div>
   <div class="section-body"><div class="ns-grid">
     <div class="kv">
-      <span class="k">block height</span><span class="v" id="d-block">-</span>
+      <span class="k" data-compact="hide">block height</span><span class="v" id="d-block" data-compact="hide">-</span>
       <span class="k">block time</span><span class="v" id="d-time">-</span>
-      <span class="k">chain</span><span class="v" id="d-network">-</span>
-      <span class="k">genesis time</span><span class="v" id="c-gentime">-</span>
+      <span class="k" data-compact="hide">chain</span><span class="v" id="d-network" data-compact="hide">-</span>
+      <span class="k" data-compact="hide">genesis time</span><span class="v" id="c-gentime" data-compact="hide">-</span>
       <span class="k">genesis age</span><span class="v" id="ns-genesis-age">-</span>
-      <span class="k">apphash (blk 2)</span><span class="v" id="d-apphash">-</span>
-      <span class="k">peers</span><span class="v" id="ns-peers">-</span>
+      <span class="k" data-compact="hide">apphash (blk 2)</span><span class="v" id="d-apphash" data-compact="hide">-</span>
+      <span class="k" data-compact="hide">peers</span><span class="v" id="ns-peers" data-compact="hide">-</span>
       <span class="k">node uptime</span><span class="v" id="d-gnoland-uptime">-</span>
     </div>
     <div class="kv">
       <span class="k">consensus</span><span class="v" id="ns-consensus">-</span>
       <span class="k">proposer</span><span class="v" id="ns-proposer">-</span>
-      <span class="k">valset</span><span class="v" id="ns-valset">-</span>
-      <span class="k">min bft</span><span class="v" id="ns-bft">-</span>
+      <span class="k" data-compact="hide">valset</span><span class="v" id="ns-valset" data-compact="hide">-</span>
+      <span class="k" data-compact="hide">min bft</span><span class="v" id="ns-bft" data-compact="hide">-</span>
       <span class="k">votes (pv/pc)</span><span class="v" id="ns-votes">-</span>
       <span class="k">round age</span><span class="v" id="ns-roundage">-</span>
-      <span class="k">active validators</span><span class="v" id="ns-active">-</span>
-      <span class="k">avg block time</span><span class="v" id="ns-avgblock">-</span>
-      <span class="k">can add validator</span><span class="v" id="ns-canadd">-</span>
+      <span class="k" data-compact="hide">active validators</span><span class="v" id="ns-active" data-compact="hide">-</span>
+      <span class="k" data-compact="hide">avg block time</span><span class="v" id="ns-avgblock" data-compact="hide">-</span>
+      <span class="k" data-compact="hide">can add validator</span><span class="v" id="ns-canadd" data-compact="hide">-</span>
+      <span class="k" data-compact="show-only">active vals</span>
+      <span class="v" id="ns-active-compact" data-compact="show-only">-</span>
     </div>
   </div>
 
@@ -1740,6 +1752,12 @@ function handleSigning(d) {
     }
     setText('ns-canadd', d.can_add_one ? 'yes' : 'no \u2014 would risk halt');
     addEl.className = d.can_add_one ? 'v ok' : 'v err';
+    var activeCt = document.getElementById('ns-active-compact');
+    if (activeCt) {
+      var activeVal = document.getElementById('ns-active') ? document.getElementById('ns-active').textContent : '-';
+      var avgVal = document.getElementById('ns-avgblock') ? document.getElementById('ns-avgblock').textContent : '-';
+      activeCt.textContent = activeVal + ' · ' + avgVal + ' avg';
+    }
 
     // Recent blocks — single row, horizontal scroll, most recent first
     var container = $('recent-blocks');
@@ -2190,6 +2208,21 @@ compactCb.addEventListener('change', function() {
   else $('logs-body').classList.remove('compact');
   saveURL();
 });
+
+// Network State compact toggle
+(function() {
+  var nsCard = document.querySelector('[data-section="network-state"]').closest('.card');
+  var cb = document.getElementById('ns-compact-cb');
+  if (!cb) return;
+  var isMobile = window.innerWidth <= 700;
+  var on = isMobile ? (localStorage.getItem('ns-compact') !== '0') : false;
+  if (on) nsCard.classList.add('compact-on');
+  cb.checked = on;
+  cb.addEventListener('change', function() {
+    if (this.checked) { nsCard.classList.add('compact-on'); localStorage.setItem('ns-compact', '1'); }
+    else { nsCard.classList.remove('compact-on'); localStorage.setItem('ns-compact', '0'); }
+  });
+})();
 
 // Log filter events + URL persistence
 $('logs-filter').value = logsText;
