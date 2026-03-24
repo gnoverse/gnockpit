@@ -238,7 +238,12 @@ a.rpc-link.blue { color: var(--blue); }
   <span id="s-catching"></span>
   <span>Peers: <strong id="s-peers">-</strong></span>
   <span id="s-connection"><span class="dot yellow"></span>connecting</span>
-  <span class="sb-right">Updated: <span id="s-time">-</span> <span id="s-time-ago" style="color:var(--fg2)"></span></span>
+  <span class="sb-right" style="display:flex;align-items:center;gap:10px;">
+    <button id="push-btn" style="display:none;background:none;border:none;cursor:pointer;color:var(--fg2);padding:0;line-height:1;" title="Alert notifications" onclick="openAlertsModal()" aria-label="Alert notifications">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
+    </button>
+    <span>Updated: <span id="s-time">-</span> <span id="s-time-ago" style="color:var(--fg2)"></span></span>
+  </span>
 </div>
 
 <div id="genesis-countdown" style="display:none;text-align:center;padding:12px;margin-bottom:16px;background:rgba(88,166,255,0.1);border:1px solid var(--blue);border-radius:8px">
@@ -2621,8 +2626,159 @@ setInterval(function() {
     }
   }
 }, 1000);
+
+// ---- Push notifications
+
+let _pushSubID = localStorage.getItem('gnockpitPushSubID') || null;
+let _vapidKey = null;
+let _pushEntities = null;
+
+async function initPush() {
+    if (!window.isSecureContext || !('serviceWorker' in navigator) || !('PushManager' in window)) return;
+    try {
+        await navigator.serviceWorker.register('/service-worker.js');
+        const r = await fetch('/api/push/vapid-key');
+        if (!r.ok) return;
+        _vapidKey = (await r.json()).key;
+        document.getElementById('push-btn').style.display = '';
+    } catch (e) {
+        console.warn('push init failed:', e);
+    }
+}
+
+async function openAlertsModal() {
+    const modal = document.getElementById('alerts-modal');
+    modal.style.display = 'flex';
+    try {
+        const r = await fetch('/api/push/entities');
+        _pushEntities = await r.json();
+    } catch (_) {
+        _pushEntities = { validators: [], peers: [] };
+    }
+    renderAlertsForm();
+}
+
+function closeAlertsModal() {
+    document.getElementById('alerts-modal').style.display = 'none';
+}
+
+function closeAlertsModalOutside(e) {
+    if (e.target === document.getElementById('alerts-modal')) closeAlertsModal();
+}
+
+function renderAlertsForm() {
+    const perm = Notification.permission;
+    document.getElementById('alerts-perm-status').textContent =
+        perm === 'granted' ? 'Notifications are enabled in this browser.' :
+        perm === 'denied'  ? 'Notifications are blocked. Enable them in browser settings.' :
+                             'You will be asked for permission when saving.';
+    document.getElementById('alerts-unsub-btn').style.display = _pushSubID ? '' : 'none';
+
+    const alertDefs = [
+        { type: 'chain_stuck',             label: 'Chain stuck',             entities: [] },
+        { type: 'validator_missing_votes', label: 'Validator missing votes', entities: _pushEntities.validators || [] },
+        { type: 'node_unreachable',        label: 'Node unreachable',        entities: _pushEntities.peers || [] },
+        { type: 'node_out_of_sync',        label: 'Node out of sync',        entities: _pushEntities.peers || [] },
+    ];
+
+    document.getElementById('alerts-form').innerHTML = alertDefs.map(def => {
+        if (def.entities.length === 0) {
+            return `<div style="display:flex; align-items:center; gap:10px; padding:10px 0; border-bottom:1px solid var(--border,#333);">
+                <input type="checkbox" id="chk-${def.type}" data-type="${def.type}" data-entity="">
+                <label for="chk-${def.type}" style="flex:1; cursor:pointer;">${def.label}</label>
+                <input type="checkbox" id="rec-${def.type}" data-rec-type="${def.type}" data-rec-entity="" title="Also notify on recovery">
+                <label for="rec-${def.type}" style="font-size:0.8em; color:#888; cursor:pointer;" title="Also notify on recovery">recovery</label>
+            </div>`;
+        }
+        const rows = def.entities.map(e => {
+            const eid = e.is_local ? 'local' : (e.node_id || e.val_address || '');
+            const label = [e.moniker, e.val_address ? e.val_address.slice(0,14)+'\u2026' : null, e.node_id ? e.node_id.slice(0,8) : null, e.ip].filter(Boolean).join(' \u00b7 ') || eid;
+            const safeID = `${def.type}__${eid.replace(/[^a-zA-Z0-9_-]/g, '_')}`;
+            return `<div style="display:flex; align-items:center; gap:10px; padding:6px 0 6px 16px; font-size:0.88em;">
+                <input type="checkbox" id="chk-${safeID}" data-type="${def.type}" data-entity="${eid}">
+                <label for="chk-${safeID}" style="flex:1; cursor:pointer; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="${label}">${label}</label>
+                <input type="checkbox" id="rec-${safeID}" data-rec-type="${def.type}" data-rec-entity="${eid}" title="Also notify on recovery">
+                <label for="rec-${safeID}" style="font-size:0.8em; color:#888; cursor:pointer;" title="Also notify on recovery">recovery</label>
+            </div>`;
+        }).join('');
+        return `<div style="padding:10px 0; border-bottom:1px solid var(--border,#333);">
+            <div style="font-weight:500; margin-bottom:4px;">${def.label}</div>
+            ${rows}
+        </div>`;
+    }).join('');
+}
+
+function urlBase64ToUint8Array(base64) {
+    const pad = '='.repeat((4 - base64.length % 4) % 4);
+    const b64 = (base64 + pad).replace(/-/g, '+').replace(/_/g, '/');
+    const raw = atob(b64);
+    return Uint8Array.from(Array.from(raw).map(c => c.charCodeAt(0)));
+}
+
+async function pushSaveSettings() {
+    if (Notification.permission !== 'granted') {
+        const p = await Notification.requestPermission();
+        if (p !== 'granted') { alert('Notification permission denied.'); return; }
+    }
+    const sw = await navigator.serviceWorker.ready;
+    let pushSub = await sw.pushManager.getSubscription();
+    if (!pushSub) {
+        pushSub = await sw.pushManager.subscribe({
+            userVisibleOnly: true,
+            applicationServerKey: urlBase64ToUint8Array(_vapidKey),
+        });
+    }
+    const p256dh = btoa(String.fromCharCode(...new Uint8Array(pushSub.getKey('p256dh'))));
+    const auth   = btoa(String.fromCharCode(...new Uint8Array(pushSub.getKey('auth'))));
+
+    const alerts = [];
+    document.querySelectorAll('#alerts-form input[data-type]').forEach(cb => {
+        if (!cb.checked) return;
+        const type = cb.dataset.type, entity = cb.dataset.entity;
+        const rec = document.querySelector(`#alerts-form input[data-rec-type="${type}"][data-rec-entity="${entity}"]`);
+        alerts.push({ alert_type: type, entity_id: entity, recovery_notif: !!(rec && rec.checked), subscription_id: '' });
+    });
+
+    const r = await fetch('/api/push/subscribe', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ endpoint: pushSub.endpoint, p256dh, auth, alerts }),
+    });
+    if (!r.ok) { alert('Failed to save subscription. See console for details.'); return; }
+    const data = await r.json();
+    _pushSubID = data.id;
+    localStorage.setItem('gnockpitPushSubID', data.id);
+    closeAlertsModal();
+}
+
+async function pushUnsubscribe() {
+    if (!_pushSubID) return;
+    await fetch('/api/push/subscribe?id=' + _pushSubID, { method: 'DELETE' });
+    const sw = await navigator.serviceWorker.ready;
+    const pushSub = await sw.pushManager.getSubscription();
+    if (pushSub) await pushSub.unsubscribe();
+    _pushSubID = null;
+    localStorage.removeItem('gnockpitPushSubID');
+    closeAlertsModal();
+}
+
+initPush();
 </script>
 <div style="text-align:center;padding:16px;font-size:11px;color:var(--fg2)"><a href="https://github.com/gnoverse/gnockpit" target="_blank" style="color:var(--fg2);text-decoration:none">gnockpit</a> <a id="gnockpit-version" href="#" target="_blank" style="color:var(--fg2);text-decoration:none"></a></div>
 <script>fetch('/api/version').then(function(r){return r.json()}).then(function(d){if(d.version){var el=document.getElementById('gnockpit-version');el.textContent=d.version;var clean=d.version.replace(/-dirty$/,'');var m=clean.match(/g([0-9a-f]+)$/);var hash=m?m[1]:clean;if(hash)el.href='https://github.com/gnoverse/gnockpit/commit/'+hash}}).catch(function(){})</script>
+<div id="alerts-modal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.55); z-index:1000; align-items:center; justify-content:center;" onclick="closeAlertsModalOutside(event)">
+  <div id="alerts-modal-inner" style="background:var(--bg-card,#1e1e1e); border:1px solid var(--border,#333); border-radius:8px; padding:24px; width:min(500px,92vw); max-height:80vh; overflow-y:auto;">
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px;">
+      <h2 style="margin:0; font-size:1rem; font-weight:600;">Alert Notifications</h2>
+      <button onclick="closeAlertsModal()" style="background:none; border:none; cursor:pointer; font-size:1.4em; line-height:1; color:inherit;" aria-label="Close">&times;</button>
+    </div>
+    <p id="alerts-perm-status" style="margin:0 0 12px; font-size:0.82em; color:#888;"></p>
+    <div id="alerts-form"></div>
+    <div style="margin-top:20px; display:flex; gap:8px; justify-content:flex-end; flex-wrap:wrap;">
+      <button id="alerts-unsub-btn" onclick="pushUnsubscribe()" style="display:none; padding:5px 14px; cursor:pointer; color:#e55;">Unsubscribe</button>
+      <button onclick="pushSaveSettings()" style="padding:5px 14px; cursor:pointer;">Save settings</button>
+    </div>
+  </div>
+</div>
 </body>
 </html>
