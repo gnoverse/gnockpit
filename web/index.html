@@ -420,6 +420,7 @@ a.rpc-link.blue { color: var(--blue); }
 <script>
 // Collapsible sections
 (function() {
+  // isMobile is a page-load snapshot — intentionally not reactive to resize
   var isMobile = window.innerWidth <= 700;
   var storageKey = isMobile ? 'gnockpit-collapsed-mobile' : 'gnockpit-collapsed';
   var collapsed = {};
@@ -2261,7 +2262,9 @@ compactCb.addEventListener('change', function() {
   var nsCard = document.querySelector('[data-section="network-state"]').closest('.card');
   var cb = document.getElementById('ns-compact-cb');
   if (!cb) return;
+  // isMobile is a page-load snapshot — intentionally not reactive to resize
   var isMobile = window.innerWidth <= 700;
+  // Default compact ON on mobile: null (first visit) !== '0' → true
   var on = isMobile ? (localStorage.getItem('ns-compact') !== '0') : false;
   if (on) nsCard.classList.add('compact-on');
   cb.checked = on;
@@ -2276,6 +2279,8 @@ compactCb.addEventListener('change', function() {
   var nodeCard = document.querySelector('[data-section="node-state"]').closest('.card');
   var cb = document.getElementById('node-compact-cb');
   if (!cb) return;
+  // isMobile is a page-load snapshot — intentionally not reactive to resize
+  // Default compact ON on mobile: null (first visit) !== '0' → true
   var isMobile = window.innerWidth <= 700;
   var on = isMobile ? (localStorage.getItem('node-compact') !== '0') : false;
   if (on) nodeCard.classList.add('compact-on');
