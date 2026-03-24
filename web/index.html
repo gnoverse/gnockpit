@@ -177,6 +177,8 @@ a.rpc-link.blue { color: var(--blue); }
   .status-bar .sb-right { grid-column: 1 / -1; margin-left: 0; }
   .kv { grid-template-columns: 110px 1fr; }
   th, td { padding: 3px 4px; font-size: 12px; }
+  .card-stack { display: flex; flex-direction: column; }
+  #connect-card { order: 99; }
 }
 @media (max-width: 450px) {
   .kv { grid-template-columns: 1fr; }
@@ -237,6 +239,7 @@ a.rpc-link.blue { color: var(--blue); }
   <div id="gc-drift" style="display:none;font-size:12px;margin-top:4px"></div>
 </div>
 
+<div class="card-stack">
 <div class="card" id="connect-card">
   <h2 data-section="connect">Connect</h2>
   <div class="section-body"><div style="font-size:13px">
@@ -352,24 +355,33 @@ a.rpc-link.blue { color: var(--blue); }
     <span class="k">memory</span><span class="v" id="d-memory">-</span>
   </div></div>
 </div>
+</div>
 
 <script>
 // Collapsible sections
 (function() {
+  var isMobile = window.innerWidth <= 700;
+  var storageKey = isMobile ? 'gnockpit-collapsed-mobile' : 'gnockpit-collapsed';
   var collapsed = {};
-  try { collapsed = JSON.parse(localStorage.getItem('gnockpit-collapsed') || '{}'); } catch(e) {}
+  try { collapsed = JSON.parse(localStorage.getItem(storageKey) || '{}'); } catch(e) {}
+
+  // On first mobile visit, default Connect to collapsed
+  if (isMobile && collapsed['connect'] === undefined) {
+    collapsed['connect'] = true;
+    try { localStorage.setItem(storageKey, JSON.stringify(collapsed)); } catch(e) {}
+  }
+
   var headers = document.querySelectorAll('h2[data-section]');
   for (var i = 0; i < headers.length; i++) {
     var h = headers[i];
     if (collapsed[h.getAttribute('data-section')]) h.classList.add('collapsed');
     h.addEventListener('click', function(e) {
-      // Don't toggle if clicking inline elements like checkboxes
       if (e.target !== this) return;
       this.classList.toggle('collapsed');
       var key = this.getAttribute('data-section');
       if (this.classList.contains('collapsed')) collapsed[key] = true;
       else delete collapsed[key];
-      try { localStorage.setItem('gnockpit-collapsed', JSON.stringify(collapsed)); } catch(e) {}
+      try { localStorage.setItem(storageKey, JSON.stringify(collapsed)); } catch(e) {}
     });
   }
 })();
