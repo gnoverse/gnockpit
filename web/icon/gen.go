@@ -1,7 +1,17 @@
 // Package icon generates chain-specific SVG and PNG icons.
 package icon
 
-import "fmt"
+import (
+	"bytes"
+	"fmt"
+	"image/color"
+	"image/png"
+
+	"github.com/fogleman/gg"
+	"golang.org/x/image/font"
+	"golang.org/x/image/font/gofont/gobold"
+	"golang.org/x/image/font/opentype"
+)
 
 // Color holds the three derived colors for a chain icon.
 type Color struct {
@@ -146,6 +156,97 @@ func hslToRGB(h, s, l float64) (uint8, uint8, uint8) {
 		b = hueToRGB(p, q, h-1.0/3)
 	}
 	return uint8(r * 255), uint8(g * 255), uint8(b * 255)
+}
+
+// PNG renders the icon as a PNG image at the given size in pixels.
+// Layer order matches SVG: bg → ECG bottom → text → ECG mid → ECG top.
+// The text is sandwiched between the two ECG layers (intentional per design).
+func PNG(chain string, size int) ([]byte, error) {
+	abbr := Abbrev(chain)
+	col := ChainColor(chain)
+	sc := float64(size) / 64.0 // scale from 64x64 viewBox
+
+	dc := gg.NewContext(size, size)
+
+	// ---- Layer 1: Background
+	r8, g8, b8 := hslToRGB(float64(col.Hue)/360, 0.55, 0.26)
+	dc.SetColor(color.RGBA{R: r8, G: g8, B: b8, A: 255})
+	dc.DrawRoundedRectangle(0, 0, float64(size), float64(size), 13*sc)
+	dc.Fill()
+
+	// ---- Layer 2: ECG bottom (solid)
+	sr8, sg8, sb8 := hslToRGB(float64(col.Hue)/360, 0.80, 0.80)
+	drawECG(dc, sc, color.RGBA{R: sr8, G: sg8, B: sb8, A: 255}, 2.5*sc)
+
+	// ---- Layer 3: Text (white with black border via two-pass drawing)
+	pts := float64(fontSize(abbr)) * sc
+	face, err := loadBoldFace(pts)
+	if err != nil {
+		return nil, fmt.Errorf("load font: %w", err)
+	}
+	dc.SetFontFace(face)
+	cx, cy := float64(size)/2, float64(size)/2+sc
+
+	// Border pass: black text drawn at surrounding offsets
+	borderW := int(2*sc + 0.5)
+	if borderW < 1 {
+		borderW = 1
+	}
+	dc.SetColor(color.RGBA{R: 0, G: 0, B: 0, A: 200})
+	for dx := -borderW; dx <= borderW; dx++ {
+		for dy := -borderW; dy <= borderW; dy++ {
+			if dx == 0 && dy == 0 {
+				continue
+			}
+			dc.DrawStringAnchored(abbr, cx+float64(dx), cy+float64(dy), 0.5, 0.5)
+		}
+	}
+	// Fill pass: white text centered
+	dc.SetColor(color.RGBA{R: 255, G: 255, B: 255, A: 255})
+	dc.DrawStringAnchored(abbr, cx, cy, 0.5, 0.5)
+
+	// ---- Layer 4: ECG mid (50% opacity, overlays text per design)
+	drawECG(dc, sc, color.RGBA{R: sr8, G: sg8, B: sb8, A: 127}, 2.5*sc)
+
+	// ---- Layer 5: ECG top (dark, thin)
+	dr8, dg8, db8 := hslToRGB(float64(col.Hue)/360, 0.60, 0.45)
+	drawECG(dc, sc, color.RGBA{R: dr8, G: dg8, B: db8, A: 255}, 0.2*sc)
+
+	var buf bytes.Buffer
+	if err := png.Encode(&buf, dc.Image()); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
+}
+
+// drawECG draws the ECG polyline scaled from the 64x64 viewBox.
+// Path: M 5,32 L 18,32 L 22,22 L 26,40 L 30,32 L 59,32
+func drawECG(dc *gg.Context, sc float64, col color.RGBA, strokeWidth float64) {
+	pts := [][2]float64{
+		{5, 32}, {18, 32}, {22, 22}, {26, 40}, {30, 32}, {59, 32},
+	}
+	dc.SetColor(col)
+	dc.SetLineWidth(strokeWidth)
+	dc.SetLineCapRound()
+	dc.SetLineJoinRound()
+	dc.MoveTo(pts[0][0]*sc, pts[0][1]*sc)
+	for _, p := range pts[1:] {
+		dc.LineTo(p[0]*sc, p[1]*sc)
+	}
+	dc.Stroke()
+}
+
+// loadBoldFace returns a bold font.Face at the given point size using the
+// embedded Go Bold font — no file system access required.
+func loadBoldFace(pts float64) (font.Face, error) {
+	f, err := opentype.Parse(gobold.TTF)
+	if err != nil {
+		return nil, err
+	}
+	return opentype.NewFace(f, &opentype.FaceOptions{
+		Size: pts,
+		DPI:  72,
+	})
 }
 
 func hueToRGB(p, q, t float64) float64 {

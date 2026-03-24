@@ -1,6 +1,8 @@
 package icon_test
 
 import (
+	"bytes"
+	"image/png"
 	"strings"
 	"testing"
 
@@ -63,5 +65,29 @@ func TestSVGValid(t *testing.T) {
 	}
 	if !strings.HasSuffix(strings.TrimSpace(svg), "</svg>") {
 		t.Errorf("SVG does not end with </svg>")
+	}
+}
+
+func TestPNGIsValidPNG(t *testing.T) {
+	data, err := icon.PNG("gnoland1", 192)
+	if err != nil {
+		t.Fatalf("PNG error: %v", err)
+	}
+	if _, err := png.Decode(bytes.NewReader(data)); err != nil {
+		t.Fatalf("invalid PNG output: %v", err)
+	}
+}
+
+func TestPNGSize(t *testing.T) {
+	data, err := icon.PNG("gnoland1", 192)
+	if err != nil {
+		t.Fatalf("PNG error: %v", err)
+	}
+	img, err := png.Decode(bytes.NewReader(data))
+	if err != nil {
+		t.Fatalf("decode error: %v", err)
+	}
+	if img.Bounds().Dx() != 192 || img.Bounds().Dy() != 192 {
+		t.Errorf("expected 192x192, got %v", img.Bounds())
 	}
 }
