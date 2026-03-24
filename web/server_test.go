@@ -1,6 +1,7 @@
 package web
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"image/png"
@@ -13,6 +14,7 @@ import (
 	"time"
 
 	"github.com/gnoverse/gnockpit/node"
+	"github.com/gnoverse/gnockpit/web/push"
 )
 
 // mockBackend is a test double for RuntimeBackend.
@@ -462,5 +464,101 @@ func TestSSEHandler(t *testing.T) {
 	data := string(buf[:n])
 	if !strings.Contains(data, "event:") {
 		t.Errorf("expected SSE event data, got %q", data)
+	}
+}
+
+func newSrvWithPush(t *testing.T) (*Server, *push.Manager) {
+	t.Helper()
+	db, err := push.OpenDB(":memory:")
+	if err != nil {
+		t.Fatalf("open test db: %v", err)
+	}
+	t.Cleanup(func() { db.Close() })
+	mgr, err := push.NewManager(db, 30)
+	if err != nil {
+		t.Fatalf("new push manager: %v", err)
+	}
+	c := node.NewClient("http://localhost:1", time.Second)
+	srv := NewServer(c, "127.0.0.1:0", 5*time.Second)
+	srv.PushManager = mgr
+	return srv, mgr
+}
+
+func TestHandlePushVAPIDKey(t *testing.T) {
+	srv, mgr := newSrvWithPush(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/push/vapid-key", nil)
+	w := httptest.NewRecorder()
+	srv.handlePushVAPIDKey(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+	var body struct {
+		Key string `json:"key"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&body); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if body.Key != mgr.VAPIDPublicKey() {
+		t.Errorf("got key %q, want %q", body.Key, mgr.VAPIDPublicKey())
+	}
+}
+
+func TestHandlePushSubscribe_CreateAndDelete(t *testing.T) {
+	srv, _ := newSrvWithPush(t)
+
+	reqBody := push.SubscribeRequest{
+		Endpoint: "https://example.com/push",
+		P256dh:   "p256dh-value",
+		Auth:     "auth-value",
+		Alerts: []push.SubscriptionAlert{
+			{AlertType: push.AlertChainStuck, EntityID: "", RecoveryNotif: true},
+		},
+	}
+	b, err := json.Marshal(reqBody)
+	if err != nil {
+		t.Fatalf("marshal request: %v", err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/api/push/subscribe", bytes.NewReader(b))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	srv.handlePushSubscribe(w, req)
+
+	if w.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d", w.Code)
+	}
+	var created struct {
+		ID string `json:"id"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&created); err != nil {
+		t.Fatalf("decode created response: %v", err)
+	}
+	if created.ID == "" {
+		t.Fatal("expected non-empty subscription ID")
+	}
+
+	// Delete it.
+	delReq := httptest.NewRequest(http.MethodDelete, "/api/push/subscribe?id="+created.ID, nil)
+	w2 := httptest.NewRecorder()
+	srv.handlePushSubscribe(w2, delReq)
+	if w2.Code != http.StatusNoContent {
+		t.Errorf("expected 204, got %d", w2.Code)
+	}
+}
+
+func TestHandlePushEntities_ReturnsJSON(t *testing.T) {
+	srv, _ := newSrvWithPush(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/push/entities", nil)
+	w := httptest.NewRecorder()
+	srv.handlePushEntities(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+	var entities push.EntitiesResponse
+	if err := json.NewDecoder(w.Body).Decode(&entities); err != nil {
+		t.Fatalf("decode response: %v", err)
 	}
 }

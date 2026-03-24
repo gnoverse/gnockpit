@@ -3,8 +3,10 @@ package web
 import (
 	"bufio"
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
 	"embed"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -19,9 +21,10 @@ import (
 	"github.com/gorilla/websocket"
 	"github.com/gnoverse/gnockpit/node"
 	"github.com/gnoverse/gnockpit/web/icon"
+	"github.com/gnoverse/gnockpit/web/push"
 )
 
-//go:embed index.html
+//go:embed index.html service-worker.js
 var content embed.FS
 
 // Version is set at build time via -ldflags or computed at startup.
@@ -77,6 +80,7 @@ type Server struct {
 	DataDir     string         // gnoland data directory (for disk stats)
 	GenesisPath string         // path to genesis.json (for hash computation)
 	Backend     RuntimeBackend // log and process metrics backend (nil = unavailable)
+	PushManager *push.Manager  // push notification manager (nil = disabled)
 
 	// Peer activity from log parsing
 	peerActivity   sync.Map // IP -> time.Time (last seen)
@@ -787,6 +791,9 @@ func (s *Server) publishLoop(ctx context.Context) {
 	publish := func() {
 		snap := s.fetchSnapshot(ctx)
 		s.setSnapshot(snap)
+		if s.PushManager != nil {
+			s.PushManager.EvaluateAndNotify(snap)
+		}
 
 		timeStr := snap.Timestamp.Format("15:04:05")
 
@@ -1201,6 +1208,108 @@ func (s *Server) handleDiagnoseList(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(s.diagData)
 }
 
+// generateID generates a random hex string suitable for use as a subscription ID.
+func generateID() string {
+	b := make([]byte, 16)
+	rand.Read(b)
+	return hex.EncodeToString(b)
+}
+
+func (s *Server) handleServiceWorker(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/javascript")
+	w.Header().Set("Service-Worker-Allowed", "/")
+	data, _ := content.ReadFile("service-worker.js")
+	w.Write(data)
+}
+
+func (s *Server) handlePushVAPIDKey(w http.ResponseWriter, r *http.Request) {
+	if s.PushManager == nil {
+		http.Error(w, "push not configured", http.StatusServiceUnavailable)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"key": s.PushManager.VAPIDPublicKey()})
+}
+
+func (s *Server) handlePushSubscribe(w http.ResponseWriter, r *http.Request) {
+	if s.PushManager == nil {
+		http.Error(w, "push not configured", http.StatusServiceUnavailable)
+		return
+	}
+	if r.Method == http.MethodDelete {
+		id := r.URL.Query().Get("id")
+		if id == "" {
+			http.Error(w, "missing id", http.StatusBadRequest)
+			return
+		}
+		if err := s.PushManager.DB().DeleteSubscription(id); err != nil {
+			http.Error(w, "delete subscription", http.StatusInternalServerError)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	var req push.SubscribeRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+	sub := push.Subscription{
+		ID:       generateID(),
+		Endpoint: req.Endpoint,
+		P256dh:   req.P256dh,
+		Auth:     req.Auth,
+	}
+	for i := range req.Alerts {
+		req.Alerts[i].SubscriptionID = sub.ID
+	}
+	if err := s.PushManager.DB().SaveSubscription(sub); err != nil {
+		http.Error(w, "save subscription", http.StatusInternalServerError)
+		return
+	}
+	if err := s.PushManager.DB().SaveSubscriptionAlerts(sub.ID, req.Alerts); err != nil {
+		http.Error(w, "save alert preferences", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	json.NewEncoder(w).Encode(map[string]string{"id": sub.ID})
+}
+
+func (s *Server) handlePushEntities(w http.ResponseWriter, r *http.Request) {
+	snap := s.getSnapshot()
+	resp := push.EntitiesResponse{}
+
+	if snap != nil {
+		local := push.Entity{IsLocal: true, NodeID: push.EntityIDLocal}
+		if snap.Status != nil {
+			local.Moniker = snap.Status.NodeInfo.Moniker
+		}
+		resp.Peers = append(resp.Peers, local)
+
+		for _, p := range snap.Peers {
+			resp.Peers = append(resp.Peers, push.Entity{
+				NodeID:     p.NodeID,
+				ValAddress: p.ValAddress,
+				Moniker:    p.Moniker,
+				IP:         p.RemoteIP,
+			})
+		}
+
+		if snap.Consensus != nil {
+			for _, v := range snap.Consensus.Votes {
+				resp.Validators = append(resp.Validators, push.Entity{
+					ValAddress: v.Address,
+					Moniker:    v.Name,
+				})
+			}
+		}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(resp)
+}
+
 // Run starts the web server, publish loop, and log streamer.
 // computeGenesisSHA hashes the local genesis file to avoid hardcoding.
 func (s *Server) computeGenesisSHA() string {
@@ -1273,6 +1382,10 @@ func (s *Server) Run(ctx context.Context) error {
 	mux.HandleFunc("/icon-192.png", s.handleIconPNG)
 	mux.HandleFunc("/icon-512.png", s.handleIconPNG)
 	mux.HandleFunc("/apple-touch-icon.png", s.handleAppleTouchIcon)
+	mux.HandleFunc("/service-worker.js", s.handleServiceWorker)
+	mux.HandleFunc("/api/push/vapid-key", s.handlePushVAPIDKey)
+	mux.HandleFunc("/api/push/subscribe", s.handlePushSubscribe)
+	mux.HandleFunc("/api/push/entities", s.handlePushEntities)
 
 	srv := &http.Server{
 		Addr:    s.Addr,
