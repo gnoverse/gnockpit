@@ -183,9 +183,11 @@ a.rpc-link.blue { color: var(--blue); }
   .card-stack { display: flex; flex-direction: column; }
   #connect-card { order: 99; }
   #ns-compact-label { display: flex; align-items: center; font-size: 11px; color: var(--fg2); cursor: pointer; }
+  #node-compact-label { display: flex; align-items: center; font-size: 11px; color: var(--fg2); cursor: pointer; }
 }
 @media (min-width: 701px) {
   #ns-compact-label { display: none; }
+  #node-compact-label { display: none; }
 }
 @media (max-width: 450px) {
   .kv { grid-template-columns: 1fr; }
@@ -344,22 +346,25 @@ a.rpc-link.blue { color: var(--blue); }
 </div>
 
 <div class="card">
-  <h2 id="node-state-header" data-section="node-state">Node State</h2>
+  <div class="card-header-row">
+    <h2 id="node-state-header" data-section="node-state">Node State</h2>
+    <label id="node-compact-label"><input type="checkbox" id="node-compact-cb" style="margin-right:3px">compact</label>
+  </div>
   <div class="section-body"><div class="kv">
-    <span class="k">moniker</span><span class="v" id="d-moniker">-</span>
-    <span class="k">version</span><span class="v" id="d-version">-</span>
-    <span class="k">node-id</span><span class="v" id="d-nodeid">-</span>
-    <span class="k">p2p address</span><span class="v hash" id="d-p2p">-</span>
+    <span class="k" data-compact="hide">moniker</span><span class="v" id="d-moniker" data-compact="hide">-</span>
+    <span class="k" data-compact="hide">version</span><span class="v" id="d-version" data-compact="hide">-</span>
+    <span class="k" data-compact="hide">node-id</span><span class="v" id="d-nodeid" data-compact="hide">-</span>
+    <span class="k" data-compact="hide">p2p address</span><span class="v hash" id="d-p2p" data-compact="hide">-</span>
     <span class="k">rpc url</span><span class="v" id="d-rpc">-</span>
-    <span class="k">validator addr</span><span class="v hash" id="d-valaddr">-</span>
-    <span class="k">pubkey</span><span class="v hash" id="d-pubkey">-</span>
-    <span class="k">gno source</span><span class="v" id="d-gitsource">-</span>
+    <span class="k" data-compact="hide">validator addr</span><span class="v hash" id="d-valaddr" data-compact="hide">-</span>
+    <span class="k" data-compact="hide">pubkey</span><span class="v hash" id="d-pubkey" data-compact="hide">-</span>
+    <span class="k" data-compact="hide">gno source</span><span class="v" id="d-gitsource" data-compact="hide">-</span>
     <span class="k">binary hash</span><span class="v hash" id="d-binhash">-</span>
     <span class="k">genesis sha256</span><span class="v hash" id="d-genesis">-</span>
     <span class="k">catching up</span><span class="v" id="d-catching">-</span>
     <span class="k">gnockpit uptime</span><span class="v" id="d-uptime">-</span>
-    <span class="k">node time (UTC)</span><span class="v" id="d-nodetime">-</span>
-    <span class="k">timeouts</span><span class="v" id="ns-timeouts" style="font-size:11px">-</span>
+    <span class="k" data-compact="hide">node time (UTC)</span><span class="v" id="d-nodetime" data-compact="hide">-</span>
+    <span class="k" data-compact="hide">timeouts</span><span class="v" id="ns-timeouts" data-compact="hide" style="font-size:11px">-</span>
     <span class="k">chain data</span><span class="v" id="d-chaindata">-</span>
     <span class="k">process mem</span><span class="v" id="d-procmem">-</span>
     <span class="k">disk</span><span class="v" id="d-disk">-</span>
@@ -2220,6 +2225,21 @@ compactCb.addEventListener('change', function() {
   cb.addEventListener('change', function() {
     if (this.checked) { nsCard.classList.add('compact-on'); localStorage.setItem('ns-compact', '1'); }
     else { nsCard.classList.remove('compact-on'); localStorage.setItem('ns-compact', '0'); }
+  });
+})();
+
+// Node State compact toggle
+(function() {
+  var nodeCard = document.querySelector('[data-section="node-state"]').closest('.card');
+  var cb = document.getElementById('node-compact-cb');
+  if (!cb) return;
+  var isMobile = window.innerWidth <= 700;
+  var on = isMobile ? (localStorage.getItem('node-compact') !== '0') : false;
+  if (on) nodeCard.classList.add('compact-on');
+  cb.checked = on;
+  cb.addEventListener('change', function() {
+    if (this.checked) { nodeCard.classList.add('compact-on'); localStorage.setItem('node-compact', '1'); }
+    else { nodeCard.classList.remove('compact-on'); localStorage.setItem('node-compact', '0'); }
   });
 })();
 
