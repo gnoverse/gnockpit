@@ -135,3 +135,12 @@ func TestDetect_PeerUnreachable(t *testing.T) {
 		t.Error("expected node_unreachable for peer1")
 	}
 }
+
+func TestDetect_PeerOutOfSync(t *testing.T) {
+	d := push.NewAlertDetector(30)
+	peers := []node.Peer{{NodeID: "peer1", Moniker: "peerA", CatchingUp: true}}
+	alerts := d.Detect(makeSnap("1", "", peers, nil, false))
+	if a := findAlert(alerts, push.AlertNodeOutOfSync, "peer1"); a == nil || !a.Firing {
+		t.Error("expected node_out_of_sync for peer1 that is catching up")
+	}
+}
