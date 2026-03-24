@@ -9,7 +9,10 @@ import (
 )
 
 func TestManager_VAPIDKeys_GeneratedOnFirstRun(t *testing.T) {
-	db, _ := push.OpenDB(":memory:")
+	db, err := push.OpenDB(":memory:")
+	if err != nil {
+		t.Fatalf("OpenDB: %v", err)
+	}
 	defer db.Close()
 
 	m, err := push.NewManager(db, 30)
@@ -23,13 +26,22 @@ func TestManager_VAPIDKeys_GeneratedOnFirstRun(t *testing.T) {
 }
 
 func TestManager_VAPIDKeys_PersistAcrossReloads(t *testing.T) {
-	db, _ := push.OpenDB(":memory:")
+	db, err := push.OpenDB(":memory:")
+	if err != nil {
+		t.Fatalf("OpenDB: %v", err)
+	}
 	defer db.Close()
 
-	m1, _ := push.NewManager(db, 30)
+	m1, err := push.NewManager(db, 30)
+	if err != nil {
+		t.Fatalf("NewManager (first): %v", err)
+	}
 	pub1 := m1.VAPIDPublicKey()
 
-	m2, _ := push.NewManager(db, 30)
+	m2, err := push.NewManager(db, 30)
+	if err != nil {
+		t.Fatalf("NewManager (second): %v", err)
+	}
 	if m2.VAPIDPublicKey() != pub1 {
 		t.Error("expected same VAPID public key on second load")
 	}
@@ -41,9 +53,15 @@ func TestManager_SendPush_RemovesGoneSubscription(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	db, _ := push.OpenDB(":memory:")
+	db, err := push.OpenDB(":memory:")
+	if err != nil {
+		t.Fatalf("OpenDB: %v", err)
+	}
 	defer db.Close()
-	m, _ := push.NewManager(db, 30)
+	m, err := push.NewManager(db, 30)
+	if err != nil {
+		t.Fatalf("NewManager: %v", err)
+	}
 
 	db.SaveSubscription(push.Subscription{
 		ID:     "dead",
