@@ -1754,9 +1754,8 @@ function handleSigning(d) {
     addEl.className = d.can_add_one ? 'v ok' : 'v err';
     var activeCt = document.getElementById('ns-active-compact');
     if (activeCt) {
-      var activeVal = document.getElementById('ns-active') ? document.getElementById('ns-active').textContent : '-';
-      var avgVal = document.getElementById('ns-avgblock') ? document.getElementById('ns-avgblock').textContent : '-';
-      activeCt.textContent = activeVal + ' · ' + avgVal + ' avg';
+      var avgStr = d.avg_block_ms > 0 ? (d.avg_block_ms / 1000).toFixed(1) + 's' : '-';
+      activeCt.textContent = d.active_count + '/' + d.total_count + ' (margin: ' + (d.margin >= 0 ? '+' : '') + d.margin + ')' + ' · ' + avgStr + ' avg';
     }
 
     // Recent blocks — single row, horizontal scroll, most recent first
