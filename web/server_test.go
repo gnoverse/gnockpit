@@ -561,4 +561,11 @@ func TestHandlePushEntities_ReturnsJSON(t *testing.T) {
 	if err := json.NewDecoder(w.Body).Decode(&entities); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
+	// No snapshot set — no entities returned.
+	if len(entities.Peers) != 0 {
+		t.Errorf("expected 0 peers with no snapshot, got %d", len(entities.Peers))
+	}
+	if len(entities.Validators) != 0 {
+		t.Errorf("expected 0 validators with no snapshot, got %d", len(entities.Validators))
+	}
 }

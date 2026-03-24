@@ -1216,9 +1216,13 @@ func generateID() string {
 }
 
 func (s *Server) handleServiceWorker(w http.ResponseWriter, r *http.Request) {
+	data, err := content.ReadFile("service-worker.js")
+	if err != nil {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
 	w.Header().Set("Content-Type", "application/javascript")
 	w.Header().Set("Service-Worker-Allowed", "/")
-	data, _ := content.ReadFile("service-worker.js")
 	w.Write(data)
 }
 
@@ -1234,6 +1238,10 @@ func (s *Server) handlePushVAPIDKey(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handlePushSubscribe(w http.ResponseWriter, r *http.Request) {
 	if s.PushManager == nil {
 		http.Error(w, "push not configured", http.StatusServiceUnavailable)
+		return
+	}
+	if r.Method != http.MethodPost && r.Method != http.MethodDelete {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 	if r.Method == http.MethodDelete {
