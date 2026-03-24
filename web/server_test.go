@@ -424,6 +424,9 @@ func TestHandleManifest(t *testing.T) {
 	if m["icons"] == nil {
 		t.Error("manifest missing 'icons' field")
 	}
+	if m["theme_color"] == nil {
+		t.Error("manifest missing 'theme_color' field")
+	}
 }
 
 func TestSSEHandler(t *testing.T) {
