@@ -18,6 +18,7 @@ import (
 
 	"github.com/gorilla/websocket"
 	"github.com/gnoverse/gnockpit/node"
+	"github.com/gnoverse/gnockpit/web/icon"
 )
 
 //go:embed index.html
@@ -185,6 +186,16 @@ func (s *Server) GetSnapshot() *node.Snapshot {
 	return s.getSnapshot()
 }
 
+// chainName returns the connected chain's network ID from the latest snapshot.
+// Falls back to "gnockpit" if no snapshot is available yet.
+func (s *Server) chainName() string {
+	snap := s.getSnapshot()
+	if snap != nil && snap.Status != nil && snap.Status.NodeInfo.Network != "" {
+		return snap.Status.NodeInfo.Network
+	}
+	return "gnockpit"
+}
+
 // --- Snapshot data building ---
 
 type checkData struct {
@@ -277,6 +288,70 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
 	w.Write(data)
+}
+
+func (s *Server) handleIconSVG(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "image/svg+xml")
+	w.Header().Set("Cache-Control", "no-cache")
+	fmt.Fprint(w, icon.SVG(s.chainName(), 64))
+}
+
+func (s *Server) handleIconPNG(w http.ResponseWriter, r *http.Request) {
+	// Extract size from path: /icon-192.png → 192.
+	// Supported: 32, 192, 512. Default: 192.
+	size := 192
+	path := r.URL.Path
+	dash := strings.LastIndex(path, "-")
+	dot := strings.LastIndex(path, ".")
+	if dash >= 0 && dot > dash {
+		switch path[dash+1 : dot] {
+		case "32":
+			size = 32
+		case "512":
+			size = 512
+		}
+	}
+	data, err := icon.PNG(s.chainName(), size)
+	if err != nil {
+		http.Error(w, "icon generation failed", 500)
+		return
+	}
+	w.Header().Set("Content-Type", "image/png")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Write(data)
+}
+
+func (s *Server) handleAppleTouchIcon(w http.ResponseWriter, r *http.Request) {
+	data, err := icon.PNG(s.chainName(), 180)
+	if err != nil {
+		http.Error(w, "icon generation failed", 500)
+		return
+	}
+	w.Header().Set("Content-Type", "image/png")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Write(data)
+}
+
+func (s *Server) handleManifest(w http.ResponseWriter, r *http.Request) {
+	chain := s.chainName()
+	col := icon.ChainColor(chain)
+	manifest := map[string]interface{}{
+		"name":             "gnockpit",
+		"short_name":       "gnockpit",
+		"description":      "Real-time gno.land validator node monitoring dashboard",
+		"start_url":        "/",
+		"display":          "standalone",
+		"background_color": "#0d1117",
+		"theme_color":      col.HexBG,
+		"icons": []map[string]string{
+			{"src": "/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any"},
+			{"src": "/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any"},
+			{"src": "/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable"},
+		},
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-cache")
+	json.NewEncoder(w).Encode(manifest)
 }
 
 func (s *Server) handleAPI(w http.ResponseWriter, r *http.Request) {
@@ -1192,6 +1267,12 @@ func (s *Server) Run(ctx context.Context) error {
 	mux.HandleFunc("/api/diagnoses", s.handleDiagnoseList)
 	mux.HandleFunc("/events", s.handleEvents)
 	mux.HandleFunc("/ws", s.handleWS)
+	mux.HandleFunc("/manifest.json", s.handleManifest)
+	mux.HandleFunc("/icon.svg", s.handleIconSVG)
+	mux.HandleFunc("/icon-32.png", s.handleIconPNG)
+	mux.HandleFunc("/icon-192.png", s.handleIconPNG)
+	mux.HandleFunc("/icon-512.png", s.handleIconPNG)
+	mux.HandleFunc("/apple-touch-icon.png", s.handleAppleTouchIcon)
 
 	srv := &http.Server{
 		Addr:    s.Addr,
