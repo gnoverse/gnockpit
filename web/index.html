@@ -2364,6 +2364,20 @@ wrapCb.addEventListener('change', function() {
     if (m.style.display !== 'none') { m.style.display = 'none'; return; }
     // Rebuild from live state each open — mod-list is dynamic (addModule adds checkboxes live)
     m.innerHTML = '';
+    // "all" entry — proxies to #mod-all
+    (function() {
+      var lbl = document.createElement('label');
+      lbl.style.cssText = 'display:flex;align-items:center;justify-content:space-between;padding:6px 12px;cursor:pointer;font-size:11px';
+      var cb = document.createElement('input');
+      cb.type = 'checkbox'; cb.checked = $('mod-all').checked;
+      cb.addEventListener('change', function() {
+        var orig = $('mod-all');
+        if (orig.checked !== this.checked) { orig.checked = this.checked; orig.dispatchEvent(new Event('change')); }
+      });
+      lbl.appendChild(document.createTextNode('all'));
+      lbl.appendChild(cb);
+      m.appendChild(lbl);
+    })();
     knownModules.forEach(function(mod) {
       var lbl = document.createElement('label');
       lbl.style.cssText = 'display:flex;align-items:center;justify-content:space-between;padding:6px 12px;cursor:pointer;font-size:11px';
