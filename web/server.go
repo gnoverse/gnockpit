@@ -336,8 +336,8 @@ func (s *Server) handleManifest(w http.ResponseWriter, r *http.Request) {
 	chain := s.chainName()
 	col := icon.ChainColor(chain)
 	manifest := map[string]interface{}{
-		"name":             "gnockpit",
-		"short_name":       "gnockpit",
+		"name":             "Gnockpit " + chain,
+		"short_name":       "Gnockpit " + chain,
 		"description":      "Real-time gno.land validator node monitoring dashboard",
 		"start_url":        "/",
 		"display":          "standalone",

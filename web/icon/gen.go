@@ -185,28 +185,31 @@ func PNG(chain string, size int) ([]byte, error) {
 		return nil, fmt.Errorf("load font: %w", err)
 	}
 	dc.SetFontFace(face)
-	cx, cy := float64(size)/2, float64(size)/2+sc
+	cx := float64(size) / 2
 
-	// Border pass: black text drawn at surrounding offsets
-	borderW := int(2*sc + 0.5)
-	if borderW < 1 {
-		borderW = 1
-	}
+	// Compute baseline so the cap-height center aligns with SVG dominant-baseline="central" at y=33.
+	// DrawStringAnchored with ay=0 treats y as the baseline.
+	capH := float64(face.Metrics().CapHeight) / 64.0
+	baseline := float64(size)/2 + sc + capH/2
+
+	// Border pass: black text at 8 cardinal/diagonal offsets (1 canvas unit = sc px).
+	bd := sc
 	dc.SetColor(color.RGBA{R: 0, G: 0, B: 0, A: 200})
-	for dx := -borderW; dx <= borderW; dx++ {
-		for dy := -borderW; dy <= borderW; dy++ {
-			if dx == 0 && dy == 0 {
-				continue
-			}
-			dc.DrawStringAnchored(abbr, cx+float64(dx), cy+float64(dy), 0.5, 0.5)
-		}
+	for _, off := range [][2]float64{
+		{-1, -1}, {0, -1}, {1, -1},
+		{-1, 0}, {1, 0},
+		{-1, 1}, {0, 1}, {1, 1},
+	} {
+		dc.DrawStringAnchored(abbr, cx+off[0]*bd, baseline+off[1]*bd, 0.5, 0)
 	}
 	// Fill pass: white text centered
 	dc.SetColor(color.RGBA{R: 255, G: 255, B: 255, A: 255})
-	dc.DrawStringAnchored(abbr, cx, cy, 0.5, 0.5)
+	dc.DrawStringAnchored(abbr, cx, baseline, 0.5, 0)
 
-	// ---- Layer 4: ECG mid (50% opacity, overlays text per design)
-	drawECG(dc, sc, color.RGBA{R: sr8, G: sg8, B: sb8, A: 127}, 2.5*sc)
+	// ---- Layer 4: ECG mid (50% opacity, overlays text per design).
+	// Must use color.NRGBA (straight alpha) not color.RGBA (premultiplied):
+	// with RGBA, R/G/B > A violates the premultiplied invariant and wraps on compositing.
+	drawECG(dc, sc, color.NRGBA{R: sr8, G: sg8, B: sb8, A: 127}, 2.5*sc)
 
 	// ---- Layer 5: ECG top (dark, thin)
 	dr8, dg8, db8 := hslToRGB(float64(col.Hue)/360, 0.60, 0.45)
@@ -221,7 +224,7 @@ func PNG(chain string, size int) ([]byte, error) {
 
 // drawECG draws the ECG polyline scaled from the 64x64 viewBox.
 // Path: M 5,32 L 18,32 L 22,22 L 26,40 L 30,32 L 59,32
-func drawECG(dc *gg.Context, sc float64, col color.RGBA, strokeWidth float64) {
+func drawECG(dc *gg.Context, sc float64, col color.Color, strokeWidth float64) {
 	pts := [][2]float64{
 		{5, 32}, {18, 32}, {22, 22}, {26, 40}, {30, 32}, {59, 32},
 	}

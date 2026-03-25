@@ -418,8 +418,8 @@ func TestHandleManifest(t *testing.T) {
 	if err := json.NewDecoder(w.Body).Decode(&m); err != nil {
 		t.Fatalf("invalid JSON: %v", err)
 	}
-	if m["name"] == nil {
-		t.Error("manifest missing 'name' field")
+	if name, _ := m["name"].(string); !strings.HasPrefix(name, "Gnockpit ") {
+		t.Errorf("manifest name should start with 'Gnockpit ', got %q", name)
 	}
 	if m["icons"] == nil {
 		t.Error("manifest missing 'icons' field")
