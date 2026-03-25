@@ -612,16 +612,17 @@ function showPopover(btn) {
 function hidePopover() { $('popover').classList.remove('visible'); activePopover = null; }
 
 document.addEventListener('mouseenter', function(e) {
-  if (!hasHover) return;
+  if (!hasHover || !(e.target instanceof Element)) return;
   var btn = e.target.closest('.info-btn');
   if (btn) showPopover(btn);
 }, true);
 document.addEventListener('mouseleave', function(e) {
-  if (!hasHover) return;
+  if (!hasHover || !(e.target instanceof Element)) return;
   var btn = e.target.closest('.info-btn');
   if (btn) hidePopover();
 }, true);
 document.addEventListener('click', function(e) {
+  if (!(e.target instanceof Element)) return;
   var btn = e.target.closest('.info-btn');
   if (btn) {
     if (hasHover) return;
@@ -635,6 +636,7 @@ document.addEventListener('click', function(e) {
    highlight all matching elements across the entire page */
 function setupHighlight() {
   document.addEventListener('mouseenter', function(e) {
+    if (!(e.target instanceof Element)) return;
     var cell = e.target.closest('[data-highlight]');
     if (!cell) return;
     clearHighlight();
@@ -674,7 +676,7 @@ function setupHighlight() {
     }
   }, true);
   document.addEventListener('mouseleave', function(e) {
-    if (e.target.closest('[data-highlight]')) clearHighlight();
+    if (e.target instanceof Element && e.target.closest('[data-highlight]')) clearHighlight();
   }, true);
 }
 function clearHighlight() {
