@@ -3,6 +3,7 @@ package web
 import (
 	"context"
 	"encoding/json"
+	"image/png"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -281,6 +282,12 @@ func TestHTMLEmbedded(t *testing.T) {
 	if !strings.Contains(html, "</script>") {
 		t.Error("missing closing script tag")
 	}
+	if !strings.Contains(html, `<link rel="manifest"`) {
+		t.Error("missing manifest link in index.html")
+	}
+	if !strings.Contains(html, `<meta name="theme-color"`) {
+		t.Error("missing theme-color meta in index.html")
+	}
 }
 
 func TestJSSyntax(t *testing.T) {
@@ -355,6 +362,70 @@ func TestAPIHandler(t *testing.T) {
 	}
 	if snap.GenesisSHA != "abc123" {
 		t.Errorf("genesis = %q, want abc123", snap.GenesisSHA)
+	}
+}
+
+func TestHandleIconSVG(t *testing.T) {
+	c := node.NewClient("http://localhost:1", 1*time.Second)
+	srv := NewServer(c, "127.0.0.1:0", 5*time.Second)
+	w := httptest.NewRecorder()
+	srv.handleIconSVG(w, httptest.NewRequest("GET", "/icon.svg", nil))
+	if w.Code != 200 {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+	ct := w.Header().Get("Content-Type")
+	if !strings.Contains(ct, "image/svg+xml") {
+		t.Errorf("expected SVG content-type, got %q", ct)
+	}
+	body := w.Body.String()
+	n := len(body)
+	if n > 40 {
+		n = 40
+	}
+	if !strings.HasPrefix(body, "<svg") {
+		t.Errorf("body does not start with <svg: %q", body[:n])
+	}
+}
+
+func TestHandleIconPNG(t *testing.T) {
+	c := node.NewClient("http://localhost:1", 1*time.Second)
+	srv := NewServer(c, "127.0.0.1:0", 5*time.Second)
+	w := httptest.NewRecorder()
+	srv.handleIconPNG(w, httptest.NewRequest("GET", "/icon-192.png", nil))
+	if w.Code != 200 {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+	if ct := w.Header().Get("Content-Type"); ct != "image/png" {
+		t.Errorf("expected image/png, got %q", ct)
+	}
+	if _, err := png.Decode(w.Body); err != nil {
+		t.Errorf("invalid PNG: %v", err)
+	}
+}
+
+func TestHandleManifest(t *testing.T) {
+	c := node.NewClient("http://localhost:1", 1*time.Second)
+	srv := NewServer(c, "127.0.0.1:0", 5*time.Second)
+	w := httptest.NewRecorder()
+	srv.handleManifest(w, httptest.NewRequest("GET", "/manifest.json", nil))
+	if w.Code != 200 {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+	if ct := w.Header().Get("Content-Type"); !strings.Contains(ct, "application/json") {
+		t.Errorf("expected JSON content-type, got %q", ct)
+	}
+	var m map[string]interface{}
+	if err := json.NewDecoder(w.Body).Decode(&m); err != nil {
+		t.Fatalf("invalid JSON: %v", err)
+	}
+	if name, _ := m["name"].(string); !strings.HasPrefix(name, "Gnockpit ") {
+		t.Errorf("manifest name should start with 'Gnockpit ', got %q", name)
+	}
+	if m["icons"] == nil {
+		t.Error("manifest missing 'icons' field")
+	}
+	if m["theme_color"] == nil {
+		t.Error("manifest missing 'theme_color' field")
 	}
 }
 

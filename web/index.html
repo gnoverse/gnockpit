@@ -4,7 +4,11 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>gnockpit</title>
-<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🛩️</text></svg>">
+<link rel="manifest" href="/manifest.json">
+<link rel="icon" type="image/svg+xml" href="/icon.svg">
+<link rel="icon" type="image/png" sizes="32x32" href="/icon-32.png">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<meta name="theme-color" content="#1a2332" id="theme-color-meta">
 <style>
 :root {
   --bg: #0d1117;
@@ -1740,6 +1744,18 @@ function handleStatus(d) {
       setText('d-moniker', moniker);
       if (moniker !== '-') $('node-state-header').textContent = 'Node State \u00b7 ' + moniker;
       var network = d.node_info.network || '-';
+      // Update PWA theme-color meta to match the chain's icon background color.
+      // djb2 hash mirrors Go's icon.ChainColor — must stay in sync.
+      if (network && network !== '-') {
+        var tcMeta = document.getElementById('theme-color-meta');
+        if (tcMeta) {
+          var h = 5381;
+          for (var i = 0; i < network.length; i++) {
+            h = (Math.imul(h, 33) ^ network.charCodeAt(i)) >>> 0;
+          }
+          tcMeta.content = 'hsl(' + (h % 360) + ',55%,26%)';
+        }
+      }
       setText('d-network', network);
       var netAddr = d.node_info.net_address || '';
       var nodeId = d.node_info.id || '';
