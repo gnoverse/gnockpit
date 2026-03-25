@@ -2035,10 +2035,12 @@ function flushLogQueue() {
     }
     logQueue = [];
     if (count > 0) {
+      var atBottom = body.scrollHeight - body.scrollTop - body.clientHeight < 40;
       body.appendChild(frag);
-      while (body.children.length > 201) { body.removeChild(body.firstChild); }
+      var logLines = body.querySelectorAll('.log-line');
+      for (var li = 0; li < logLines.length - 200; li++) { logLines[li].remove(); }
       updateEmptyState();
-      requestAnimationFrame(function() { body.scrollTop = body.scrollHeight; });
+      if (atBottom) { requestAnimationFrame(function() { body.scrollTop = body.scrollHeight; }); }
     }
 }
 
@@ -2229,7 +2231,9 @@ function fetchLogs(n) {
   });
 }
 
-var logsPaused = false;
+var logsPaused = true;
+$('logs-pause').textContent = 'resume';
+$('logs-pause').style.color = 'var(--green)';
 $('logs-pause').addEventListener('click', function() {
   logsPaused = !logsPaused;
   this.textContent = logsPaused ? 'resume' : 'pause';
