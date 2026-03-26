@@ -10,7 +10,10 @@ import (
 	"github.com/gnoverse/gnockpit/node"
 )
 
-const vapidSubject = "mailto:gnockpit@localhost"
+// vapidSubject is passed to webpush-go which prepends "mailto:" automatically,
+// so we must not include the prefix ourselves or it becomes double-prefixed in
+// the JWT claim (breaking iOS APNs with 403 BadJwtToken).
+const vapidSubject = "gnockpit@localhost"
 
 // Manager coordinates VAPID key lifecycle, alert detection, and push delivery.
 type Manager struct {
@@ -110,8 +113,10 @@ func (m *Manager) sendPush(sub Subscription, a Alert) {
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode == http.StatusGone {
-		log.Printf("push: subscription %s expired (410), removing", sub.ID)
+	// 410 Gone: FCM/standard expired subscription.
+	// 400 Bad Request: WNS (Edge on Windows) uses this for expired channels.
+	if resp.StatusCode == http.StatusGone || resp.StatusCode == http.StatusBadRequest {
+		log.Printf("push: subscription %s expired (%d), removing", sub.ID, resp.StatusCode)
 		if err := m.db.DeleteSubscription(sub.ID); err != nil {
 			log.Printf("push: delete expired subscription: %v", err)
 		}

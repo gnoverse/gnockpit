@@ -47,9 +47,10 @@ func TestManager_VAPIDKeys_PersistAcrossReloads(t *testing.T) {
 	}
 }
 
-func TestManager_SendPush_RemovesGoneSubscription(t *testing.T) {
+func testSendPushRemovesStaleSubscription(t *testing.T, statusCode int) {
+	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusGone)
+		w.WriteHeader(statusCode)
 	}))
 	defer srv.Close()
 
@@ -87,6 +88,15 @@ func TestManager_SendPush_RemovesGoneSubscription(t *testing.T) {
 		t.Fatalf("AllSubscriptions: %v", err)
 	}
 	if len(subs) != 0 {
-		t.Errorf("expected dead subscription removed after 410, got %d", len(subs))
+		t.Errorf("status %d: expected stale subscription removed, got %d", statusCode, len(subs))
 	}
+}
+
+func TestManager_SendPush_RemovesGoneSubscription(t *testing.T) {
+	testSendPushRemovesStaleSubscription(t, http.StatusGone)
+}
+
+func TestManager_SendPush_RemovesBadRequestSubscription(t *testing.T) {
+	// WNS (Edge on Windows) returns 400 for expired channels instead of 410.
+	testSendPushRemovesStaleSubscription(t, http.StatusBadRequest)
 }
