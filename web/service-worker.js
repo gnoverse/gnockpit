@@ -1,0 +1,27 @@
+self.addEventListener('push', function(event) {
+    let data = { title: 'gnockpit alert', body: 'An alert has fired.' };
+    if (event.data) {
+        try { data = event.data.json(); } catch (_) {}
+    }
+    event.waitUntil(
+        self.registration.showNotification(data.title, {
+            body: data.body,
+            icon: '/icon-192.png',
+            badge: '/icon-32.png',
+            tag: data.title + '\x00' + data.body,   // unique per alert+entity so simultaneous alerts don't collapse
+            renotify: false,
+        })
+    );
+});
+
+self.addEventListener('notificationclick', function(event) {
+    event.notification.close();
+    event.waitUntil(
+        clients.matchAll({ type: 'window', includeUncontrolled: true }).then(function(list) {
+            for (const client of list) {
+                if ('focus' in client) return client.focus();
+            }
+            if (clients.openWindow) return clients.openWindow('/');
+        })
+    );
+});

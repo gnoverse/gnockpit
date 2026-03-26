@@ -663,6 +663,7 @@ func QueryAllPeers(ctx context.Context, peers []Peer, rpcPort string, timeout ti
 			}
 
 			results[idx].Height = status.SyncInfo.LatestBlockHeight
+			results[idx].CatchingUp = status.SyncInfo.CatchingUp
 
 			// CRITICAL: verify the RPC response belongs to THIS peer.
 			// Extract node-id from the RPC response and compare to the peer's node-id.

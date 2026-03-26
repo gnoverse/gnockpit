@@ -227,7 +227,10 @@ a.rpc-link.blue { color: var(--blue); }
 </style>
 </head>
 <body>
-<h1 id="page-title">🛩️ gnockpit</h1>
+<div style="display:flex;align-items:baseline;justify-content:space-between;margin-bottom:4px;">
+  <h1 id="page-title" style="margin-bottom:0;">🛩️ gnockpit</h1>
+  <button id="push-btn" style="display:none;background:var(--bg);border:1px solid var(--border);color:var(--fg);padding:6px 8px;border-radius:4px;font-family:inherit;font-size:11px;cursor:pointer;" onclick="openAlertsModal()"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle;margin-right:4px;" aria-hidden="true"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>Alerts</button>
+</div>
 <p class="subtitle">live validator dashboard</p>
 
 <div id="error-banner"></div>
@@ -238,7 +241,7 @@ a.rpc-link.blue { color: var(--blue); }
   <span id="s-catching"></span>
   <span>Peers: <strong id="s-peers">-</strong></span>
   <span id="s-connection"><span class="dot yellow"></span>connecting</span>
-  <span class="sb-right">Updated: <span id="s-time">-</span> <span id="s-time-ago" style="color:var(--fg2)"></span></span>
+  <span class="sb-right"><span>Updated: <span id="s-time">-</span> <span id="s-time-ago" style="color:var(--fg2)"></span></span></span>
 </div>
 
 <div id="genesis-countdown" style="display:none;text-align:center;padding:12px;margin-bottom:16px;background:rgba(88,166,255,0.1);border:1px solid var(--blue);border-radius:8px">
@@ -2621,8 +2624,239 @@ setInterval(function() {
     }
   }
 }, 1000);
+
+// ---- Push notifications
+
+let _pushSubID = localStorage.getItem('gnockpitPushSubID') || null;
+let _vapidKey = null;
+let _pushEntities = null;
+
+async function initPush() {
+    if (!window.isSecureContext || !('serviceWorker' in navigator) || !('PushManager' in window)) return;
+    try {
+        await navigator.serviceWorker.register('/service-worker.js');
+        const r = await fetch('/api/push/vapid-key');
+        if (!r.ok) return;
+        _vapidKey = (await r.json()).key;
+        document.getElementById('push-btn').style.display = '';
+    } catch (e) {
+        console.warn('push init failed:', e);
+    }
+}
+
+async function openAlertsModal() {
+    const modal = document.getElementById('alerts-modal');
+    modal.style.display = 'flex';
+    showAlertsError('');
+    try {
+        const r = await fetch('/api/push/entities');
+        _pushEntities = await r.json();
+    } catch (_) {
+        _pushEntities = { validators: [], chain_stuck_secs: 30, missed_blocks: 10 };
+    }
+    renderAlertsForm();
+    const saved = localStorage.getItem('gnockpitAlertPrefs');
+    if (saved) {
+        const prefs = JSON.parse(saved);
+        Object.entries(prefs).forEach(([id, checked]) => {
+            const el = document.getElementById(id);
+            if (el) el.checked = checked;
+        });
+    }
+    syncValAllState();
+}
+
+function closeAlertsModal() {
+    document.getElementById('alerts-modal').style.display = 'none';
+}
+
+function closeAlertsModalOutside(e) {
+    if (e.target === document.getElementById('alerts-modal')) closeAlertsModal();
+}
+
+function renderAlertsForm() {
+    const perm = Notification.permission;
+    document.getElementById('alerts-perm-status').textContent =
+        perm === 'granted' ? 'Notifications are enabled in this browser.' :
+        perm === 'denied'  ? 'Notifications are blocked. Enable them in browser settings.' :
+                             'You will be asked for permission when saving.';
+    const entities = _pushEntities || { validators: [], chain_stuck_secs: 30, missed_blocks: 10 };
+    const chainStuckSecs = entities.chain_stuck_secs || 30;
+    const missedBlocks = entities.missed_blocks || 10;
+    const validators = entities.validators || [];
+
+    const recStyle = 'font-size:0.8em; color:#888; cursor:pointer; min-width:5em;';
+    const hintStyle = 'font-size:0.8em; color:#888; margin-left:0.5em;';
+
+    // ---- chain_stuck row ----
+    const chainStuckHTML = `<div style="display:flex; align-items:center; gap:10px; padding:10px 0; border-bottom:1px solid var(--border,#333);">
+        <input type="checkbox" id="chk-chain_stuck" data-type="chain_stuck" data-entity="" onchange="onAlertCheck(this)">
+        <label for="chk-chain_stuck" style="flex:1; cursor:pointer;">Chain stuck<span style="${hintStyle}">for ${chainStuckSecs}s</span></label>
+        <input type="checkbox" id="rec-chain_stuck" data-rec-type="chain_stuck" data-rec-entity="" onchange="onRecoveryCheck(this)" title="Also notify on recovery">
+        <label for="rec-chain_stuck" style="${recStyle}" title="Also notify on recovery">recovery</label>
+    </div>`;
+
+    // ---- validator_missing_votes rows ----
+    const valRows = validators.map(e => {
+        const eid = e.val_address || '';
+        const label = [e.moniker, e.val_address ? e.val_address.slice(0,14)+'\u2026' : null].filter(Boolean).join(' \u00b7 ') || eid;
+        const safeID = `validator_missing_votes__${eid.replace(/[^a-zA-Z0-9_-]/g, '_')}`;
+        return `<div style="display:flex; align-items:center; gap:10px; padding:6px 0 6px 16px; font-size:0.88em;">
+            <input type="checkbox" id="chk-${safeID}" data-type="validator_missing_votes" data-entity="${eid}" onchange="onAlertCheck(this)">
+            <label for="chk-${safeID}" style="flex:1; cursor:pointer; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="${label}">${label}</label>
+            <input type="checkbox" id="rec-${safeID}" data-rec-type="validator_missing_votes" data-rec-entity="${eid}" onchange="onRecoveryCheck(this)" title="Also notify on recovery">
+            <label for="rec-${safeID}" style="${recStyle}" title="Also notify on recovery">recovery</label>
+        </div>`;
+    }).join('');
+
+    const valAllRow = validators.length > 0 ? `<div style="display:flex; align-items:center; gap:10px; padding:6px 0 6px 16px; font-size:0.88em; border-bottom:1px solid var(--border,#333); margin-bottom:2px;">
+        <input type="checkbox" id="chk-val-all" onchange="onValAllCheck(this, false)">
+        <label for="chk-val-all" style="flex:1; cursor:pointer; font-style:italic;">all</label>
+        <input type="checkbox" id="rec-val-all" onchange="onValAllCheck(this, true)">
+        <label for="rec-val-all" style="${recStyle}">all</label>
+    </div>` : '';
+
+    const valSectionHTML = `<div style="padding:10px 0; border-bottom:1px solid var(--border,#333);">
+        <div style="font-weight:500; margin-bottom:4px;">Validator missing votes<span style="${hintStyle}">for ${missedBlocks} blocks</span></div>
+        ${valAllRow}${valRows}
+    </div>`;
+
+    document.getElementById('alerts-form').innerHTML = chainStuckHTML + valSectionHTML;
+
+}
+
+function showAlertsError(msg) {
+    const el = document.getElementById('alerts-error');
+    el.textContent = msg;
+    el.style.display = msg ? '' : 'none';
+}
+
+function onAlertCheck(cb) {
+    syncValAllState();
+}
+
+function onRecoveryCheck(cb) {
+    // Checking recovery auto-checks the corresponding alert checkbox.
+    if (!cb.checked) return;
+    const type = cb.dataset.recType || cb.getAttribute('data-rec-type');
+    const entity = cb.dataset.recEntity !== undefined ? cb.dataset.recEntity : cb.getAttribute('data-rec-entity');
+    const alertCb = document.querySelector(`#alerts-form input[data-type="${type}"][data-entity="${entity}"]`);
+    if (alertCb && !alertCb.checked) alertCb.checked = true;
+    // Sync "all" state.
+    syncValAllState();
+}
+
+function onValAllCheck(cb, isRec) {
+    const selector = isRec
+        ? '#alerts-form input[data-rec-type="validator_missing_votes"]'
+        : '#alerts-form input[data-type="validator_missing_votes"][data-entity]';
+    document.querySelectorAll(selector).forEach(el => { el.checked = cb.checked; });
+    if (isRec && cb.checked) {
+        // Also check all alert checkboxes when checking all recovery.
+        document.querySelectorAll('#alerts-form input[data-type="validator_missing_votes"][data-entity]')
+            .forEach(el => { el.checked = true; });
+        document.getElementById('chk-val-all').checked = true;
+    }
+}
+
+function syncValAllState() {
+    const allCb = document.getElementById('chk-val-all');
+    const recAllCb = document.getElementById('rec-val-all');
+    if (!allCb) return;
+    const alertCbs = [...document.querySelectorAll('#alerts-form input[data-type="validator_missing_votes"][data-entity]')];
+    const recCbs   = [...document.querySelectorAll('#alerts-form input[data-rec-type="validator_missing_votes"]')];
+    if (alertCbs.length) allCb.checked = alertCbs.every(c => c.checked);
+    if (recCbs.length && recAllCb) recAllCb.checked = recCbs.every(c => c.checked);
+}
+
+function urlBase64ToUint8Array(base64) {
+    const pad = '='.repeat((4 - base64.length % 4) % 4);
+    const b64 = (base64 + pad).replace(/-/g, '+').replace(/_/g, '/');
+    const raw = atob(b64);
+    return Uint8Array.from(Array.from(raw).map(c => c.charCodeAt(0)));
+}
+
+async function pushSaveSettings() {
+    const alerts = [];
+    document.querySelectorAll('#alerts-form input[data-type]').forEach(cb => {
+        if (!cb.checked) return;
+        const type = cb.dataset.type, entity = cb.dataset.entity;
+        const rec = document.querySelector(`#alerts-form input[data-rec-type="${type}"][data-rec-entity="${entity}"]`);
+        alerts.push({ alert_type: type, entity_id: entity, recovery_notif: !!(rec && rec.checked), subscription_id: '' });
+    });
+
+    // No alerts selected: delete existing subscription and browser push registration.
+    if (alerts.length === 0) {
+        if (_pushSubID) {
+            const del = await fetch('/api/push/subscribe?id=' + _pushSubID, { method: 'DELETE' });
+            if (!del.ok) { showAlertsError('Failed to save. See console for details.'); return; }
+            _pushSubID = null;
+            localStorage.removeItem('gnockpitPushSubID');
+        }
+        const sw = await navigator.serviceWorker.ready;
+        const pushSub = await sw.pushManager.getSubscription();
+        if (pushSub) await pushSub.unsubscribe();
+        localStorage.removeItem('gnockpitAlertPrefs');
+        closeAlertsModal();
+        return;
+    }
+
+    if (Notification.permission !== 'granted') {
+        const p = await Notification.requestPermission();
+        if (p !== 'granted') { showAlertsError('Notification permission denied.'); return; }
+    }
+    // Delete old server-side subscription before creating a new one to avoid orphaned rows.
+    if (_pushSubID) {
+        const del = await fetch('/api/push/subscribe?id=' + _pushSubID, { method: 'DELETE' });
+        if (!del.ok) { showAlertsError('Failed to save. See console for details.'); return; }
+        _pushSubID = null;
+        localStorage.removeItem('gnockpitPushSubID');
+    }
+    const sw = await navigator.serviceWorker.ready;
+    let pushSub = await sw.pushManager.getSubscription();
+    if (!pushSub) {
+        pushSub = await sw.pushManager.subscribe({
+            userVisibleOnly: true,
+            applicationServerKey: urlBase64ToUint8Array(_vapidKey),
+        });
+    }
+    const p256dh = btoa(String.fromCharCode(...new Uint8Array(pushSub.getKey('p256dh'))));
+    const auth   = btoa(String.fromCharCode(...new Uint8Array(pushSub.getKey('auth'))));
+
+    const r = await fetch('/api/push/subscribe', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ endpoint: pushSub.endpoint, p256dh, auth, alerts }),
+    });
+    if (!r.ok) { showAlertsError('Failed to save. See console for details.'); return; }
+    const data = await r.json();
+    _pushSubID = data.id;
+    localStorage.setItem('gnockpitPushSubID', data.id);
+    const prefs = {};
+    document.querySelectorAll('#alerts-form input[data-type], #alerts-form input[data-rec-type]').forEach(cb => {
+        prefs[cb.id] = cb.checked;
+    });
+    localStorage.setItem('gnockpitAlertPrefs', JSON.stringify(prefs));
+    closeAlertsModal();
+}
+
+initPush();
 </script>
 <div style="text-align:center;padding:16px;font-size:11px;color:var(--fg2)"><a href="https://github.com/gnoverse/gnockpit" target="_blank" style="color:var(--fg2);text-decoration:none">gnockpit</a> <a id="gnockpit-version" href="#" target="_blank" style="color:var(--fg2);text-decoration:none"></a></div>
 <script>fetch('/api/version').then(function(r){return r.json()}).then(function(d){if(d.version){var el=document.getElementById('gnockpit-version');el.textContent=d.version;var clean=d.version.replace(/-dirty$/,'');var m=clean.match(/g([0-9a-f]+)$/);var hash=m?m[1]:clean;if(hash)el.href='https://github.com/gnoverse/gnockpit/commit/'+hash}}).catch(function(){})</script>
+<div id="alerts-modal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.55); z-index:1000; align-items:center; justify-content:center;" onclick="closeAlertsModalOutside(event)">
+  <div id="alerts-modal-inner" style="background:var(--bg-card,#1e1e1e); border:1px solid var(--border,#333); border-radius:8px; padding:24px; width:min(500px,92vw); max-height:80vh; overflow-y:auto;">
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px;">
+      <h2 style="margin:0; font-size:1rem; font-weight:600;">Alert Notifications</h2>
+      <button onclick="closeAlertsModal()" style="background:none; border:none; cursor:pointer; font-size:1.4em; line-height:1; color:inherit;" aria-label="Close">&times;</button>
+    </div>
+    <p id="alerts-perm-status" style="margin:0 0 12px; font-size:0.82em; color:#888;"></p>
+    <p id="alerts-error" style="display:none; margin:0 0 12px; font-size:0.82em; color:#e55;"></p>
+    <div id="alerts-form"></div>
+    <div style="margin-top:20px; display:flex; gap:8px; justify-content:flex-end; flex-wrap:wrap;">
+      <button onclick="pushSaveSettings()" style="padding:5px 14px; cursor:pointer;">Save</button>
+    </div>
+  </div>
+</div>
 </body>
 </html>

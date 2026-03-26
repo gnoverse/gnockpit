@@ -38,6 +38,8 @@ gnockpit \
 | `-addr` | `0.0.0.0` | Bind address |
 | `-interval` | `5s` | Dashboard refresh interval |
 | `-v` | false | Verbose HTTP logging |
+| `--db-path` | `/tmp/gnockpit.db` | SQLite database for push notifications (see Push Notifications) |
+| `--chain-stuck-secs` | `30` | Seconds without a new block before the chain-stuck alert fires |
 
 ## Name Registry
 
@@ -56,6 +58,26 @@ You can also pre-populate or edit the file manually to assign names to validator
   "g1x9y8z7w6v5u4...": "peer-node-alpha"
 }
 ```
+
+## Push Notifications
+
+gnockpit can send browser push notifications for validator monitoring alerts. The bell icon appears in the top-right of the dashboard — it is only shown on HTTPS or localhost (service workers require a secure context).
+
+**HTTPS requirement:** Service workers require a secure context. Plain HTTP deployments will not show push options. If running behind a reverse proxy, ensure TLS is terminated at the proxy and gnockpit is accessed via `https://`.
+
+**Flags:**
+
+- `--db-path` (default `/tmp/gnockpit.db`) — SQLite database storing VAPID keys and push subscriptions. Set to a persistent path in production (e.g. `/var/lib/gnockpit/gnockpit.db`). **If VAPID keys are lost (database deleted or `/tmp` cleared on reboot), all existing browser subscriptions become invalid and users must re-subscribe.**
+- `--chain-stuck-secs` (default `30`) — Seconds without a new block before the chain-stuck alert fires.
+
+**Available alerts:**
+
+- **Validator missing votes** — fires when a validator stops prevoting/precommitting in consensus
+- **Chain stuck** — fires when no new block is produced for N seconds
+- **Node unreachable** — fires when gnockpit cannot reach a monitored node's RPC
+- **Node out of sync** — fires when a node reports it is catching up
+
+**Per-device settings:** Each browser/device has its own independent subscription. Changing notification settings on mobile does not affect desktop.
 
 ## Features
 

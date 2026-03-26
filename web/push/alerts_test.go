@@ -1,0 +1,187 @@
+package push_test
+
+import (
+	"testing"
+	"time"
+
+	"github.com/gnoverse/gnockpit/node"
+	"github.com/gnoverse/gnockpit/web/push"
+)
+
+// height is a string because node.Status.SyncInfo.LatestBlockHeight is a string.
+func makeSnap(height string, snapErr string, votes []node.VoteInfo, catchingUp bool) *node.Snapshot {
+	snap := &node.Snapshot{
+		Error:     snapErr,
+		Timestamp: time.Now(),
+	}
+	if snapErr == "" {
+		snap.Status = &node.Status{
+			SyncInfo: node.SyncInfo{
+				LatestBlockHeight: height,
+				CatchingUp:        catchingUp,
+			},
+		}
+		snap.Consensus = &node.ConsensusState{Votes: votes}
+	}
+	return snap
+}
+
+func findAlert(alerts []push.Alert, t push.AlertType, entityID string) *push.Alert {
+	for i := range alerts {
+		if alerts[i].Type == t && alerts[i].EntityID == entityID {
+			return &alerts[i]
+		}
+	}
+	return nil
+}
+
+func TestDetect_ChainStuck_Fires(t *testing.T) {
+	d := push.NewAlertDetector(30, 10)
+	snap := makeSnap("100", "", nil, false)
+
+	alerts := d.Detect(snap)
+	if a := findAlert(alerts, push.AlertChainStuck, ""); a != nil {
+		t.Error("expected no alert on first call")
+	}
+
+	d.OverrideLastHeightChange(time.Now().Add(-31 * time.Second))
+	alerts = d.Detect(snap)
+	a := findAlert(alerts, push.AlertChainStuck, "")
+	if a == nil || !a.Firing {
+		t.Error("expected chain_stuck to fire after threshold exceeded")
+	}
+}
+
+func TestDetect_ChainStuck_Recovers(t *testing.T) {
+	d := push.NewAlertDetector(30, 10)
+	snap100 := makeSnap("100", "", nil, false)
+	d.Detect(snap100)
+	d.OverrideLastHeightChange(time.Now().Add(-31 * time.Second))
+	d.Detect(snap100) // fires
+
+	snap101 := makeSnap("101", "", nil, false)
+	alerts := d.Detect(snap101)
+	a := findAlert(alerts, push.AlertChainStuck, "")
+	if a == nil || a.Firing {
+		t.Error("expected chain_stuck recovery when height advances")
+	}
+}
+
+func TestDetect_ChainStuck_NoDoubleFireWithoutRecovery(t *testing.T) {
+	d := push.NewAlertDetector(30, 10)
+	snap := makeSnap("100", "", nil, false)
+	d.Detect(snap)
+	d.OverrideLastHeightChange(time.Now().Add(-31 * time.Second))
+	d.Detect(snap) // fires
+
+	alerts := d.Detect(snap) // same state, must not re-fire
+	if a := findAlert(alerts, push.AlertChainStuck, ""); a != nil {
+		t.Error("expected no re-fire while still stuck")
+	}
+}
+
+func TestDetect_ValidatorMissingVotes_ThresholdNotReached(t *testing.T) {
+	const threshold = 10
+	d := push.NewAlertDetector(30, threshold)
+	votes := []node.VoteInfo{
+		{Address: "g1bbb", Name: "bob", Prevoted: false, Precommit: false},
+	}
+	for i := 0; i < threshold-1; i++ {
+		alerts := d.Detect(makeSnap("1", "", votes, false))
+		if a := findAlert(alerts, push.AlertValidatorMissingVotes, "g1bbb"); a != nil {
+			t.Errorf("poll %d: expected no alert before threshold", i+1)
+		}
+	}
+}
+
+func TestDetect_ValidatorMissingVotes_Fires(t *testing.T) {
+	const threshold = 10
+	d := push.NewAlertDetector(30, threshold)
+	votes := []node.VoteInfo{
+		{Address: "g1aaa", Name: "alice", Prevoted: true, Precommit: true},
+		{Address: "g1bbb", Name: "bob", Prevoted: false, Precommit: false},
+	}
+	for i := 0; i < threshold-1; i++ {
+		d.Detect(makeSnap("1", "", votes, false))
+	}
+	alerts := d.Detect(makeSnap("1", "", votes, false))
+	if a := findAlert(alerts, push.AlertValidatorMissingVotes, "g1bbb"); a == nil || !a.Firing {
+		t.Error("expected validator_missing_votes to fire at threshold")
+	}
+	if a := findAlert(alerts, push.AlertValidatorMissingVotes, "g1aaa"); a != nil {
+		t.Error("unexpected alert for alice who is voting")
+	}
+}
+
+func TestDetect_ValidatorMissingVotes_NoDoubleFireWithoutRecovery(t *testing.T) {
+	const threshold = 10
+	d := push.NewAlertDetector(30, threshold)
+	votes := []node.VoteInfo{{Address: "g1bbb", Prevoted: false, Precommit: false}}
+	for i := 0; i < threshold; i++ {
+		d.Detect(makeSnap("1", "", votes, false))
+	}
+	// Fire already happened; one more poll must not re-fire.
+	alerts := d.Detect(makeSnap("1", "", votes, false))
+	if a := findAlert(alerts, push.AlertValidatorMissingVotes, "g1bbb"); a != nil {
+		t.Error("expected no re-fire while still above threshold")
+	}
+}
+
+func TestDetect_ValidatorMissingVotes_Recovers(t *testing.T) {
+	const threshold = 10
+	d := push.NewAlertDetector(30, threshold)
+	missing := []node.VoteInfo{{Address: "g1bbb", Prevoted: false, Precommit: false}}
+	for i := 0; i < threshold; i++ {
+		d.Detect(makeSnap("1", "", missing, false))
+	}
+
+	voting := []node.VoteInfo{{Address: "g1bbb", Prevoted: true, Precommit: true}}
+	alerts := d.Detect(makeSnap("2", "", voting, false))
+	a := findAlert(alerts, push.AlertValidatorMissingVotes, "g1bbb")
+	if a == nil || a.Firing {
+		t.Error("expected recovery when validator starts voting")
+	}
+}
+
+func TestDetect_ChainStuck_EmptyHeightDoesNotResetClock(t *testing.T) {
+	d := push.NewAlertDetector(30, 10)
+	// Establish a known height.
+	d.Detect(makeSnap("100", "", nil, false))
+	d.OverrideLastHeightChange(time.Now().Add(-31 * time.Second))
+	// Simulate a transient empty height string (RPC hiccup).
+	alerts := d.Detect(makeSnap("", "", nil, false))
+	if a := findAlert(alerts, push.AlertChainStuck, ""); a != nil {
+		t.Error("empty height should be ignored, not reset the stuck clock")
+	}
+	// Height still stuck — alert should fire on next valid poll.
+	alerts = d.Detect(makeSnap("100", "", nil, false))
+	if a := findAlert(alerts, push.AlertChainStuck, ""); a == nil || !a.Firing {
+		t.Error("expected chain_stuck to fire when height is still the same after empty-height poll")
+	}
+}
+
+func TestDetect_ValidatorMissingVotes_CountResetsOnRecovery(t *testing.T) {
+	const threshold = 10
+	d := push.NewAlertDetector(30, threshold)
+	missing := []node.VoteInfo{{Address: "g1bbb", Prevoted: false, Precommit: false}}
+	voting := []node.VoteInfo{{Address: "g1bbb", Prevoted: true, Precommit: true}}
+
+	// Reach threshold and fire.
+	for i := 0; i < threshold; i++ {
+		d.Detect(makeSnap("1", "", missing, false))
+	}
+	// Recover.
+	d.Detect(makeSnap("2", "", voting, false))
+
+	// Miss again — must need another full threshold before re-firing.
+	for i := 0; i < threshold-1; i++ {
+		alerts := d.Detect(makeSnap("3", "", missing, false))
+		if a := findAlert(alerts, push.AlertValidatorMissingVotes, "g1bbb"); a != nil {
+			t.Errorf("poll %d after recovery: expected no alert before threshold", i+1)
+		}
+	}
+	alerts := d.Detect(makeSnap("3", "", missing, false))
+	if a := findAlert(alerts, push.AlertValidatorMissingVotes, "g1bbb"); a == nil || !a.Firing {
+		t.Error("expected re-fire after full threshold reached again")
+	}
+}
