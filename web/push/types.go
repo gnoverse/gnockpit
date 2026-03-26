@@ -36,13 +36,10 @@ type SubscriptionAlert struct {
 	RecoveryNotif  bool      `json:"recovery_notif"`
 }
 
-// Entity is a selectable target for per-node alerts, returned by the entities API.
+// Entity is a selectable validator target returned by the entities API.
 type Entity struct {
-	NodeID     string `json:"node_id,omitempty"`
 	ValAddress string `json:"val_address,omitempty"`
 	Moniker    string `json:"moniker,omitempty"`
-	IP         string `json:"ip,omitempty"`
-	IsLocal    bool   `json:"is_local,omitempty"`
 }
 
 // EntitiesResponse is the payload for GET /api/push/entities.

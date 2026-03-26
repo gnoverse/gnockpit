@@ -3,7 +3,6 @@ package push
 import (
 	"database/sql"
 	"fmt"
-	"time"
 
 	_ "modernc.org/sqlite"
 )
@@ -61,13 +60,6 @@ func initSchema(db *sql.DB) error {
 			entity_id       TEXT NOT NULL DEFAULT '',
 			recovery_notif  INTEGER NOT NULL DEFAULT 0,
 			PRIMARY KEY (subscription_id, alert_type, entity_id)
-		);
-		CREATE TABLE IF NOT EXISTS alert_state (
-			alert_type TEXT NOT NULL,
-			entity_id  TEXT NOT NULL DEFAULT '',
-			firing     INTEGER NOT NULL DEFAULT 0,
-			fired_at   DATETIME,
-			PRIMARY KEY (alert_type, entity_id)
 		);
 	`)
 	return err
@@ -131,6 +123,39 @@ func (d *DB) AllSubscriptions() ([]Subscription, error) {
 
 // ---- Subscription alerts
 
+// SaveSubscriptionWithAlerts saves a subscription and its alert preferences atomically.
+// If alerts is empty the subscription is saved with no preferences.
+func (d *DB) SaveSubscriptionWithAlerts(sub Subscription, alerts []SubscriptionAlert) error {
+	tx, err := d.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	if _, err := tx.Exec(
+		`INSERT OR REPLACE INTO subscriptions (id, endpoint, p256dh, auth) VALUES (?, ?, ?, ?)`,
+		sub.ID, sub.Endpoint, sub.P256dh, sub.Auth,
+	); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`DELETE FROM subscription_alerts WHERE subscription_id = ?`, sub.ID); err != nil {
+		return err
+	}
+	for _, a := range alerts {
+		recovery := 0
+		if a.RecoveryNotif {
+			recovery = 1
+		}
+		if _, err := tx.Exec(
+			`INSERT INTO subscription_alerts (subscription_id, alert_type, entity_id, recovery_notif) VALUES (?, ?, ?, ?)`,
+			sub.ID, string(a.AlertType), a.EntityID, recovery,
+		); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
 // SaveSubscriptionAlerts replaces all alert preferences for a subscription atomically.
 func (d *DB) SaveSubscriptionAlerts(subscriptionID string, alerts []SubscriptionAlert) error {
 	tx, err := d.db.Begin()
@@ -182,30 +207,3 @@ func (d *DB) SubscribersForAlert(alertType AlertType, entityID string) ([]Subscr
 	return result, rows.Err()
 }
 
-// ---- Alert state
-
-// IsAlertFiring returns whether the given alert+entity is currently in a firing state.
-func (d *DB) IsAlertFiring(alertType AlertType, entityID string) (bool, error) {
-	var firing int
-	err := d.db.QueryRow(
-		`SELECT firing FROM alert_state WHERE alert_type = ? AND entity_id = ?`,
-		string(alertType), entityID,
-	).Scan(&firing)
-	if err == sql.ErrNoRows {
-		return false, nil
-	}
-	return firing == 1, err
-}
-
-// SetAlertFiring upserts the firing state for an alert+entity.
-func (d *DB) SetAlertFiring(alertType AlertType, entityID string, firing bool) error {
-	val := 0
-	if firing {
-		val = 1
-	}
-	_, err := d.db.Exec(`
-		INSERT OR REPLACE INTO alert_state (alert_type, entity_id, firing, fired_at)
-		VALUES (?, ?, ?, ?)
-	`, string(alertType), entityID, val, time.Now().UTC())
-	return err
-}

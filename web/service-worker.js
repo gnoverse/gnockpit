@@ -8,7 +8,7 @@ self.addEventListener('push', function(event) {
             body: data.body,
             icon: '/favicon.ico',
             badge: '/favicon.ico',
-            tag: data.title,   // collapses duplicate notifications with the same title
+            tag: data.title + '\x00' + data.body,   // unique per alert+entity so simultaneous alerts don't collapse
             renotify: false,
         })
     );

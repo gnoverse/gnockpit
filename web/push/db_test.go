@@ -59,24 +59,29 @@ func TestDB_Subscriptions_CRUD(t *testing.T) {
 	}
 }
 
-func TestDB_AlertState_RoundTrip(t *testing.T) {
+func TestDB_SaveSubscriptionWithAlerts_Atomic(t *testing.T) {
 	db, _ := push.OpenDB(":memory:")
 	defer db.Close()
 
-	firing, err := db.IsAlertFiring(push.AlertChainStuck, "")
-	if err != nil {
-		t.Fatalf("IsAlertFiring: %v", err)
+	sub := push.Subscription{ID: "s2", Endpoint: "https://x.com/push", P256dh: "p", Auth: "a"}
+	alerts := []push.SubscriptionAlert{
+		{SubscriptionID: "s2", AlertType: push.AlertChainStuck, EntityID: "", RecoveryNotif: true},
+		{SubscriptionID: "s2", AlertType: push.AlertValidatorMissingVotes, EntityID: "g1aaa", RecoveryNotif: false},
 	}
-	if firing {
-		t.Error("expected not firing initially")
+	if err := db.SaveSubscriptionWithAlerts(sub, alerts); err != nil {
+		t.Fatalf("SaveSubscriptionWithAlerts: %v", err)
 	}
 
-	if err := db.SetAlertFiring(push.AlertChainStuck, "", true); err != nil {
-		t.Fatalf("SetAlertFiring: %v", err)
+	subs, _ := db.AllSubscriptions()
+	if len(subs) != 1 || subs[0].ID != "s2" {
+		t.Errorf("expected 1 subscription, got %v", subs)
 	}
-	firing, _ = db.IsAlertFiring(push.AlertChainStuck, "")
-	if !firing {
-		t.Error("expected firing after set")
+	loaded, err := db.SubscribersForAlert(push.AlertChainStuck, "")
+	if err != nil {
+		t.Fatalf("SubscribersForAlert: %v", err)
+	}
+	if len(loaded) != 1 || !loaded[0].RecoveryNotif {
+		t.Errorf("expected 1 subscriber with recovery_notif, got %v", loaded)
 	}
 }
 

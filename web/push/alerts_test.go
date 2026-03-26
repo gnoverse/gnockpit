@@ -143,6 +143,23 @@ func TestDetect_ValidatorMissingVotes_Recovers(t *testing.T) {
 	}
 }
 
+func TestDetect_ChainStuck_EmptyHeightDoesNotResetClock(t *testing.T) {
+	d := push.NewAlertDetector(30, 10)
+	// Establish a known height.
+	d.Detect(makeSnap("100", "", nil, false))
+	d.OverrideLastHeightChange(time.Now().Add(-31 * time.Second))
+	// Simulate a transient empty height string (RPC hiccup).
+	alerts := d.Detect(makeSnap("", "", nil, false))
+	if a := findAlert(alerts, push.AlertChainStuck, ""); a != nil {
+		t.Error("empty height should be ignored, not reset the stuck clock")
+	}
+	// Height still stuck — alert should fire on next valid poll.
+	alerts = d.Detect(makeSnap("100", "", nil, false))
+	if a := findAlert(alerts, push.AlertChainStuck, ""); a == nil || !a.Firing {
+		t.Error("expected chain_stuck to fire when height is still the same after empty-height poll")
+	}
+}
+
 func TestDetect_ValidatorMissingVotes_CountResetsOnRecovery(t *testing.T) {
 	const threshold = 10
 	d := push.NewAlertDetector(30, threshold)

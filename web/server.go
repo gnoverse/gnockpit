@@ -1275,12 +1275,8 @@ func (s *Server) handlePushSubscribe(w http.ResponseWriter, r *http.Request) {
 	for i := range req.Alerts {
 		req.Alerts[i].SubscriptionID = sub.ID
 	}
-	if err := s.PushManager.DB().SaveSubscription(sub); err != nil {
+	if err := s.PushManager.DB().SaveSubscriptionWithAlerts(sub, req.Alerts); err != nil {
 		http.Error(w, "save subscription", http.StatusInternalServerError)
-		return
-	}
-	if err := s.PushManager.DB().SaveSubscriptionAlerts(sub.ID, req.Alerts); err != nil {
-		http.Error(w, "save alert preferences", http.StatusInternalServerError)
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")

@@ -72,7 +72,9 @@ func (d *AlertDetector) detectChainStuck(snap *node.Snapshot) []Alert {
 	}
 	// LatestBlockHeight is a string in node.SyncInfo; parse to int64 for comparison.
 	var height int64
-	fmt.Sscanf(snap.Status.SyncInfo.LatestBlockHeight, "%d", &height)
+	if n, _ := fmt.Sscanf(snap.Status.SyncInfo.LatestBlockHeight, "%d", &height); n == 0 {
+		return nil
+	}
 	now := time.Now()
 
 	if !d.initialized || height != d.lastHeight {

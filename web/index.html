@@ -2647,6 +2647,7 @@ async function initPush() {
 async function openAlertsModal() {
     const modal = document.getElementById('alerts-modal');
     modal.style.display = 'flex';
+    showAlertsError('');
     try {
         const r = await fetch('/api/push/entities');
         _pushEntities = await r.json();
@@ -2722,10 +2723,12 @@ function renderAlertsForm() {
 
     document.getElementById('alerts-form').innerHTML = chainStuckHTML + valSectionHTML;
 
-    // Wire up inter-checkbox listeners after DOM insertion.
-    document.getElementById('alerts-form').querySelectorAll('input[data-rec-type]').forEach(cb => {
-        cb.addEventListener('change', function() { onRecoveryCheck(this); });
-    });
+}
+
+function showAlertsError(msg) {
+    const el = document.getElementById('alerts-error');
+    el.textContent = msg;
+    el.style.display = msg ? '' : 'none';
 }
 
 function onAlertCheck(cb) {
@@ -2786,7 +2789,7 @@ async function pushSaveSettings() {
     if (alerts.length === 0) {
         if (_pushSubID) {
             const del = await fetch('/api/push/subscribe?id=' + _pushSubID, { method: 'DELETE' });
-            if (!del.ok) { alert('Failed to save. See console for details.'); return; }
+            if (!del.ok) { showAlertsError('Failed to save. See console for details.'); return; }
             _pushSubID = null;
             localStorage.removeItem('gnockpitPushSubID');
         }
@@ -2800,12 +2803,12 @@ async function pushSaveSettings() {
 
     if (Notification.permission !== 'granted') {
         const p = await Notification.requestPermission();
-        if (p !== 'granted') { alert('Notification permission denied.'); return; }
+        if (p !== 'granted') { showAlertsError('Notification permission denied.'); return; }
     }
     // Delete old server-side subscription before creating a new one to avoid orphaned rows.
     if (_pushSubID) {
         const del = await fetch('/api/push/subscribe?id=' + _pushSubID, { method: 'DELETE' });
-        if (!del.ok) { alert('Failed to save. See console for details.'); return; }
+        if (!del.ok) { showAlertsError('Failed to save. See console for details.'); return; }
         _pushSubID = null;
         localStorage.removeItem('gnockpitPushSubID');
     }
@@ -2825,7 +2828,7 @@ async function pushSaveSettings() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ endpoint: pushSub.endpoint, p256dh, auth, alerts }),
     });
-    if (!r.ok) { alert('Failed to save. See console for details.'); return; }
+    if (!r.ok) { showAlertsError('Failed to save. See console for details.'); return; }
     const data = await r.json();
     _pushSubID = data.id;
     localStorage.setItem('gnockpitPushSubID', data.id);
@@ -2848,6 +2851,7 @@ initPush();
       <button onclick="closeAlertsModal()" style="background:none; border:none; cursor:pointer; font-size:1.4em; line-height:1; color:inherit;" aria-label="Close">&times;</button>
     </div>
     <p id="alerts-perm-status" style="margin:0 0 12px; font-size:0.82em; color:#888;"></p>
+    <p id="alerts-error" style="display:none; margin:0 0 12px; font-size:0.82em; color:#e55;"></p>
     <div id="alerts-form"></div>
     <div style="margin-top:20px; display:flex; gap:8px; justify-content:flex-end; flex-wrap:wrap;">
       <button onclick="pushSaveSettings()" style="padding:5px 14px; cursor:pointer;">Save</button>
