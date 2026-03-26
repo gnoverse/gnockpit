@@ -5,6 +5,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/gnoverse/gnockpit/node"
 	"github.com/gnoverse/gnockpit/web/push"
 )
 
@@ -99,4 +100,28 @@ func TestManager_SendPush_RemovesGoneSubscription(t *testing.T) {
 func TestManager_SendPush_RemovesBadRequestSubscription(t *testing.T) {
 	// WNS (Edge on Windows) returns 400 for expired channels instead of 410.
 	testSendPushRemovesStaleSubscription(t, http.StatusBadRequest)
+}
+
+func TestManager_EvaluateAndNotify_CapturesChainName(t *testing.T) {
+	db, err := push.OpenDB(":memory:")
+	if err != nil {
+		t.Fatalf("OpenDB: %v", err)
+	}
+	defer db.Close()
+	m, err := push.NewManager(db, 30, 10)
+	if err != nil {
+		t.Fatalf("NewManager: %v", err)
+	}
+
+	snap := &node.Snapshot{
+		Status: &node.Status{
+			NodeInfo: node.NodeInfo{Network: "mychain"},
+			SyncInfo: node.SyncInfo{LatestBlockHeight: "100"},
+		},
+		Consensus: &node.ConsensusState{},
+	}
+	m.EvaluateAndNotify(snap)
+	if m.ChainName() != "mychain" {
+		t.Errorf("ChainName() = %q, want %q", m.ChainName(), "mychain")
+	}
 }

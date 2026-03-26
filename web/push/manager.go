@@ -23,6 +23,7 @@ type Manager struct {
 	vapidPrivateKey string
 	chainStuckSecs  int
 	missedBlocks    int
+	chainName       string
 }
 
 // NewManager creates a Manager, loading or auto-generating VAPID keys.
@@ -56,6 +57,9 @@ func (m *Manager) ChainStuckSecs() int { return m.chainStuckSecs }
 // MissedBlocks returns the validator missing-votes threshold.
 func (m *Manager) MissedBlocks() int { return m.missedBlocks }
 
+// ChainName returns the last observed chain network ID.
+func (m *Manager) ChainName() string { return m.chainName }
+
 // VAPIDPublicKey returns the VAPID public key for use in browser push subscriptions.
 func (m *Manager) VAPIDPublicKey() string { return m.vapidPublicKey }
 
@@ -64,6 +68,9 @@ func (m *Manager) DB() *DB { return m.db }
 
 // EvaluateAndNotify detects alert transitions from snap and delivers push notifications.
 func (m *Manager) EvaluateAndNotify(snap *node.Snapshot) {
+	if snap.Status != nil && snap.Status.NodeInfo.Network != "" {
+		m.chainName = snap.Status.NodeInfo.Network
+	}
 	for _, a := range m.detector.Detect(snap) {
 		m.NotifyAlert(a)
 	}
@@ -90,7 +97,11 @@ type pushPayload struct {
 }
 
 func (m *Manager) sendPush(sub Subscription, a Alert) {
-	payload, err := json.Marshal(pushPayload{Title: a.Title, Body: a.Body})
+	title := a.Title
+	if m.chainName != "" {
+		title = m.chainName + " - " + title
+	}
+	payload, err := json.Marshal(pushPayload{Title: title, Body: a.Body})
 	if err != nil {
 		log.Printf("push: marshal payload: %v", err)
 		return

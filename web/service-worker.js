@@ -6,8 +6,8 @@ self.addEventListener('push', function(event) {
     event.waitUntil(
         self.registration.showNotification(data.title, {
             body: data.body,
-            icon: '/favicon.ico',
-            badge: '/favicon.ico',
+            icon: '/icon-192.png',
+            badge: '/icon-32.png',
             tag: data.title + '\x00' + data.body,   // unique per alert+entity so simultaneous alerts don't collapse
             renotify: false,
         })
