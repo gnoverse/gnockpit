@@ -29,8 +29,9 @@ var (
 	flagTimeout    time.Duration
 	flagWebPort       int
 	flagWebAddr       string
-	flagDBPath        string
+	flagDBPath         string
 	flagChainStuckSecs int
+	flagMissedBlocks   int
 	flagDataDir    string
 	flagGenesisPath string
 	flagNamesPath   string
@@ -663,7 +664,7 @@ func webCmd() *cobra.Command {
 				return fmt.Errorf("open push database: %w", err)
 			}
 			defer db.Close()
-			pushMgr, err := push.NewManager(db, flagChainStuckSecs)
+			pushMgr, err := push.NewManager(db, flagChainStuckSecs, flagMissedBlocks)
 			if err != nil {
 				return fmt.Errorf("init push manager: %w", err)
 			}
@@ -678,5 +679,7 @@ func webCmd() *cobra.Command {
 		"SQLite database path for push notifications; use a persistent path in production so VAPID keys survive reboots")
 	cmd.Flags().IntVar(&flagChainStuckSecs, "chain-stuck-secs", 30,
 		"seconds without a new block before the chain-stuck alert fires")
+	cmd.Flags().IntVar(&flagMissedBlocks, "missed-blocks", 10,
+		"consecutive missed vote intervals before the validator-missing-votes alert fires")
 	return cmd
 }

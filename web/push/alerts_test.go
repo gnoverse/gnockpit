@@ -9,10 +9,9 @@ import (
 )
 
 // height is a string because node.Status.SyncInfo.LatestBlockHeight is a string.
-func makeSnap(height string, snapErr string, peers []node.Peer, votes []node.VoteInfo, catchingUp bool) *node.Snapshot {
+func makeSnap(height string, snapErr string, votes []node.VoteInfo, catchingUp bool) *node.Snapshot {
 	snap := &node.Snapshot{
 		Error:     snapErr,
-		Peers:     peers,
 		Timestamp: time.Now(),
 	}
 	if snapErr == "" {
@@ -37,8 +36,8 @@ func findAlert(alerts []push.Alert, t push.AlertType, entityID string) *push.Ale
 }
 
 func TestDetect_ChainStuck_Fires(t *testing.T) {
-	d := push.NewAlertDetector(30)
-	snap := makeSnap("100", "", nil, nil, false)
+	d := push.NewAlertDetector(30, 10)
+	snap := makeSnap("100", "", nil, false)
 
 	alerts := d.Detect(snap)
 	if a := findAlert(alerts, push.AlertChainStuck, ""); a != nil {
@@ -54,13 +53,13 @@ func TestDetect_ChainStuck_Fires(t *testing.T) {
 }
 
 func TestDetect_ChainStuck_Recovers(t *testing.T) {
-	d := push.NewAlertDetector(30)
-	snap100 := makeSnap("100", "", nil, nil, false)
+	d := push.NewAlertDetector(30, 10)
+	snap100 := makeSnap("100", "", nil, false)
 	d.Detect(snap100)
 	d.OverrideLastHeightChange(time.Now().Add(-31 * time.Second))
 	d.Detect(snap100) // fires
 
-	snap101 := makeSnap("101", "", nil, nil, false)
+	snap101 := makeSnap("101", "", nil, false)
 	alerts := d.Detect(snap101)
 	a := findAlert(alerts, push.AlertChainStuck, "")
 	if a == nil || a.Firing {
@@ -69,8 +68,8 @@ func TestDetect_ChainStuck_Recovers(t *testing.T) {
 }
 
 func TestDetect_ChainStuck_NoDoubleFireWithoutRecovery(t *testing.T) {
-	d := push.NewAlertDetector(30)
-	snap := makeSnap("100", "", nil, nil, false)
+	d := push.NewAlertDetector(30, 10)
+	snap := makeSnap("100", "", nil, false)
 	d.Detect(snap)
 	d.OverrideLastHeightChange(time.Now().Add(-31 * time.Second))
 	d.Detect(snap) // fires
@@ -81,66 +80,91 @@ func TestDetect_ChainStuck_NoDoubleFireWithoutRecovery(t *testing.T) {
 	}
 }
 
+func TestDetect_ValidatorMissingVotes_ThresholdNotReached(t *testing.T) {
+	const threshold = 10
+	d := push.NewAlertDetector(30, threshold)
+	votes := []node.VoteInfo{
+		{Address: "g1bbb", Name: "bob", Prevoted: false, Precommit: false},
+	}
+	for i := 0; i < threshold-1; i++ {
+		alerts := d.Detect(makeSnap("1", "", votes, false))
+		if a := findAlert(alerts, push.AlertValidatorMissingVotes, "g1bbb"); a != nil {
+			t.Errorf("poll %d: expected no alert before threshold", i+1)
+		}
+	}
+}
+
 func TestDetect_ValidatorMissingVotes_Fires(t *testing.T) {
-	d := push.NewAlertDetector(30)
+	const threshold = 10
+	d := push.NewAlertDetector(30, threshold)
 	votes := []node.VoteInfo{
 		{Address: "g1aaa", Name: "alice", Prevoted: true, Precommit: true},
 		{Address: "g1bbb", Name: "bob", Prevoted: false, Precommit: false},
 	}
-	alerts := d.Detect(makeSnap("1", "", nil, votes, false))
+	for i := 0; i < threshold-1; i++ {
+		d.Detect(makeSnap("1", "", votes, false))
+	}
+	alerts := d.Detect(makeSnap("1", "", votes, false))
 	if a := findAlert(alerts, push.AlertValidatorMissingVotes, "g1bbb"); a == nil || !a.Firing {
-		t.Error("expected validator_missing_votes for g1bbb")
+		t.Error("expected validator_missing_votes to fire at threshold")
 	}
 	if a := findAlert(alerts, push.AlertValidatorMissingVotes, "g1aaa"); a != nil {
 		t.Error("unexpected alert for alice who is voting")
 	}
 }
 
+func TestDetect_ValidatorMissingVotes_NoDoubleFireWithoutRecovery(t *testing.T) {
+	const threshold = 10
+	d := push.NewAlertDetector(30, threshold)
+	votes := []node.VoteInfo{{Address: "g1bbb", Prevoted: false, Precommit: false}}
+	for i := 0; i < threshold; i++ {
+		d.Detect(makeSnap("1", "", votes, false))
+	}
+	// Fire already happened; one more poll must not re-fire.
+	alerts := d.Detect(makeSnap("1", "", votes, false))
+	if a := findAlert(alerts, push.AlertValidatorMissingVotes, "g1bbb"); a != nil {
+		t.Error("expected no re-fire while still above threshold")
+	}
+}
+
 func TestDetect_ValidatorMissingVotes_Recovers(t *testing.T) {
-	d := push.NewAlertDetector(30)
+	const threshold = 10
+	d := push.NewAlertDetector(30, threshold)
 	missing := []node.VoteInfo{{Address: "g1bbb", Prevoted: false, Precommit: false}}
-	d.Detect(makeSnap("1", "", nil, missing, false)) // fires
+	for i := 0; i < threshold; i++ {
+		d.Detect(makeSnap("1", "", missing, false))
+	}
 
 	voting := []node.VoteInfo{{Address: "g1bbb", Prevoted: true, Precommit: true}}
-	alerts := d.Detect(makeSnap("2", "", nil, voting, false))
+	alerts := d.Detect(makeSnap("2", "", voting, false))
 	a := findAlert(alerts, push.AlertValidatorMissingVotes, "g1bbb")
 	if a == nil || a.Firing {
 		t.Error("expected recovery when validator starts voting")
 	}
 }
 
-func TestDetect_LocalNodeUnreachable(t *testing.T) {
-	d := push.NewAlertDetector(30)
-	snap := makeSnap("", "connection refused", nil, nil, false)
-	alerts := d.Detect(snap)
-	if a := findAlert(alerts, push.AlertNodeUnreachable, push.EntityIDLocal); a == nil || !a.Firing {
-		t.Error("expected node_unreachable for local node")
-	}
-}
+func TestDetect_ValidatorMissingVotes_CountResetsOnRecovery(t *testing.T) {
+	const threshold = 10
+	d := push.NewAlertDetector(30, threshold)
+	missing := []node.VoteInfo{{Address: "g1bbb", Prevoted: false, Precommit: false}}
+	voting := []node.VoteInfo{{Address: "g1bbb", Prevoted: true, Precommit: true}}
 
-func TestDetect_LocalNodeOutOfSync(t *testing.T) {
-	d := push.NewAlertDetector(30)
-	snap := makeSnap("1", "", nil, nil, true) // catchingUp = true
-	alerts := d.Detect(snap)
-	if a := findAlert(alerts, push.AlertNodeOutOfSync, push.EntityIDLocal); a == nil || !a.Firing {
-		t.Error("expected node_out_of_sync for local node")
+	// Reach threshold and fire.
+	for i := 0; i < threshold; i++ {
+		d.Detect(makeSnap("1", "", missing, false))
 	}
-}
+	// Recover.
+	d.Detect(makeSnap("2", "", voting, false))
 
-func TestDetect_PeerUnreachable(t *testing.T) {
-	d := push.NewAlertDetector(30)
-	peers := []node.Peer{{NodeID: "peer1", Moniker: "peerA", Error: "timeout"}}
-	alerts := d.Detect(makeSnap("1", "", peers, nil, false))
-	if a := findAlert(alerts, push.AlertNodeUnreachable, "peer1"); a == nil || !a.Firing {
-		t.Error("expected node_unreachable for peer1")
+	// Miss again — must need another full threshold before re-firing.
+	for i := 0; i < threshold-1; i++ {
+		alerts := d.Detect(makeSnap("3", "", missing, false))
+		if a := findAlert(alerts, push.AlertValidatorMissingVotes, "g1bbb"); a != nil {
+			t.Errorf("poll %d after recovery: expected no alert before threshold", i+1)
+		}
 	}
-}
-
-func TestDetect_PeerOutOfSync(t *testing.T) {
-	d := push.NewAlertDetector(30)
-	peers := []node.Peer{{NodeID: "peer1", Moniker: "peerA", CatchingUp: true}}
-	alerts := d.Detect(makeSnap("1", "", peers, nil, false))
-	if a := findAlert(alerts, push.AlertNodeOutOfSync, "peer1"); a == nil || !a.Firing {
-		t.Error("expected node_out_of_sync for peer1 that is catching up")
+	alerts := d.Detect(makeSnap("3", "", missing, false))
+	if a := findAlert(alerts, push.AlertValidatorMissingVotes, "g1bbb"); a == nil || !a.Firing {
+		t.Error("expected re-fire after full threshold reached again")
 	}
 }

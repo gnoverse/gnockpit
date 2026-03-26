@@ -15,7 +15,7 @@ func TestManager_VAPIDKeys_GeneratedOnFirstRun(t *testing.T) {
 	}
 	defer db.Close()
 
-	m, err := push.NewManager(db, 30)
+	m, err := push.NewManager(db, 30, 10)
 	if err != nil {
 		t.Fatalf("NewManager: %v", err)
 	}
@@ -32,13 +32,13 @@ func TestManager_VAPIDKeys_PersistAcrossReloads(t *testing.T) {
 	}
 	defer db.Close()
 
-	m1, err := push.NewManager(db, 30)
+	m1, err := push.NewManager(db, 30, 10)
 	if err != nil {
 		t.Fatalf("NewManager (first): %v", err)
 	}
 	pub1 := m1.VAPIDPublicKey()
 
-	m2, err := push.NewManager(db, 30)
+	m2, err := push.NewManager(db, 30, 10)
 	if err != nil {
 		t.Fatalf("NewManager (second): %v", err)
 	}
@@ -58,7 +58,7 @@ func TestManager_SendPush_RemovesGoneSubscription(t *testing.T) {
 		t.Fatalf("OpenDB: %v", err)
 	}
 	defer db.Close()
-	m, err := push.NewManager(db, 30)
+	m, err := push.NewManager(db, 30, 10)
 	if err != nil {
 		t.Fatalf("NewManager: %v", err)
 	}

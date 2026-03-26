@@ -1294,31 +1294,17 @@ func (s *Server) handlePushEntities(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	snap := s.getSnapshot()
-	resp := push.EntitiesResponse{}
+	resp := push.EntitiesResponse{
+		ChainStuckSecs: s.PushManager.ChainStuckSecs(),
+		MissedBlocks:   s.PushManager.MissedBlocks(),
+	}
 
-	if snap != nil {
-		local := push.Entity{IsLocal: true, NodeID: push.EntityIDLocal}
-		if snap.Status != nil {
-			local.Moniker = snap.Status.NodeInfo.Moniker
-		}
-		resp.Peers = append(resp.Peers, local)
-
-		for _, p := range snap.Peers {
-			resp.Peers = append(resp.Peers, push.Entity{
-				NodeID:     p.NodeID,
-				ValAddress: p.ValAddress,
-				Moniker:    p.Moniker,
-				IP:         p.RemoteIP,
+	if snap != nil && snap.Consensus != nil {
+		for _, v := range snap.Consensus.Votes {
+			resp.Validators = append(resp.Validators, push.Entity{
+				ValAddress: v.Address,
+				Moniker:    v.Name,
 			})
-		}
-
-		if snap.Consensus != nil {
-			for _, v := range snap.Consensus.Votes {
-				resp.Validators = append(resp.Validators, push.Entity{
-					ValAddress: v.Address,
-					Moniker:    v.Name,
-				})
-			}
 		}
 	}
 

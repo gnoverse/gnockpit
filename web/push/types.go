@@ -6,8 +6,6 @@ type AlertType string
 const (
 	AlertValidatorMissingVotes AlertType = "validator_missing_votes"
 	AlertChainStuck            AlertType = "chain_stuck"
-	AlertNodeUnreachable       AlertType = "node_unreachable"
-	AlertNodeOutOfSync         AlertType = "node_out_of_sync"
 )
 
 // EntityIDLocal is the sentinel entity ID for the locally monitored node.
@@ -32,10 +30,10 @@ type Subscription struct {
 
 // SubscriptionAlert is one alert preference row for a subscription.
 type SubscriptionAlert struct {
-	SubscriptionID string
-	AlertType      AlertType
-	EntityID       string
-	RecoveryNotif  bool
+	SubscriptionID string    `json:"subscription_id"`
+	AlertType      AlertType `json:"alert_type"`
+	EntityID       string    `json:"entity_id"`
+	RecoveryNotif  bool      `json:"recovery_notif"`
 }
 
 // Entity is a selectable target for per-node alerts, returned by the entities API.
@@ -49,8 +47,9 @@ type Entity struct {
 
 // EntitiesResponse is the payload for GET /api/push/entities.
 type EntitiesResponse struct {
-	Validators []Entity `json:"validators"`
-	Peers      []Entity `json:"peers"`
+	Validators     []Entity `json:"validators"`
+	ChainStuckSecs int      `json:"chain_stuck_secs"`
+	MissedBlocks   int      `json:"missed_blocks"`
 }
 
 // SubscribeRequest is the payload for POST /api/push/subscribe.

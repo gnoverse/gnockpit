@@ -88,7 +88,7 @@ func TestDB_SubscriptionAlerts_SaveAndLoad(t *testing.T) {
 
 	alerts := []push.SubscriptionAlert{
 		{SubscriptionID: "s1", AlertType: push.AlertChainStuck, EntityID: "", RecoveryNotif: true},
-		{SubscriptionID: "s1", AlertType: push.AlertNodeUnreachable, EntityID: "nodeid1", RecoveryNotif: false},
+		{SubscriptionID: "s1", AlertType: push.AlertValidatorMissingVotes, EntityID: "g1aaa", RecoveryNotif: false},
 	}
 	if err := db.SaveSubscriptionAlerts("s1", alerts); err != nil {
 		t.Fatalf("SaveSubscriptionAlerts: %v", err)

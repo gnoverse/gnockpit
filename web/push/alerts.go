@@ -11,11 +11,13 @@ import (
 // Not safe for concurrent use; callers must ensure single-goroutine access
 // (Manager.EvaluateAndNotify is called from the publishLoop goroutine only).
 type AlertDetector struct {
-	chainStuckSecs   int
-	lastHeightChange time.Time
-	lastHeight       int64
-	initialized      bool
-	firingAlerts     map[alertKey]bool
+	chainStuckSecs       int
+	missedBlocksThreshold int
+	lastHeightChange     time.Time
+	lastHeight           int64
+	initialized          bool
+	firingAlerts         map[alertKey]bool
+	missedCounts         map[string]int
 }
 
 type alertKey struct {
@@ -23,11 +25,13 @@ type alertKey struct {
 	entityID  string
 }
 
-// NewAlertDetector creates a detector with the given chain-stuck threshold in seconds.
-func NewAlertDetector(chainStuckSecs int) *AlertDetector {
+// NewAlertDetector creates a detector with the given thresholds.
+func NewAlertDetector(chainStuckSecs, missedBlocksThreshold int) *AlertDetector {
 	return &AlertDetector{
-		chainStuckSecs: chainStuckSecs,
-		firingAlerts:   make(map[alertKey]bool),
+		chainStuckSecs:        chainStuckSecs,
+		missedBlocksThreshold: missedBlocksThreshold,
+		firingAlerts:          make(map[alertKey]bool),
+		missedCounts:          make(map[string]int),
 	}
 }
 
@@ -40,11 +44,8 @@ func (d *AlertDetector) OverrideLastHeightChange(t time.Time) {
 // Each alert fires at most once per state transition (bad→good or good→bad).
 func (d *AlertDetector) Detect(snap *node.Snapshot) []Alert {
 	var alerts []Alert
-	alerts = append(alerts, d.detectLocalUnreachable(snap)...)
-	alerts = append(alerts, d.detectLocalOutOfSync(snap)...)
 	alerts = append(alerts, d.detectChainStuck(snap)...)
 	alerts = append(alerts, d.detectValidatorMissingVotes(snap)...)
-	alerts = append(alerts, d.detectPeerAlerts(snap)...)
 	return alerts
 }
 
@@ -63,32 +64,6 @@ func (d *AlertDetector) transition(alertType AlertType, entityID string, firing 
 		a.Title, a.Body = recoveryTitle, recoveryBody
 	}
 	return &a
-}
-
-func (d *AlertDetector) detectLocalUnreachable(snap *node.Snapshot) []Alert {
-	unreachable := snap.Error != "" || snap.Status == nil
-	a := d.transition(AlertNodeUnreachable, EntityIDLocal, unreachable,
-		"Node unreachable", "Local node is unreachable",
-		"Node reachable", "Local node is back online",
-	)
-	if a != nil {
-		return []Alert{*a}
-	}
-	return nil
-}
-
-func (d *AlertDetector) detectLocalOutOfSync(snap *node.Snapshot) []Alert {
-	if snap.Status == nil {
-		return nil
-	}
-	a := d.transition(AlertNodeOutOfSync, EntityIDLocal, snap.Status.SyncInfo.CatchingUp,
-		"Node out of sync", "Local node is catching up with the chain",
-		"Node in sync", "Local node is back in sync",
-	)
-	if a != nil {
-		return []Alert{*a}
-	}
-	return nil
 }
 
 func (d *AlertDetector) detectChainStuck(snap *node.Snapshot) []Alert {
@@ -128,40 +103,24 @@ func (d *AlertDetector) detectValidatorMissingVotes(snap *node.Snapshot) []Alert
 		if name == "" {
 			name = v.Address
 		}
-		a := d.transition(AlertValidatorMissingVotes, v.Address, missing,
-			"Validator missing votes", fmt.Sprintf("%s is not voting", name),
-			"Validator back online", fmt.Sprintf("%s is voting again", name),
-		)
-		if a != nil {
-			alerts = append(alerts, *a)
-		}
-	}
-	return alerts
-}
-
-func (d *AlertDetector) detectPeerAlerts(snap *node.Snapshot) []Alert {
-	var alerts []Alert
-	for _, p := range snap.Peers {
-		if p.NodeID == "" {
-			continue
-		}
-		name := p.Moniker
-		if name == "" {
-			name = p.NodeID
-		}
-
-		if a := d.transition(AlertNodeUnreachable, p.NodeID, p.Error != "",
-			"Peer unreachable", fmt.Sprintf("Peer %s is unreachable", name),
-			"Peer reachable", fmt.Sprintf("Peer %s is back online", name),
-		); a != nil {
-			alerts = append(alerts, *a)
-		}
-
-		if a := d.transition(AlertNodeOutOfSync, p.NodeID, p.CatchingUp,
-			"Peer out of sync", fmt.Sprintf("Peer %s is catching up", name),
-			"Peer in sync", fmt.Sprintf("Peer %s is back in sync", name),
-		); a != nil {
-			alerts = append(alerts, *a)
+		if missing {
+			d.missedCounts[v.Address]++
+			if d.missedCounts[v.Address] >= d.missedBlocksThreshold {
+				if a := d.transition(AlertValidatorMissingVotes, v.Address, true,
+					"Validator missing votes", fmt.Sprintf("%s is not voting", name),
+					"", "",
+				); a != nil {
+					alerts = append(alerts, *a)
+				}
+			}
+		} else {
+			d.missedCounts[v.Address] = 0
+			if a := d.transition(AlertValidatorMissingVotes, v.Address, false,
+				"", "",
+				"Validator back online", fmt.Sprintf("%s is voting again", name),
+			); a != nil {
+				alerts = append(alerts, *a)
+			}
 		}
 	}
 	return alerts

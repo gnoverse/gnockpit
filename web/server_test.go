@@ -474,7 +474,7 @@ func newSrvWithPush(t *testing.T) (*Server, *push.Manager) {
 		t.Fatalf("open test db: %v", err)
 	}
 	t.Cleanup(func() { db.Close() })
-	mgr, err := push.NewManager(db, 30)
+	mgr, err := push.NewManager(db, 30, 10)
 	if err != nil {
 		t.Fatalf("new push manager: %v", err)
 	}
@@ -561,12 +561,15 @@ func TestHandlePushEntities_ReturnsJSON(t *testing.T) {
 	if err := json.NewDecoder(w.Body).Decode(&entities); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
-	// No snapshot set — no entities returned.
-	if len(entities.Peers) != 0 {
-		t.Errorf("expected 0 peers with no snapshot, got %d", len(entities.Peers))
-	}
+	// No snapshot set — no validators returned, but thresholds are populated.
 	if len(entities.Validators) != 0 {
 		t.Errorf("expected 0 validators with no snapshot, got %d", len(entities.Validators))
+	}
+	if entities.ChainStuckSecs != 30 {
+		t.Errorf("expected chain_stuck_secs=30, got %d", entities.ChainStuckSecs)
+	}
+	if entities.MissedBlocks != 10 {
+		t.Errorf("expected missed_blocks=10, got %d", entities.MissedBlocks)
 	}
 }
 
@@ -574,7 +577,6 @@ func TestHandlePushEntities_WithSnapshot(t *testing.T) {
 	srv, _ := newSrvWithPush(t)
 	srv.setSnapshot(&node.Snapshot{
 		Status: &node.Status{NodeInfo: node.NodeInfo{Moniker: "my-node"}},
-		Peers:  []node.Peer{{NodeID: "peer1", Moniker: "peer-alpha", RemoteIP: "1.2.3.4"}},
 		Consensus: &node.ConsensusState{
 			Votes: []node.VoteInfo{{Address: "g1aaa", Name: "alice"}},
 		},
@@ -592,17 +594,13 @@ func TestHandlePushEntities_WithSnapshot(t *testing.T) {
 	if err := json.NewDecoder(w.Body).Decode(&entities); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
-	// Local node first, then peer.
-	if len(entities.Peers) != 2 {
-		t.Fatalf("expected 2 peers (local + 1 remote), got %d", len(entities.Peers))
-	}
-	if !entities.Peers[0].IsLocal {
-		t.Error("expected first peer to be local node")
-	}
-	if entities.Peers[1].NodeID != "peer1" {
-		t.Errorf("expected peer1, got %q", entities.Peers[1].NodeID)
-	}
 	if len(entities.Validators) != 1 || entities.Validators[0].ValAddress != "g1aaa" {
 		t.Errorf("expected 1 validator g1aaa, got %v", entities.Validators)
+	}
+	if entities.ChainStuckSecs != 30 {
+		t.Errorf("expected chain_stuck_secs=30, got %d", entities.ChainStuckSecs)
+	}
+	if entities.MissedBlocks != 10 {
+		t.Errorf("expected missed_blocks=10, got %d", entities.MissedBlocks)
 	}
 }

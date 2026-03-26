@@ -18,10 +18,12 @@ type Manager struct {
 	detector        *AlertDetector
 	vapidPublicKey  string
 	vapidPrivateKey string
+	chainStuckSecs  int
+	missedBlocks    int
 }
 
 // NewManager creates a Manager, loading or auto-generating VAPID keys.
-func NewManager(db *DB, chainStuckSecs int) (*Manager, error) {
+func NewManager(db *DB, chainStuckSecs, missedBlocks int) (*Manager, error) {
 	pub, priv, err := db.LoadVAPIDKeys()
 	if err != nil {
 		return nil, fmt.Errorf("load VAPID keys: %w", err)
@@ -37,11 +39,19 @@ func NewManager(db *DB, chainStuckSecs int) (*Manager, error) {
 	}
 	return &Manager{
 		db:              db,
-		detector:        NewAlertDetector(chainStuckSecs),
+		detector:        NewAlertDetector(chainStuckSecs, missedBlocks),
 		vapidPublicKey:  pub,
 		vapidPrivateKey: priv,
+		chainStuckSecs:  chainStuckSecs,
+		missedBlocks:    missedBlocks,
 	}, nil
 }
+
+// ChainStuckSecs returns the chain-stuck threshold in seconds.
+func (m *Manager) ChainStuckSecs() int { return m.chainStuckSecs }
+
+// MissedBlocks returns the validator missing-votes threshold.
+func (m *Manager) MissedBlocks() int { return m.missedBlocks }
 
 // VAPIDPublicKey returns the VAPID public key for use in browser push subscriptions.
 func (m *Manager) VAPIDPublicKey() string { return m.vapidPublicKey }

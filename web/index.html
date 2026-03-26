@@ -227,7 +227,10 @@ a.rpc-link.blue { color: var(--blue); }
 </style>
 </head>
 <body>
-<h1 id="page-title">🛩️ gnockpit</h1>
+<div style="display:flex;align-items:baseline;justify-content:space-between;margin-bottom:4px;">
+  <h1 id="page-title" style="margin-bottom:0;">🛩️ gnockpit</h1>
+  <button id="push-btn" style="display:none;background:var(--bg);border:1px solid var(--border);color:var(--fg);padding:6px 8px;border-radius:4px;font-family:inherit;font-size:11px;cursor:pointer;" onclick="openAlertsModal()"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle;margin-right:4px;" aria-hidden="true"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>Alerts</button>
+</div>
 <p class="subtitle">live validator dashboard</p>
 
 <div id="error-banner"></div>
@@ -238,12 +241,7 @@ a.rpc-link.blue { color: var(--blue); }
   <span id="s-catching"></span>
   <span>Peers: <strong id="s-peers">-</strong></span>
   <span id="s-connection"><span class="dot yellow"></span>connecting</span>
-  <span class="sb-right" style="display:flex;align-items:center;gap:10px;">
-    <button id="push-btn" style="display:none;background:none;border:none;cursor:pointer;color:var(--fg2);padding:0;line-height:1;" title="Alert notifications" onclick="openAlertsModal()" aria-label="Alert notifications">
-      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
-    </button>
-    <span>Updated: <span id="s-time">-</span> <span id="s-time-ago" style="color:var(--fg2)"></span></span>
-  </span>
+  <span class="sb-right"><span>Updated: <span id="s-time">-</span> <span id="s-time-ago" style="color:var(--fg2)"></span></span></span>
 </div>
 
 <div id="genesis-countdown" style="display:none;text-align:center;padding:12px;margin-bottom:16px;background:rgba(88,166,255,0.1);border:1px solid var(--blue);border-radius:8px">
@@ -2653,9 +2651,18 @@ async function openAlertsModal() {
         const r = await fetch('/api/push/entities');
         _pushEntities = await r.json();
     } catch (_) {
-        _pushEntities = { validators: [], peers: [] };
+        _pushEntities = { validators: [], chain_stuck_secs: 30, missed_blocks: 10 };
     }
     renderAlertsForm();
+    const saved = localStorage.getItem('gnockpitAlertPrefs');
+    if (saved) {
+        const prefs = JSON.parse(saved);
+        Object.entries(prefs).forEach(([id, checked]) => {
+            const el = document.getElementById(id);
+            if (el) el.checked = checked;
+        });
+    }
+    syncValAllState();
 }
 
 function closeAlertsModal() {
@@ -2672,42 +2679,91 @@ function renderAlertsForm() {
         perm === 'granted' ? 'Notifications are enabled in this browser.' :
         perm === 'denied'  ? 'Notifications are blocked. Enable them in browser settings.' :
                              'You will be asked for permission when saving.';
-    document.getElementById('alerts-unsub-btn').style.display = _pushSubID ? '' : 'none';
+    const entities = _pushEntities || { validators: [], chain_stuck_secs: 30, missed_blocks: 10 };
+    const chainStuckSecs = entities.chain_stuck_secs || 30;
+    const missedBlocks = entities.missed_blocks || 10;
+    const validators = entities.validators || [];
 
-    const entities = _pushEntities || { validators: [], peers: [] };
-    const alertDefs = [
-        { type: 'chain_stuck',             label: 'Chain stuck',             entities: [] },
-        { type: 'validator_missing_votes', label: 'Validator missing votes', entities: entities.validators || [] },
-        { type: 'node_unreachable',        label: 'Node unreachable',        entities: entities.peers || [] },
-        { type: 'node_out_of_sync',        label: 'Node out of sync',        entities: entities.peers || [] },
-    ];
+    const recStyle = 'font-size:0.8em; color:#888; cursor:pointer; min-width:5em;';
+    const hintStyle = 'font-size:0.8em; color:#888; margin-left:0.5em;';
 
-    document.getElementById('alerts-form').innerHTML = alertDefs.map(def => {
-        if (def.entities.length === 0) {
-            // Global alert (chain_stuck) or entity list not yet loaded.
-            return `<div style="display:flex; align-items:center; gap:10px; padding:10px 0; border-bottom:1px solid var(--border,#333);">
-                <input type="checkbox" id="chk-${def.type}" data-type="${def.type}" data-entity="">
-                <label for="chk-${def.type}" style="flex:1; cursor:pointer;">${def.label}</label>
-                <input type="checkbox" id="rec-${def.type}" data-rec-type="${def.type}" data-rec-entity="" title="Also notify on recovery">
-                <label for="rec-${def.type}" style="font-size:0.8em; color:#888; cursor:pointer;" title="Also notify on recovery">recovery</label>
-            </div>`;
-        }
-        const rows = def.entities.map(e => {
-            const eid = e.is_local ? 'local' : (e.node_id || e.val_address || '');
-            const label = [e.moniker, e.val_address ? e.val_address.slice(0,14)+'\u2026' : null, e.node_id ? e.node_id.slice(0,8) : null, e.ip].filter(Boolean).join(' \u00b7 ') || eid;
-            const safeID = `${def.type}__${eid.replace(/[^a-zA-Z0-9_-]/g, '_')}`;
-            return `<div style="display:flex; align-items:center; gap:10px; padding:6px 0 6px 16px; font-size:0.88em;">
-                <input type="checkbox" id="chk-${safeID}" data-type="${def.type}" data-entity="${eid}">
-                <label for="chk-${safeID}" style="flex:1; cursor:pointer; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="${label}">${label}</label>
-                <input type="checkbox" id="rec-${safeID}" data-rec-type="${def.type}" data-rec-entity="${eid}" title="Also notify on recovery">
-                <label for="rec-${safeID}" style="font-size:0.8em; color:#888; cursor:pointer;" title="Also notify on recovery">recovery</label>
-            </div>`;
-        }).join('');
-        return `<div style="padding:10px 0; border-bottom:1px solid var(--border,#333);">
-            <div style="font-weight:500; margin-bottom:4px;">${def.label}</div>
-            ${rows}
+    // ---- chain_stuck row ----
+    const chainStuckHTML = `<div style="display:flex; align-items:center; gap:10px; padding:10px 0; border-bottom:1px solid var(--border,#333);">
+        <input type="checkbox" id="chk-chain_stuck" data-type="chain_stuck" data-entity="" onchange="onAlertCheck(this)">
+        <label for="chk-chain_stuck" style="flex:1; cursor:pointer;">Chain stuck<span style="${hintStyle}">for ${chainStuckSecs}s</span></label>
+        <input type="checkbox" id="rec-chain_stuck" data-rec-type="chain_stuck" data-rec-entity="" onchange="onRecoveryCheck(this)" title="Also notify on recovery">
+        <label for="rec-chain_stuck" style="${recStyle}" title="Also notify on recovery">recovery</label>
+    </div>`;
+
+    // ---- validator_missing_votes rows ----
+    const valRows = validators.map(e => {
+        const eid = e.val_address || '';
+        const label = [e.moniker, e.val_address ? e.val_address.slice(0,14)+'\u2026' : null].filter(Boolean).join(' \u00b7 ') || eid;
+        const safeID = `validator_missing_votes__${eid.replace(/[^a-zA-Z0-9_-]/g, '_')}`;
+        return `<div style="display:flex; align-items:center; gap:10px; padding:6px 0 6px 16px; font-size:0.88em;">
+            <input type="checkbox" id="chk-${safeID}" data-type="validator_missing_votes" data-entity="${eid}" onchange="onAlertCheck(this)">
+            <label for="chk-${safeID}" style="flex:1; cursor:pointer; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="${label}">${label}</label>
+            <input type="checkbox" id="rec-${safeID}" data-rec-type="validator_missing_votes" data-rec-entity="${eid}" onchange="onRecoveryCheck(this)" title="Also notify on recovery">
+            <label for="rec-${safeID}" style="${recStyle}" title="Also notify on recovery">recovery</label>
         </div>`;
     }).join('');
+
+    const valAllRow = validators.length > 0 ? `<div style="display:flex; align-items:center; gap:10px; padding:6px 0 6px 16px; font-size:0.88em; border-bottom:1px solid var(--border,#333); margin-bottom:2px;">
+        <input type="checkbox" id="chk-val-all" onchange="onValAllCheck(this, false)">
+        <label for="chk-val-all" style="flex:1; cursor:pointer; font-style:italic;">all</label>
+        <input type="checkbox" id="rec-val-all" onchange="onValAllCheck(this, true)">
+        <label for="rec-val-all" style="${recStyle}">all</label>
+    </div>` : '';
+
+    const valSectionHTML = `<div style="padding:10px 0; border-bottom:1px solid var(--border,#333);">
+        <div style="font-weight:500; margin-bottom:4px;">Validator missing votes<span style="${hintStyle}">for ${missedBlocks} blocks</span></div>
+        ${valAllRow}${valRows}
+    </div>`;
+
+    document.getElementById('alerts-form').innerHTML = chainStuckHTML + valSectionHTML;
+
+    // Wire up inter-checkbox listeners after DOM insertion.
+    document.getElementById('alerts-form').querySelectorAll('input[data-rec-type]').forEach(cb => {
+        cb.addEventListener('change', function() { onRecoveryCheck(this); });
+    });
+}
+
+function onAlertCheck(cb) {
+    syncValAllState();
+}
+
+function onRecoveryCheck(cb) {
+    // Checking recovery auto-checks the corresponding alert checkbox.
+    if (!cb.checked) return;
+    const type = cb.dataset.recType || cb.getAttribute('data-rec-type');
+    const entity = cb.dataset.recEntity !== undefined ? cb.dataset.recEntity : cb.getAttribute('data-rec-entity');
+    const alertCb = document.querySelector(`#alerts-form input[data-type="${type}"][data-entity="${entity}"]`);
+    if (alertCb && !alertCb.checked) alertCb.checked = true;
+    // Sync "all" state.
+    syncValAllState();
+}
+
+function onValAllCheck(cb, isRec) {
+    const selector = isRec
+        ? '#alerts-form input[data-rec-type="validator_missing_votes"]'
+        : '#alerts-form input[data-type="validator_missing_votes"][data-entity]';
+    document.querySelectorAll(selector).forEach(el => { el.checked = cb.checked; });
+    if (isRec && cb.checked) {
+        // Also check all alert checkboxes when checking all recovery.
+        document.querySelectorAll('#alerts-form input[data-type="validator_missing_votes"][data-entity]')
+            .forEach(el => { el.checked = true; });
+        document.getElementById('chk-val-all').checked = true;
+    }
+}
+
+function syncValAllState() {
+    const allCb = document.getElementById('chk-val-all');
+    const recAllCb = document.getElementById('rec-val-all');
+    if (!allCb) return;
+    const alertCbs = [...document.querySelectorAll('#alerts-form input[data-type="validator_missing_votes"][data-entity]')];
+    const recCbs   = [...document.querySelectorAll('#alerts-form input[data-rec-type="validator_missing_votes"]')];
+    if (alertCbs.length) allCb.checked = alertCbs.every(c => c.checked);
+    if (recCbs.length && recAllCb) recAllCb.checked = recCbs.every(c => c.checked);
 }
 
 function urlBase64ToUint8Array(base64) {
@@ -2718,14 +2774,38 @@ function urlBase64ToUint8Array(base64) {
 }
 
 async function pushSaveSettings() {
+    const alerts = [];
+    document.querySelectorAll('#alerts-form input[data-type]').forEach(cb => {
+        if (!cb.checked) return;
+        const type = cb.dataset.type, entity = cb.dataset.entity;
+        const rec = document.querySelector(`#alerts-form input[data-rec-type="${type}"][data-rec-entity="${entity}"]`);
+        alerts.push({ alert_type: type, entity_id: entity, recovery_notif: !!(rec && rec.checked), subscription_id: '' });
+    });
+
+    // No alerts selected: delete existing subscription and browser push registration.
+    if (alerts.length === 0) {
+        if (_pushSubID) {
+            const del = await fetch('/api/push/subscribe?id=' + _pushSubID, { method: 'DELETE' });
+            if (!del.ok) { alert('Failed to save. See console for details.'); return; }
+            _pushSubID = null;
+            localStorage.removeItem('gnockpitPushSubID');
+        }
+        const sw = await navigator.serviceWorker.ready;
+        const pushSub = await sw.pushManager.getSubscription();
+        if (pushSub) await pushSub.unsubscribe();
+        localStorage.removeItem('gnockpitAlertPrefs');
+        closeAlertsModal();
+        return;
+    }
+
     if (Notification.permission !== 'granted') {
         const p = await Notification.requestPermission();
         if (p !== 'granted') { alert('Notification permission denied.'); return; }
     }
-    // Delete the old server-side subscription before creating a new one to avoid orphaned rows.
+    // Delete old server-side subscription before creating a new one to avoid orphaned rows.
     if (_pushSubID) {
         const del = await fetch('/api/push/subscribe?id=' + _pushSubID, { method: 'DELETE' });
-        if (!del.ok) { alert('Failed to update subscription. See console for details.'); return; }
+        if (!del.ok) { alert('Failed to save. See console for details.'); return; }
         _pushSubID = null;
         localStorage.removeItem('gnockpitPushSubID');
     }
@@ -2740,35 +2820,20 @@ async function pushSaveSettings() {
     const p256dh = btoa(String.fromCharCode(...new Uint8Array(pushSub.getKey('p256dh'))));
     const auth   = btoa(String.fromCharCode(...new Uint8Array(pushSub.getKey('auth'))));
 
-    const alerts = [];
-    document.querySelectorAll('#alerts-form input[data-type]').forEach(cb => {
-        if (!cb.checked) return;
-        const type = cb.dataset.type, entity = cb.dataset.entity;
-        const rec = document.querySelector(`#alerts-form input[data-rec-type="${type}"][data-rec-entity="${entity}"]`);
-        alerts.push({ alert_type: type, entity_id: entity, recovery_notif: !!(rec && rec.checked), subscription_id: '' });
-    });
-
     const r = await fetch('/api/push/subscribe', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ endpoint: pushSub.endpoint, p256dh, auth, alerts }),
     });
-    if (!r.ok) { alert('Failed to save subscription. See console for details.'); return; }
+    if (!r.ok) { alert('Failed to save. See console for details.'); return; }
     const data = await r.json();
     _pushSubID = data.id;
     localStorage.setItem('gnockpitPushSubID', data.id);
-    closeAlertsModal();
-}
-
-async function pushUnsubscribe() {
-    if (!_pushSubID) return;
-    const r = await fetch('/api/push/subscribe?id=' + _pushSubID, { method: 'DELETE' });
-    if (!r.ok) { alert('Failed to unsubscribe. See console for details.'); return; }
-    const sw = await navigator.serviceWorker.ready;
-    const pushSub = await sw.pushManager.getSubscription();
-    if (pushSub) await pushSub.unsubscribe();
-    _pushSubID = null;
-    localStorage.removeItem('gnockpitPushSubID');
+    const prefs = {};
+    document.querySelectorAll('#alerts-form input[data-type], #alerts-form input[data-rec-type]').forEach(cb => {
+        prefs[cb.id] = cb.checked;
+    });
+    localStorage.setItem('gnockpitAlertPrefs', JSON.stringify(prefs));
     closeAlertsModal();
 }
 
@@ -2785,8 +2850,7 @@ initPush();
     <p id="alerts-perm-status" style="margin:0 0 12px; font-size:0.82em; color:#888;"></p>
     <div id="alerts-form"></div>
     <div style="margin-top:20px; display:flex; gap:8px; justify-content:flex-end; flex-wrap:wrap;">
-      <button id="alerts-unsub-btn" onclick="pushUnsubscribe()" style="display:none; padding:5px 14px; cursor:pointer; color:#e55;">Unsubscribe</button>
-      <button onclick="pushSaveSettings()" style="padding:5px 14px; cursor:pointer;">Save settings</button>
+      <button onclick="pushSaveSettings()" style="padding:5px 14px; cursor:pointer;">Save</button>
     </div>
   </div>
 </div>
