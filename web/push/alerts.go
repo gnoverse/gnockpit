@@ -11,13 +11,13 @@ import (
 // Not safe for concurrent use; callers must ensure single-goroutine access
 // (Manager.EvaluateAndNotify is called from the publishLoop goroutine only).
 type AlertDetector struct {
-	chainStuckSecs       int
-	missedBlocksThreshold int
-	lastHeightChange     time.Time
-	lastHeight           int64
-	initialized          bool
-	firingAlerts         map[alertKey]bool
-	missedCounts         map[string]int
+	chainStuckSecs  int
+	missedBlocksPct int
+	lastHeightChange time.Time
+	lastHeight       int64
+	initialized      bool
+	firingAlerts     map[alertKey]bool
+	firstSeenHeight  map[string]int64
 }
 
 type alertKey struct {
@@ -26,12 +26,12 @@ type alertKey struct {
 }
 
 // NewAlertDetector creates a detector with the given thresholds.
-func NewAlertDetector(chainStuckSecs, missedBlocksThreshold int) *AlertDetector {
+func NewAlertDetector(chainStuckSecs, missedBlocksPct int) *AlertDetector {
 	return &AlertDetector{
-		chainStuckSecs:        chainStuckSecs,
-		missedBlocksThreshold: missedBlocksThreshold,
-		firingAlerts:          make(map[alertKey]bool),
-		missedCounts:          make(map[string]int),
+		chainStuckSecs:  chainStuckSecs,
+		missedBlocksPct: missedBlocksPct,
+		firingAlerts:    make(map[alertKey]bool),
+		firstSeenHeight: make(map[string]int64),
 	}
 }
 
@@ -45,7 +45,7 @@ func (d *AlertDetector) OverrideLastHeightChange(t time.Time) {
 func (d *AlertDetector) Detect(snap *node.Snapshot) []Alert {
 	var alerts []Alert
 	alerts = append(alerts, d.detectChainStuck(snap)...)
-	alerts = append(alerts, d.detectValidatorMissingVotes(snap)...)
+	alerts = append(alerts, d.detectValidatorMissingBlocks(snap)...)
 	return alerts
 }
 
@@ -94,35 +94,64 @@ func (d *AlertDetector) detectChainStuck(snap *node.Snapshot) []Alert {
 	return nil
 }
 
-func (d *AlertDetector) detectValidatorMissingVotes(snap *node.Snapshot) []Alert {
-	if snap.Consensus == nil {
+func (d *AlertDetector) detectValidatorMissingBlocks(snap *node.Snapshot) []Alert {
+	if snap.Signing == nil || snap.Signing.WindowSize == 0 || snap.Status == nil {
 		return nil
 	}
-	var alerts []Alert
-	for _, v := range snap.Consensus.Votes {
-		missing := !v.Prevoted && !v.Precommit
+	var currentHeight int64
+	if n, _ := fmt.Sscanf(snap.Status.SyncInfo.LatestBlockHeight, "%d", &currentHeight); n == 0 {
+		return nil
+	}
+
+	windowSize := int64(snap.Signing.WindowSize)
+
+	// Collect all validator addresses: those with signing data and those in the validator set.
+	addrs := make(map[string]string) // addr -> display name
+	for _, v := range snap.Validators {
 		name := v.Name
 		if name == "" {
 			name = v.Address
 		}
-		if missing {
-			d.missedCounts[v.Address]++
-			if d.missedCounts[v.Address] >= d.missedBlocksThreshold {
-				if a := d.transition(AlertValidatorMissingVotes, v.Address, true,
-					"Validator missing votes", fmt.Sprintf("%s is not voting", name),
-					"", "",
-				); a != nil {
-					alerts = append(alerts, *a)
-				}
-			}
-		} else {
-			d.missedCounts[v.Address] = 0
-			if a := d.transition(AlertValidatorMissingVotes, v.Address, false,
-				"", "",
-				"Validator back online", fmt.Sprintf("%s is voting again", name),
-			); a != nil {
-				alerts = append(alerts, *a)
-			}
+		addrs[v.Address] = name
+	}
+	for addr := range snap.Signing.ValidatorSigns {
+		if _, ok := addrs[addr]; !ok {
+			addrs[addr] = addr
+		}
+	}
+
+	var alerts []Alert
+	for addr, name := range addrs {
+		// Record the first block height at which we observed this validator.
+		if _, seen := d.firstSeenHeight[addr]; !seen {
+			d.firstSeenHeight[addr] = currentHeight
+		}
+		firstSeen := d.firstSeenHeight[addr]
+
+		// Effective window starts at the later of (currentHeight-windowSize) and firstSeen,
+		// preventing false positives for new validators and after restarts.
+		windowStart := currentHeight - windowSize
+		if firstSeen > windowStart {
+			windowStart = firstSeen
+		}
+		effectiveWindow := currentHeight - windowStart
+		if effectiveWindow <= 0 {
+			continue
+		}
+
+		signed := int64(snap.Signing.ValidatorSigns[addr])
+		missed := effectiveWindow - signed
+		if missed < 0 {
+			missed = 0
+		}
+		missedPct := int(missed * 100 / effectiveWindow)
+
+		firing := missedPct >= d.missedBlocksPct
+		if a := d.transition(AlertValidatorMissingBlocks, addr, firing,
+			"Validator missing blocks", fmt.Sprintf("%s missed %d%% of recent blocks", name, missedPct),
+			"Validator back online", fmt.Sprintf("%s is signing again (%d%% missed)", name, missedPct),
+		); a != nil {
+			alerts = append(alerts, *a)
 		}
 	}
 	return alerts

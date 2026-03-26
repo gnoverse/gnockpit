@@ -72,7 +72,7 @@ gnockpit can send browser push notifications for validator monitoring alerts. Th
 
 **Available alerts:**
 
-- **Validator missing votes** — fires when a validator stops prevoting/precommitting in consensus
+- **Validator missing blocks** — fires when a validator misses more than N% of blocks in the recent signing window
 - **Chain stuck** — fires when no new block is produced for N seconds
 - **Node unreachable** — fires when gnockpit cannot reach a monitored node's RPC
 - **Node out of sync** — fires when a node reports it is catching up

@@ -4,7 +4,7 @@ package push
 type AlertType string
 
 const (
-	AlertValidatorMissingVotes AlertType = "validator_missing_votes"
+	AlertValidatorMissingBlocks AlertType = "validator_missing_blocks"
 	AlertChainStuck            AlertType = "chain_stuck"
 )
 
@@ -44,9 +44,10 @@ type Entity struct {
 
 // EntitiesResponse is the payload for GET /api/push/entities.
 type EntitiesResponse struct {
-	Validators     []Entity `json:"validators"`
-	ChainStuckSecs int      `json:"chain_stuck_secs"`
-	MissedBlocks   int      `json:"missed_blocks"`
+	Validators      []Entity `json:"validators"`
+	ChainStuckSecs  int      `json:"chain_stuck_secs"`
+	MissedBlocksPct int      `json:"missed_blocks_pct"`
+	WindowSize      int      `json:"window_size"`
 }
 
 // SubscribeRequest is the payload for POST /api/push/subscribe.

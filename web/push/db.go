@@ -41,7 +41,7 @@ func OpenDB(path string) (*DB, error) {
 func (d *DB) Close() error { return d.db.Close() }
 
 func initSchema(db *sql.DB) error {
-	_, err := db.Exec(`
+	if _, err := db.Exec(`
 		CREATE TABLE IF NOT EXISTS vapid_keys (
 			id          INTEGER PRIMARY KEY,
 			public_key  TEXT NOT NULL,
@@ -61,6 +61,14 @@ func initSchema(db *sql.DB) error {
 			recovery_notif  INTEGER NOT NULL DEFAULT 0,
 			PRIMARY KEY (subscription_id, alert_type, entity_id)
 		);
+	`); err != nil {
+		return err
+	}
+	// Migrate renamed alert type (idempotent).
+	_, err := db.Exec(`
+		UPDATE subscription_alerts
+		SET alert_type = 'validator_missing_blocks'
+		WHERE alert_type = 'validator_missing_votes'
 	`)
 	return err
 }

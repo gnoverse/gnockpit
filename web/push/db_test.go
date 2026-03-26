@@ -66,7 +66,7 @@ func TestDB_SaveSubscriptionWithAlerts_Atomic(t *testing.T) {
 	sub := push.Subscription{ID: "s2", Endpoint: "https://x.com/push", P256dh: "p", Auth: "a"}
 	alerts := []push.SubscriptionAlert{
 		{SubscriptionID: "s2", AlertType: push.AlertChainStuck, EntityID: "", RecoveryNotif: true},
-		{SubscriptionID: "s2", AlertType: push.AlertValidatorMissingVotes, EntityID: "g1aaa", RecoveryNotif: false},
+		{SubscriptionID: "s2", AlertType: push.AlertValidatorMissingBlocks, EntityID: "g1aaa", RecoveryNotif: false},
 	}
 	if err := db.SaveSubscriptionWithAlerts(sub, alerts); err != nil {
 		t.Fatalf("SaveSubscriptionWithAlerts: %v", err)
@@ -93,7 +93,7 @@ func TestDB_SubscriptionAlerts_SaveAndLoad(t *testing.T) {
 
 	alerts := []push.SubscriptionAlert{
 		{SubscriptionID: "s1", AlertType: push.AlertChainStuck, EntityID: "", RecoveryNotif: true},
-		{SubscriptionID: "s1", AlertType: push.AlertValidatorMissingVotes, EntityID: "g1aaa", RecoveryNotif: false},
+		{SubscriptionID: "s1", AlertType: push.AlertValidatorMissingBlocks, EntityID: "g1aaa", RecoveryNotif: false},
 	}
 	if err := db.SaveSubscriptionAlerts("s1", alerts); err != nil {
 		t.Fatalf("SaveSubscriptionAlerts: %v", err)

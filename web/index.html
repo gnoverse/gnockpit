@@ -2652,7 +2652,7 @@ async function openAlertsModal() {
         const r = await fetch('/api/push/entities');
         _pushEntities = await r.json();
     } catch (_) {
-        _pushEntities = { validators: [], chain_stuck_secs: 30, missed_blocks: 10 };
+        _pushEntities = { validators: [], chain_stuck_secs: 30, missed_blocks_pct: 5, window_size: 100 };
     }
     renderAlertsForm();
     const saved = localStorage.getItem('gnockpitAlertPrefs');
@@ -2680,9 +2680,10 @@ function renderAlertsForm() {
         perm === 'granted' ? 'Notifications are enabled in this browser.' :
         perm === 'denied'  ? 'Notifications are blocked. Enable them in browser settings.' :
                              'You will be asked for permission when saving.';
-    const entities = _pushEntities || { validators: [], chain_stuck_secs: 30, missed_blocks: 10 };
+    const entities = _pushEntities || { validators: [], chain_stuck_secs: 30, missed_blocks_pct: 5, window_size: 100 };
     const chainStuckSecs = entities.chain_stuck_secs || 30;
-    const missedBlocks = entities.missed_blocks || 10;
+    const missedBlocksPct = entities.missed_blocks_pct || 5;
+    const windowSize = entities.window_size || 100;
     const validators = entities.validators || [];
 
     const recStyle = 'font-size:0.8em; color:#888; cursor:pointer; min-width:5em;';
@@ -2696,15 +2697,15 @@ function renderAlertsForm() {
         <label for="rec-chain_stuck" style="${recStyle}" title="Also notify on recovery">recovery</label>
     </div>`;
 
-    // ---- validator_missing_votes rows ----
+    // ---- validator_missing_blocks rows ----
     const valRows = validators.map(e => {
         const eid = e.val_address || '';
         const label = [e.moniker, e.val_address ? e.val_address.slice(0,14)+'\u2026' : null].filter(Boolean).join(' \u00b7 ') || eid;
-        const safeID = `validator_missing_votes__${eid.replace(/[^a-zA-Z0-9_-]/g, '_')}`;
+        const safeID = `validator_missing_blocks__${eid.replace(/[^a-zA-Z0-9_-]/g, '_')}`;
         return `<div style="display:flex; align-items:center; gap:10px; padding:6px 0 6px 16px; font-size:0.88em;">
-            <input type="checkbox" id="chk-${safeID}" data-type="validator_missing_votes" data-entity="${eid}" onchange="onAlertCheck(this)">
+            <input type="checkbox" id="chk-${safeID}" data-type="validator_missing_blocks" data-entity="${eid}" onchange="onAlertCheck(this)">
             <label for="chk-${safeID}" style="flex:1; cursor:pointer; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="${label}">${label}</label>
-            <input type="checkbox" id="rec-${safeID}" data-rec-type="validator_missing_votes" data-rec-entity="${eid}" onchange="onRecoveryCheck(this)" title="Also notify on recovery">
+            <input type="checkbox" id="rec-${safeID}" data-rec-type="validator_missing_blocks" data-rec-entity="${eid}" onchange="onRecoveryCheck(this)" title="Also notify on recovery">
             <label for="rec-${safeID}" style="${recStyle}" title="Also notify on recovery">recovery</label>
         </div>`;
     }).join('');
@@ -2717,7 +2718,7 @@ function renderAlertsForm() {
     </div>` : '';
 
     const valSectionHTML = `<div style="padding:10px 0; border-bottom:1px solid var(--border,#333);">
-        <div style="font-weight:500; margin-bottom:4px;">Validator missing votes<span style="${hintStyle}">for ${missedBlocks} blocks</span></div>
+        <div style="font-weight:500; margin-bottom:4px;">Validator missing blocks<span style="${hintStyle}">${missedBlocksPct} on the last ${windowSize}</span></div>
         ${valAllRow}${valRows}
     </div>`;
 
@@ -2748,12 +2749,12 @@ function onRecoveryCheck(cb) {
 
 function onValAllCheck(cb, isRec) {
     const selector = isRec
-        ? '#alerts-form input[data-rec-type="validator_missing_votes"]'
-        : '#alerts-form input[data-type="validator_missing_votes"][data-entity]';
+        ? '#alerts-form input[data-rec-type="validator_missing_blocks"]'
+        : '#alerts-form input[data-type="validator_missing_blocks"][data-entity]';
     document.querySelectorAll(selector).forEach(el => { el.checked = cb.checked; });
     if (isRec && cb.checked) {
         // Also check all alert checkboxes when checking all recovery.
-        document.querySelectorAll('#alerts-form input[data-type="validator_missing_votes"][data-entity]')
+        document.querySelectorAll('#alerts-form input[data-type="validator_missing_blocks"][data-entity]')
             .forEach(el => { el.checked = true; });
         document.getElementById('chk-val-all').checked = true;
     }
@@ -2763,8 +2764,8 @@ function syncValAllState() {
     const allCb = document.getElementById('chk-val-all');
     const recAllCb = document.getElementById('rec-val-all');
     if (!allCb) return;
-    const alertCbs = [...document.querySelectorAll('#alerts-form input[data-type="validator_missing_votes"][data-entity]')];
-    const recCbs   = [...document.querySelectorAll('#alerts-form input[data-rec-type="validator_missing_votes"]')];
+    const alertCbs = [...document.querySelectorAll('#alerts-form input[data-type="validator_missing_blocks"][data-entity]')];
+    const recCbs   = [...document.querySelectorAll('#alerts-form input[data-rec-type="validator_missing_blocks"]')];
     if (alertCbs.length) allCb.checked = alertCbs.every(c => c.checked);
     if (recCbs.length && recAllCb) recAllCb.checked = recCbs.every(c => c.checked);
 }

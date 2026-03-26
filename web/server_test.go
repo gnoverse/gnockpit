@@ -474,7 +474,7 @@ func newSrvWithPush(t *testing.T) (*Server, *push.Manager) {
 		t.Fatalf("open test db: %v", err)
 	}
 	t.Cleanup(func() { db.Close() })
-	mgr, err := push.NewManager(db, 30, 10)
+	mgr, err := push.NewManager(db, 30, 5)
 	if err != nil {
 		t.Fatalf("new push manager: %v", err)
 	}
@@ -568,8 +568,8 @@ func TestHandlePushEntities_ReturnsJSON(t *testing.T) {
 	if entities.ChainStuckSecs != 30 {
 		t.Errorf("expected chain_stuck_secs=30, got %d", entities.ChainStuckSecs)
 	}
-	if entities.MissedBlocks != 10 {
-		t.Errorf("expected missed_blocks=10, got %d", entities.MissedBlocks)
+	if entities.MissedBlocksPct != 5 {
+		t.Errorf("expected missed_blocks_pct=5, got %d", entities.MissedBlocksPct)
 	}
 }
 
@@ -600,7 +600,7 @@ func TestHandlePushEntities_WithSnapshot(t *testing.T) {
 	if entities.ChainStuckSecs != 30 {
 		t.Errorf("expected chain_stuck_secs=30, got %d", entities.ChainStuckSecs)
 	}
-	if entities.MissedBlocks != 10 {
-		t.Errorf("expected missed_blocks=10, got %d", entities.MissedBlocks)
+	if entities.MissedBlocksPct != 5 {
+		t.Errorf("expected missed_blocks_pct=5, got %d", entities.MissedBlocksPct)
 	}
 }

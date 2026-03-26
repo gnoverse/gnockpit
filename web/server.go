@@ -1291,8 +1291,11 @@ func (s *Server) handlePushEntities(w http.ResponseWriter, r *http.Request) {
 	}
 	snap := s.getSnapshot()
 	resp := push.EntitiesResponse{
-		ChainStuckSecs: s.PushManager.ChainStuckSecs(),
-		MissedBlocks:   s.PushManager.MissedBlocks(),
+		ChainStuckSecs:  s.PushManager.ChainStuckSecs(),
+		MissedBlocksPct: s.PushManager.MissedBlocksPct(),
+	}
+	if snap != nil && snap.Signing != nil {
+		resp.WindowSize = snap.Signing.WindowSize
 	}
 
 	if snap != nil && snap.Consensus != nil {
