@@ -296,7 +296,10 @@ a.rpc-link.blue { color: var(--blue); }
 </div></div>
 
 <div class="card" id="recent-blocks" style="display:none">
-  <h2 data-section="recent-blocks">Recent Blocks</h2>
+  <div class="card-header-row">
+    <h2 data-section="recent-blocks">Recent Blocks</h2>
+    <label id="rb-compact-label"><input type="checkbox" id="rb-compact" style="margin-right:3px">compact</label>
+  </div>
   <div class="section-body">
     <div id="recent-blocks-body" style="display:flex;gap:2px;overflow-x:auto;white-space:nowrap;padding-bottom:4px;font-size:11px"></div>
   </div>
@@ -479,6 +482,7 @@ var lastVotes = null;
 var lastPeers = null;
 var lastStatus = null;
 var lastRecentBlockHeight = 0;
+var lastRecentBlocks = null;
 
 // URL state for checkboxes
 var urlParams = new URLSearchParams(window.location.search);
@@ -1688,6 +1692,71 @@ function pctColor(pct, warnAt, critAt) {
 }
 
 
+function renderRecentBlocks(blocks) {
+  var container = $('recent-blocks');
+  var body = $('recent-blocks-body');
+  if (!blocks || blocks.length === 0) return;
+  container.style.display = '';
+  clearChildren(body);
+  if (rbCompact) {
+    var rbGap = window.innerWidth < 600 ? '1px' : '2px';
+    body.style.cssText = 'display:flex;gap:' + rbGap + ';padding-bottom:4px;font-size:11px;overflow:hidden';
+  } else {
+    body.style.cssText = 'display:flex;gap:2px;overflow-x:auto;white-space:nowrap;padding-bottom:4px;font-size:11px';
+  }
+  var newestHeight = blocks[blocks.length - 1].height;
+  for (var i = blocks.length - 1; i >= 0; i--) {
+    var b = blocks[i];
+    var allSigned = b.signers >= b.total;
+    var bg = allSigned ? 'rgba(63,185,80,0.3)' : 'rgba(210,153,34,0.3)';
+    var border = allSigned ? 'var(--green)' : 'var(--yellow)';
+    var box = mkEl('div', null, 'info-btn');
+    if (rbCompact) {
+      box.style.cssText = 'border-radius:2px;border:1px solid ' + border + ';background:' + bg + ';height:28px;cursor:default;flex:1;min-width:3px';
+    } else {
+      box.style.cssText = 'display:inline-flex;flex-direction:column;align-items:center;padding:2px 4px;border-radius:3px;border:1px solid ' + border + ';background:' + bg + ';min-width:32px;font-size:8px;cursor:default;flex-shrink:0';
+      var hSpan = mkEl('div', b.height, null);
+      hSpan.style.color = 'var(--fg2)';
+      var sSpan = mkEl('div', b.signers + '/' + b.total, null);
+      sSpan.style.fontWeight = 'bold';
+      sSpan.style.fontSize = '10px';
+      box.appendChild(hSpan);
+      box.appendChild(sSpan);
+    }
+    if (i === blocks.length - 1 && newestHeight > lastRecentBlockHeight) {
+      box.style.background = 'rgba(88,166,255,0.5)';
+      box.style.borderColor = '#58a6ff';
+      box.style.transition = 'background 2s ease-out, border-color 2s ease-out';
+      (function(el, fb, fc) {
+        requestAnimationFrame(function() {
+          requestAnimationFrame(function() {
+            el.style.background = fb;
+            el.style.borderColor = fc;
+          });
+        });
+      })(box, bg, allSigned ? '#3fb950' : '#d29922');
+    }
+    var tip = '#' + b.height + ' \u2014 ' + b.signers + '/' + b.total + ' signed';
+    if (b.time) {
+      var dt = new Date(b.time);
+      var pad = function(n) { return n < 10 ? '0' + n : '' + n; };
+      tip += '\nTime: ' + dt.getUTCFullYear() + '-' + pad(dt.getUTCMonth()+1) + '-' + pad(dt.getUTCDate()) +
+             ' ' + pad(dt.getUTCHours()) + ':' + pad(dt.getUTCMinutes()) + ':' + pad(dt.getUTCSeconds()) + ' UTC';
+    }
+    if (b.block_ms !== 0) tip += '\nBlock time: ' + b.block_ms + 'ms';
+    if (b.missing && b.missing.length > 0) {
+      tip += '\nMissing:';
+      for (var j = 0; j < b.missing.length; j++) {
+        var m = b.missing[j];
+        tip += '\n  ' + (m.name ? m.name + ' (' + m.address + ')' : m.address);
+      }
+    }
+    box.setAttribute('data-popover', tip);
+    body.appendChild(box);
+  }
+  lastRecentBlockHeight = newestHeight;
+}
+
 function handleStatus(d) {
     setConnectionStatus('green', 'connected');
     var hadStatus = !!lastStatus;
@@ -1822,59 +1891,10 @@ function handleSigning(d) {
       activeCt.textContent = d.active_count + '/' + d.total_count + ' (margin: ' + (d.margin >= 0 ? '+' : '') + d.margin + ')' + ' · ' + avgStr + ' avg';
     }
 
-    // Recent blocks — single row, horizontal scroll, most recent first
-    var container = $('recent-blocks');
-    var body = $('recent-blocks-body');
+    // Recent blocks
     if (d.recent_blocks && d.recent_blocks.length > 0) {
-      container.style.display = '';
-      clearChildren(body);
-      var newestHeight = d.recent_blocks[d.recent_blocks.length - 1].height;
-      for (var i = d.recent_blocks.length - 1; i >= 0; i--) {
-        var b = d.recent_blocks[i];
-        var allSigned = b.signers >= b.total;
-        var bg = allSigned ? 'rgba(63,185,80,0.3)' : 'rgba(210,153,34,0.3)';
-        var border = allSigned ? 'var(--green)' : 'var(--yellow)';
-        var box = mkEl('div', null, 'info-btn');
-        box.style.cssText = 'display:inline-flex;flex-direction:column;align-items:center;padding:2px 4px;border-radius:3px;border:1px solid ' + border + ';background:' + bg + ';min-width:32px;font-size:8px;cursor:default;flex-shrink:0';
-        var hSpan = mkEl('div', b.height, null);
-        hSpan.style.color = 'var(--fg2)';
-        var sSpan = mkEl('div', b.signers + '/' + b.total, null);
-        sSpan.style.fontWeight = 'bold';
-        sSpan.style.fontSize = '10px';
-        box.appendChild(hSpan);
-        box.appendChild(sSpan);
-        if (i === d.recent_blocks.length - 1 && newestHeight > lastRecentBlockHeight) {
-          box.style.background = 'rgba(88,166,255,0.5)';
-          box.style.borderColor = '#58a6ff';
-          box.style.transition = 'background 2s ease-out, border-color 2s ease-out';
-          (function(el, fb, fc) {
-            requestAnimationFrame(function() {
-              requestAnimationFrame(function() {
-                el.style.background = fb;
-                el.style.borderColor = fc;
-              });
-            });
-          })(box, bg, allSigned ? '#3fb950' : '#d29922');
-        }
-        var tip = '#' + b.height + ' \u2014 ' + b.signers + '/' + b.total + ' signed';
-        if (b.time) {
-          var dt = new Date(b.time);
-          var pad = function(n) { return n < 10 ? '0' + n : '' + n; };
-          tip += '\nTime: ' + dt.getUTCFullYear() + '-' + pad(dt.getUTCMonth()+1) + '-' + pad(dt.getUTCDate()) +
-                 ' ' + pad(dt.getUTCHours()) + ':' + pad(dt.getUTCMinutes()) + ':' + pad(dt.getUTCSeconds()) + ' UTC';
-        }
-        if (b.block_ms !== 0) tip += '\nBlock time: ' + b.block_ms + 'ms';
-        if (b.missing && b.missing.length > 0) {
-          tip += '\nMissing:';
-          for (var j = 0; j < b.missing.length; j++) {
-            var m = b.missing[j];
-            tip += '\n  ' + (m.name ? m.name + ' (' + m.address + ')' : m.address);
-          }
-        }
-        box.setAttribute('data-popover', tip);
-        body.appendChild(box);
-      }
-      lastRecentBlockHeight = newestHeight;
+      lastRecentBlocks = d.recent_blocks;
+      renderRecentBlocks(d.recent_blocks);
     }
 }
 
@@ -2145,6 +2165,21 @@ peersCompactCb.addEventListener('change', function() {
   peersCompact = peersCompactCb.checked;
   try { localStorage.setItem('peers-compact', peersCompact ? 'true' : 'false'); } catch(e) {}
   applyPeersCompact(peersCompact);
+});
+
+// Compact recent-blocks toggle (enabled by default)
+var rbCompactCb = $('rb-compact');
+var rbCompact = true;
+try {
+  var rbStored = localStorage.getItem('rb-compact');
+  if (rbStored !== null) rbCompact = rbStored === 'true';
+} catch(e) {}
+rbCompactCb.checked = rbCompact;
+
+rbCompactCb.addEventListener('change', function() {
+  rbCompact = rbCompactCb.checked;
+  try { localStorage.setItem('rb-compact', rbCompact ? 'true' : 'false'); } catch(e) {}
+  renderRecentBlocks(lastRecentBlocks);
 });
 
 // Logs
