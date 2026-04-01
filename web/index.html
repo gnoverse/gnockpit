@@ -234,6 +234,10 @@ a.rpc-link.blue { color: var(--blue); }
 <p class="subtitle">live validator dashboard</p>
 
 <div id="error-banner"></div>
+<div id="boot-panel" style="display:none;background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:12px;margin-bottom:16px;font-size:12px">
+  <div style="color:var(--yellow);font-weight:bold;margin-bottom:8px">Node booting — RPC not ready</div>
+  <div id="boot-info" style="color:var(--fg2)"></div>
+</div>
 <div id="popover" class="popover"></div>
 
 <div class="status-bar">
@@ -2085,6 +2089,34 @@ function flushLogQueue() {
       if (atBottom) { requestAnimationFrame(function() { body.scrollTop = body.scrollHeight; }); }
     }
 }
+
+var bootInterval = null;
+function pollBoot() {
+  fetch('/api/boot').then(function(r) { return r.json(); }).then(function(d) {
+    var panel = $('boot-panel');
+    if (d.rpc) {
+      panel.style.display = 'none';
+      if (bootInterval) { clearInterval(bootInterval); bootInterval = null; }
+      return;
+    }
+    panel.style.display = 'block';
+    var el = $('boot-info');
+    el.textContent = '';
+    var parts = [];
+    if (d.uptime) parts.push('uptime: ' + d.uptime);
+    if (d.mem) parts.push('mem: ' + d.mem);
+    if (parts.length) el.appendChild(document.createTextNode(parts.join('  ')));
+    if (d.dbs && d.dbs.length > 0) {
+      el.appendChild(document.createElement('br'));
+      var dbParts = [];
+      d.dbs.forEach(function(db) { dbParts.push(db.name + ': ' + db.size); });
+      el.appendChild(document.createTextNode(dbParts.join('  ')));
+    }
+    if (!el.textContent) el.textContent = 'waiting...';
+  }).catch(function() {});
+}
+pollBoot();
+bootInterval = setInterval(pollBoot, 5000);
 
 function connect() {
   var proto = (location.protocol === 'https:' ? 'wss:' : 'ws:');

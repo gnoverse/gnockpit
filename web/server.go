@@ -487,6 +487,63 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 	}()
 }
 
+// --- Boot Status (visible even when RPC is down) ---
+
+func (s *Server) handleBootStatus(w http.ResponseWriter, r *http.Request) {
+	type dbInfo struct {
+		Name string `json:"name"`
+		Size string `json:"size"`
+	}
+	type bootStatus struct {
+		RPC     bool     `json:"rpc"`
+		DBs     []dbInfo `json:"dbs"`
+		Process bool     `json:"process"`
+		CPU     string   `json:"cpu,omitempty"`
+		Mem     string   `json:"mem,omitempty"`
+		Uptime  string   `json:"uptime,omitempty"`
+	}
+
+	bs := bootStatus{}
+
+	// Check RPC
+	ctx := r.Context()
+	if s.Client != nil {
+		_, err := s.Client.Status(ctx)
+		bs.RPC = err == nil
+	}
+
+	// DB sizes
+	if s.DataDir != "" {
+		dbDir := s.DataDir + "/db"
+		entries, _ := os.ReadDir(dbDir)
+		for _, e := range entries {
+			if !e.IsDir() || !strings.HasSuffix(e.Name(), ".db") {
+				continue
+			}
+			if out, err := exec.CommandContext(ctx, "du", "-sh", dbDir+"/"+e.Name()).Output(); err == nil {
+				fields := strings.Fields(string(out))
+				if len(fields) >= 1 {
+					bs.DBs = append(bs.DBs, dbInfo{Name: e.Name(), Size: fields[0]})
+				}
+			}
+		}
+	}
+
+	// Process info via backend
+	if s.Backend != nil {
+		if d, err := s.Backend.ServiceUptime(ctx); err == nil {
+			bs.Process = true
+			bs.Uptime = d.Truncate(time.Second).String()
+		}
+		if kb, err := s.Backend.ProcessMemory(ctx); err == nil && kb > 0 {
+			bs.Mem = fmt.Sprintf("%.0f MB", float64(kb)/1024)
+		}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(bs)
+}
+
 // --- System Info ---
 
 func (s *Server) collectSystemInfo(ctx context.Context) *node.SystemInfo {
@@ -1372,6 +1429,7 @@ func (s *Server) Run(ctx context.Context) error {
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]string{"version": Version})
 	})
+	mux.HandleFunc("/api/boot", s.handleBootStatus)
 	mux.HandleFunc("/api/logs", s.handleLogs)
 	mux.HandleFunc("/api/diagnose", s.handleDiagnose)
 	mux.HandleFunc("/api/diagnoses", s.handleDiagnoseList)
