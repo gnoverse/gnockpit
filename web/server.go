@@ -508,7 +508,7 @@ func (s *Server) handleBootStatus(w http.ResponseWriter, r *http.Request) {
 	// Check RPC
 	ctx := r.Context()
 	if s.Client != nil {
-		_, err := s.Client.Status(ctx)
+		_, err := s.Client.GetStatus(ctx)
 		bs.RPC = err == nil
 	}
 
