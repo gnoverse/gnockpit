@@ -1823,6 +1823,19 @@ function handleStatus(d) {
       setText('d-moniker', moniker);
       if (moniker !== '-') $('node-state-header').textContent = 'Node State \u00b7 ' + moniker;
       var network = d.node_info.network || '-';
+      // Update h1 title with chain (moniker)
+      var titleEl = $('page-title');
+      if (titleEl && network !== '-') {
+        clearChildren(titleEl);
+        titleEl.appendChild(document.createTextNode('\ud83d\udee9\ufe0f ' + network + ' '));
+        if (moniker !== '-') {
+          var sub = document.createElement('span');
+          sub.style.color = 'var(--fg2)';
+          sub.style.fontSize = '0.7em';
+          sub.textContent = '(' + moniker + ')';
+          titleEl.appendChild(sub);
+        }
+      }
       // Update PWA theme-color meta to match the chain's icon background color.
       // djb2 hash mirrors Go's icon.ChainColor — must stay in sync.
       if (network && network !== '-') {
