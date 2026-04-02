@@ -555,6 +555,18 @@ function setTextWithClass(id, text, cls) {
   }
 }
 function clearChildren(el) { while (el.firstChild) el.removeChild(el.firstChild); }
+function b64toHex(b64) {
+  try { var raw = atob(b64); var hex = ''; for (var i = 0; i < raw.length; i++) { var h = raw.charCodeAt(i).toString(16); hex += h.length < 2 ? '0' + h : h; } return hex.toUpperCase(); } catch(e) { return b64; }
+}
+function setHash(id, b64val) {
+  var el = $(id);
+  if (!b64val || b64val === '-') { el.textContent = '-'; el.className = 'v'; el.title = ''; return; }
+  var hex = b64toHex(b64val);
+  el.textContent = hex.substring(0, 5) + '...' + hex.substring(hex.length - 3);
+  el.className = 'v hash ok';
+  el.title = hex + '\n' + b64val;
+  el.style.cursor = 'help';
+}
 
 function mkEl(tag, text, cls, attrs) {
   var el = document.createElement(tag);
@@ -1942,17 +1954,16 @@ function handleChecks(d) {
     } else {
       setText('c-seeds', 'none configured');
     }
-    var ahEl = $('d-apphash');
     if (d.apphash_b2 && d.apphash_b2 !== '') {
-      ahEl.textContent = d.apphash_b2; ahEl.className = 'v hash ok';
+      setHash('d-apphash', d.apphash_b2);
     } else {
-      ahEl.textContent = 'block 2 not reached'; ahEl.className = 'v err';
+      $('d-apphash').textContent = 'block 2 not reached'; $('d-apphash').className = 'v err';
     }
     if (d.apphash_last && lastStatus && lastStatus.sync_info) {
       var h = lastStatus.sync_info.latest_block_height;
-      $('d-apphash-last').textContent = d.apphash_last; $('d-apphash-last').className = 'v hash ok';
+      setHash('d-apphash-last', d.apphash_last);
       $('d-apphash-last-label').textContent = 'apphash (blk ' + h + ')';
-      $('d-apphash-prev').textContent = d.apphash_prev; $('d-apphash-prev').className = 'v hash ok';
+      setHash('d-apphash-prev', d.apphash_prev);
       $('d-apphash-prev-label').textContent = 'apphash (blk ' + (parseInt(h) - 1) + ')';
     }
     if (d.uptime) setText('d-uptime', d.uptime);
