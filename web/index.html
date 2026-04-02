@@ -279,8 +279,8 @@ a.rpc-link.blue { color: var(--blue); }
       <span class="k" data-compact="hide">genesis time</span><span class="v" id="c-gentime" data-compact="hide">-</span>
       <span class="k">genesis age</span><span class="v" id="ns-genesis-age">-</span>
       <span class="k" data-compact="hide">apphash (blk 2)</span><span class="v" id="d-apphash" data-compact="hide">-</span>
-      <span class="k" id="d-apphash-last-label" data-compact="hide">apphash (last)</span><span class="v hash" id="d-apphash-last" data-compact="hide">-</span>
-      <span class="k" id="d-apphash-prev-label" data-compact="hide">apphash (last-1)</span><span class="v hash" id="d-apphash-prev" data-compact="hide">-</span>
+      <span class="k" data-compact="hide">apphash last</span><span class="v hash" id="d-apphash-last" data-compact="hide">-</span>
+      <span class="k" data-compact="hide">apphash last-1</span><span class="v hash" id="d-apphash-prev" data-compact="hide">-</span>
       <span class="k" data-compact="hide">peers</span><span class="v" id="ns-peers" data-compact="hide">-</span>
       <span class="k">node uptime</span><span class="v" id="d-gnoland-uptime">-</span>
     </div>
@@ -557,6 +557,20 @@ function setTextWithClass(id, text, cls) {
 function clearChildren(el) { while (el.firstChild) el.removeChild(el.firstChild); }
 function b64toHex(b64) {
   try { var raw = atob(b64); var hex = ''; for (var i = 0; i < raw.length; i++) { var h = raw.charCodeAt(i).toString(16); hex += h.length < 2 ? '0' + h : h; } return hex.toUpperCase(); } catch(e) { return b64; }
+}
+function setHashWithHeight(id, b64val, height) {
+  var el = $(id);
+  if (!b64val || b64val === '-') { el.textContent = '-'; el.className = 'v'; el.title = ''; return; }
+  var hex = b64toHex(b64val);
+  clearChildren(el);
+  el.appendChild(document.createTextNode(hex.substring(0, 5) + '...' + hex.substring(hex.length - 3) + ' '));
+  var num = document.createElement('span');
+  num.style.color = 'var(--fg2)';
+  num.textContent = '(' + height + ')';
+  el.appendChild(num);
+  el.className = 'v hash ok';
+  el.title = hex + '\n' + b64val;
+  el.style.cursor = 'help';
 }
 function setHash(id, b64val) {
   var el = $(id);
@@ -1961,10 +1975,8 @@ function handleChecks(d) {
     }
     if (d.apphash_last && lastStatus && lastStatus.sync_info) {
       var h = lastStatus.sync_info.latest_block_height;
-      setHash('d-apphash-last', d.apphash_last);
-      $('d-apphash-last-label').textContent = 'apphash (blk ' + h + ')';
-      setHash('d-apphash-prev', d.apphash_prev);
-      $('d-apphash-prev-label').textContent = 'apphash (blk ' + (parseInt(h) - 1) + ')';
+      setHashWithHeight('d-apphash-last', d.apphash_last, h);
+      setHashWithHeight('d-apphash-prev', d.apphash_prev, parseInt(h) - 1);
     }
     if (d.uptime) setText('d-uptime', d.uptime);
     if (d.system && d.system.node_time) {
