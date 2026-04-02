@@ -544,6 +544,33 @@ func (s *Server) handleBootStatus(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(bs)
 }
 
+func (s *Server) handleResetCache(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		http.Error(w, "POST only", 405)
+		return
+	}
+	// Clear snapshot
+	s.setSnapshot(nil)
+	// Clear peer activity
+	s.peerActivity.Range(func(key, _ interface{}) bool {
+		s.peerActivity.Delete(key)
+		return true
+	})
+	// Clear diagnosis data
+	s.diagmu.Lock()
+	s.diagData = make(map[string]*DiagReport)
+	s.diagmu.Unlock()
+	// Clear chain data cache
+	s.chainDataSize = ""
+	s.chainDataTime = time.Time{}
+	// Clear name registry
+	if s.Client != nil && s.Client.Names != nil {
+		s.Client.Names.Reset()
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+}
+
 // --- System Info ---
 
 func (s *Server) collectSystemInfo(ctx context.Context) *node.SystemInfo {
@@ -1430,6 +1457,7 @@ func (s *Server) Run(ctx context.Context) error {
 		json.NewEncoder(w).Encode(map[string]string{"version": Version})
 	})
 	mux.HandleFunc("/api/boot", s.handleBootStatus)
+	mux.HandleFunc("/api/reset-cache", s.handleResetCache)
 	mux.HandleFunc("/api/logs", s.handleLogs)
 	mux.HandleFunc("/api/diagnose", s.handleDiagnose)
 	mux.HandleFunc("/api/diagnoses", s.handleDiagnoseList)

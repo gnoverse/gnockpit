@@ -70,6 +70,21 @@ func (r *NameRegistry) save() {
 }
 
 // SetOurs records our own validator address and moniker (from /status).
+// Reset clears all cached name mappings (keeps ourAddress/ourMoniker).
+func (r *NameRegistry) Reset() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	our := r.ourAddress
+	ourM := r.ourMoniker
+	r.addrToName = make(map[string]string)
+	r.nameToAddr = make(map[string]string)
+	r.addrToPubKey = make(map[string]string)
+	if our != "" && ourM != "" {
+		r.addrToName[our] = ourM
+		r.nameToAddr[ourM] = our
+	}
+}
+
 func (r *NameRegistry) SetOurs(address, moniker string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
