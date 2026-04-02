@@ -203,12 +203,14 @@ func (s *Server) chainName() string {
 // --- Snapshot data building ---
 
 type checkData struct {
-	GenesisSHA string           `json:"genesis_sha256"`
-	AppHashB2  string           `json:"apphash_b2"`
-	Uptime     string           `json:"uptime"`
-	ValAddress string           `json:"val_address,omitempty"`
-	ValPubKey  string           `json:"val_pubkey,omitempty"`
-	System     *node.SystemInfo `json:"system,omitempty"`
+	GenesisSHA  string           `json:"genesis_sha256"`
+	AppHashB2   string           `json:"apphash_b2"`
+	AppHashLast string           `json:"apphash_last,omitempty"`
+	AppHashPrev string           `json:"apphash_prev,omitempty"`
+	Uptime      string           `json:"uptime"`
+	ValAddress  string           `json:"val_address,omitempty"`
+	ValPubKey   string           `json:"val_pubkey,omitempty"`
+	System      *node.SystemInfo `json:"system,omitempty"`
 }
 
 func (s *Server) buildVotesReport(snap *node.Snapshot) *node.VotesReport {
@@ -241,8 +243,10 @@ func (s *Server) buildVotesReport(snap *node.Snapshot) *node.VotesReport {
 
 func (s *Server) buildCheckData(snap *node.Snapshot) checkData {
 	cd := checkData{
-		GenesisSHA: snap.GenesisSHA,
-		AppHashB2:  snap.AppHashB2,
+		GenesisSHA:  snap.GenesisSHA,
+		AppHashB2:   snap.AppHashB2,
+		AppHashLast: snap.AppHashLast,
+		AppHashPrev: snap.AppHashPrev,
 		Uptime:     snap.Uptime,
 		System:     snap.System,
 	}
@@ -765,6 +769,20 @@ func (s *Server) fetchSnapshot(ctx context.Context) *node.Snapshot {
 	appHash, err := s.Client.GetBlockAppHash(ctx, 2)
 	if err == nil && appHash != "" && appHash != "null" {
 		snap.AppHashB2 = appHash
+	}
+
+	// App hash for last block and last-1
+	if snap.Status != nil {
+		var h int
+		fmt.Sscanf(snap.Status.SyncInfo.LatestBlockHeight, "%d", &h)
+		if h > 1 {
+			if ah, err := s.Client.GetBlockAppHash(ctx, h); err == nil {
+				snap.AppHashLast = ah
+			}
+			if ah, err := s.Client.GetBlockAppHash(ctx, h-1); err == nil {
+				snap.AppHashPrev = ah
+			}
+		}
 	}
 
 	// Signing stats from recent blocks

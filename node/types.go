@@ -195,6 +195,8 @@ type Snapshot struct {
 	Validators     []Validator      `json:"validators,omitempty"`
 	GenesisSHA     string           `json:"genesis_sha256"`
 	AppHashB2      string           `json:"apphash_b2"`
+	AppHashLast    string           `json:"apphash_last"`
+	AppHashPrev    string           `json:"apphash_prev"`
 	Uptime         string           `json:"uptime,omitempty"`
 	RoundStartTime string           `json:"round_start_time,omitempty"`
 	System         *SystemInfo      `json:"system,omitempty"`
