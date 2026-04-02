@@ -279,8 +279,8 @@ a.rpc-link.blue { color: var(--blue); }
       <span class="k" data-compact="hide">genesis time</span><span class="v" id="c-gentime" data-compact="hide">-</span>
       <span class="k">genesis age</span><span class="v" id="ns-genesis-age">-</span>
       <span class="k" data-compact="hide">apphash (blk 2)</span><span class="v" id="d-apphash" data-compact="hide">-</span>
-      <span class="k" data-compact="hide">apphash (last)</span><span class="v hash" id="d-apphash-last" data-compact="hide">-</span>
-      <span class="k" data-compact="hide">apphash (last-1)</span><span class="v hash" id="d-apphash-prev" data-compact="hide">-</span>
+      <span class="k" id="d-apphash-last-label" data-compact="hide">apphash (last)</span><span class="v hash" id="d-apphash-last" data-compact="hide">-</span>
+      <span class="k" id="d-apphash-prev-label" data-compact="hide">apphash (last-1)</span><span class="v hash" id="d-apphash-prev" data-compact="hide">-</span>
       <span class="k" data-compact="hide">peers</span><span class="v" id="ns-peers" data-compact="hide">-</span>
       <span class="k">node uptime</span><span class="v" id="d-gnoland-uptime">-</span>
     </div>
@@ -1948,8 +1948,13 @@ function handleChecks(d) {
     } else {
       ahEl.textContent = 'block 2 not reached'; ahEl.className = 'v err';
     }
-    if (d.apphash_last) { $('d-apphash-last').textContent = d.apphash_last; $('d-apphash-last').className = 'v hash ok'; }
-    if (d.apphash_prev) { $('d-apphash-prev').textContent = d.apphash_prev; $('d-apphash-prev').className = 'v hash ok'; }
+    if (d.apphash_last && lastStatus && lastStatus.sync_info) {
+      var h = lastStatus.sync_info.latest_block_height;
+      $('d-apphash-last').textContent = d.apphash_last; $('d-apphash-last').className = 'v hash ok';
+      $('d-apphash-last-label').textContent = 'apphash (blk ' + h + ')';
+      $('d-apphash-prev').textContent = d.apphash_prev; $('d-apphash-prev').className = 'v hash ok';
+      $('d-apphash-prev-label').textContent = 'apphash (blk ' + (parseInt(h) - 1) + ')';
+    }
     if (d.uptime) setText('d-uptime', d.uptime);
     if (d.system && d.system.node_time) {
       setText('d-nodetime', d.system.node_time);
