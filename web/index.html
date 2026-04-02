@@ -558,28 +558,35 @@ function clearChildren(el) { while (el.firstChild) el.removeChild(el.firstChild)
 function b64toHex(b64) {
   try { var raw = atob(b64); var hex = ''; for (var i = 0; i < raw.length; i++) { var h = raw.charCodeAt(i).toString(16); hex += h.length < 2 ? '0' + h : h; } return hex.toUpperCase(); } catch(e) { return b64; }
 }
+function addCopyBtn(parent, text) {
+  var btn = document.createElement('button');
+  btn.className = 'cp'; btn.textContent = '\ud83d\udccb'; btn.title = 'Copy';
+  btn.onclick = function() { navigator.clipboard.writeText(text); btn.textContent = '\u2713'; setTimeout(function() { btn.textContent = '\ud83d\udccb'; }, 1000); };
+  parent.appendChild(btn);
+}
 function setHashWithHeight(id, b64val, height) {
   var el = $(id);
   if (!b64val || b64val === '-') { el.textContent = '-'; el.className = 'v'; el.title = ''; return; }
   var hex = b64toHex(b64val);
   clearChildren(el);
-  el.appendChild(document.createTextNode(hex.substring(0, 5) + '...' + hex.substring(hex.length - 3) + ' '));
+  el.appendChild(document.createTextNode(hex + ' '));
   var num = document.createElement('span');
   num.style.color = 'var(--fg2)';
   num.textContent = '(' + height + ')';
   el.appendChild(num);
+  addCopyBtn(el, hex);
   el.className = 'v hash ok';
-  el.title = hex + '\n' + b64val;
-  el.style.cursor = 'help';
+  el.title = 'base64: ' + b64val;
 }
 function setHash(id, b64val) {
   var el = $(id);
   if (!b64val || b64val === '-') { el.textContent = '-'; el.className = 'v'; el.title = ''; return; }
   var hex = b64toHex(b64val);
-  el.textContent = hex.substring(0, 5) + '...' + hex.substring(hex.length - 3);
+  clearChildren(el);
+  el.appendChild(document.createTextNode(hex));
+  addCopyBtn(el, hex);
   el.className = 'v hash ok';
-  el.title = hex + '\n' + b64val;
-  el.style.cursor = 'help';
+  el.title = 'base64: ' + b64val;
 }
 
 function mkEl(tag, text, cls, attrs) {
