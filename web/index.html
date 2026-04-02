@@ -742,7 +742,7 @@ function valAddrToName(addr) { return knownValAddrs[addr] || null; }
 function shortAddr(addr) {
   if (!addr || addr.length < 12) return addr || '';
   var prefix = addr.substring(0, 2); // "g1"
-  return prefix + addr.substring(2, 5) + '\u2026' + addr.substring(addr.length - 3);
+  return prefix + addr.substring(2, 8) + '\u2026' + addr.substring(addr.length - 6);
 }
 
 function valHealth(v, mp, isUs) {
