@@ -16,7 +16,7 @@ type DockerBackend struct {
 }
 
 func (b *DockerBackend) streamLogsArgs() []string {
-	return []string{"logs", b.ContainerName, "-f", "--since", "1m"}
+	return []string{"logs", b.ContainerName, "-f", "--tail", "300"}
 }
 
 func (b *DockerBackend) StreamLogs(ctx context.Context) (io.ReadCloser, error) {

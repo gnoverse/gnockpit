@@ -1928,14 +1928,11 @@ function handleStatus(d) {
 function handleSigning(d) {
     if (!d) return;
     var activeEl = $('ns-active');
-    var addEl = $('ns-canadd');
     setText('ns-active', d.active_count + '/' + d.total_count + ' (margin: ' + (d.margin >= 0 ? '+' : '') + d.margin + ')');
     activeEl.className = d.margin >= 2 ? 'v ok' : d.margin >= 1 ? 'v warn' : 'v err';
     if (d.avg_block_ms > 0) {
       setText('ns-avgblock', (d.avg_block_ms / 1000).toFixed(1) + 's');
     }
-    setText('ns-canadd', d.can_add_one ? 'yes' : 'no \u2014 would risk halt');
-    addEl.className = d.can_add_one ? 'v ok' : 'v err';
     var activeCt = document.getElementById('ns-active-compact');
     if (activeCt) {
       var avgStr = d.avg_block_ms > 0 ? (d.avg_block_ms / 1000).toFixed(1) + 's' : '-';
@@ -2073,6 +2070,8 @@ function handleLogLine(entry) {
     if (entry.module) addModule(entry.module);
     if (logsPaused) return;
     logQueue.push(entry);
+    // Cap queue to prevent unbounded growth when RAF is delayed (background tabs)
+    if (logQueue.length > 500) logQueue.splice(0, logQueue.length - 500);
     if (!logFlushScheduled) {
       logFlushScheduled = true;
       requestAnimationFrame(flushLogQueue);
@@ -2371,9 +2370,9 @@ function fetchLogs(n) {
   });
 }
 
-var logsPaused = true;
-$('logs-pause').textContent = 'resume';
-$('logs-pause').style.color = 'var(--green)';
+var logsPaused = false;
+$('logs-pause').textContent = 'pause';
+$('logs-pause').style.color = 'var(--yellow)';
 $('logs-pause').addEventListener('click', function() {
   logsPaused = !logsPaused;
   this.textContent = logsPaused ? 'resume' : 'pause';
