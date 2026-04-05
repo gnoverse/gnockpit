@@ -129,6 +129,18 @@ func (d *DB) AllSubscriptions() ([]Subscription, error) {
 	return subs, rows.Err()
 }
 
+// GetSubscription returns a single subscription by ID.
+func (d *DB) GetSubscription(id string) (Subscription, error) {
+	var s Subscription
+	err := d.db.QueryRow(
+		`SELECT id, endpoint, p256dh, auth FROM subscriptions WHERE id = ?`, id,
+	).Scan(&s.ID, &s.Endpoint, &s.P256dh, &s.Auth)
+	if err != nil {
+		return Subscription{}, err
+	}
+	return s, nil
+}
+
 // ---- Subscription alerts
 
 // SaveSubscriptionWithAlerts saves a subscription and its alert preferences atomically.

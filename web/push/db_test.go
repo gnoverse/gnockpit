@@ -126,3 +126,31 @@ func TestDB_SubscriptionAlerts_DeleteCascades(t *testing.T) {
 		t.Errorf("expected cascade delete, got %d rows", len(loaded))
 	}
 }
+
+func TestDB_GetSubscription(t *testing.T) {
+	db, _ := push.OpenDB(":memory:")
+	defer db.Close()
+
+	sub := push.Subscription{ID: "get-me", Endpoint: "https://x.com/push", P256dh: "p", Auth: "a"}
+	if err := db.SaveSubscription(sub); err != nil {
+		t.Fatalf("SaveSubscription: %v", err)
+	}
+
+	got, err := db.GetSubscription("get-me")
+	if err != nil {
+		t.Fatalf("GetSubscription: %v", err)
+	}
+	if got.ID != "get-me" || got.Endpoint != "https://x.com/push" || got.P256dh != "p" || got.Auth != "a" {
+		t.Errorf("got %+v, want matching fields", got)
+	}
+}
+
+func TestDB_GetSubscription_NotFound(t *testing.T) {
+	db, _ := push.OpenDB(":memory:")
+	defer db.Close()
+
+	_, err := db.GetSubscription("nonexistent")
+	if err == nil {
+		t.Fatal("expected error for nonexistent subscription")
+	}
+}
