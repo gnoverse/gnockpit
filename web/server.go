@@ -1424,6 +1424,29 @@ func (s *Server) handlePushEntities(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(resp)
 }
 
+func (s *Server) handlePushTest(w http.ResponseWriter, r *http.Request) {
+	if s.PushManager == nil {
+		http.Error(w, "push not configured", http.StatusServiceUnavailable)
+		return
+	}
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var req struct {
+		ID string `json:"id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.ID == "" {
+		http.Error(w, "missing id", http.StatusBadRequest)
+		return
+	}
+	if err := s.PushManager.SendTest(req.ID); err != nil {
+		http.Error(w, "subscription not found", http.StatusNotFound)
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+}
+
 // Run starts the web server, publish loop, and log streamer.
 // computeGenesisSHA hashes the local genesis file to avoid hardcoding.
 func (s *Server) computeGenesisSHA() string {
@@ -1502,6 +1525,7 @@ func (s *Server) Run(ctx context.Context) error {
 	mux.HandleFunc("/api/push/vapid-key", s.handlePushVAPIDKey)
 	mux.HandleFunc("/api/push/subscribe", s.handlePushSubscribe)
 	mux.HandleFunc("/api/push/entities", s.handlePushEntities)
+	mux.HandleFunc("/api/push/test", s.handlePushTest)
 
 	srv := &http.Server{
 		Addr:    s.Addr,
