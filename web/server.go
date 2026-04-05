@@ -590,9 +590,9 @@ func (s *Server) handleResetCache(w http.ResponseWriter, r *http.Request) {
 	// Clear chain data cache
 	s.chainDataSize = ""
 	s.chainDataTime = time.Time{}
-	// Clear name registry
+	// Clear and reload name registry from persist file
 	if s.Client != nil && s.Client.Names != nil {
-		s.Client.Names.Reset()
+		s.Client.Names.Reload()
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})

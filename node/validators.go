@@ -85,6 +85,14 @@ func (r *NameRegistry) Reset() {
 	}
 }
 
+// Reload clears cached name mappings, then reloads from the persist file.
+func (r *NameRegistry) Reload() {
+	r.Reset()
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.load()
+}
+
 func (r *NameRegistry) SetOurs(address, moniker string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
