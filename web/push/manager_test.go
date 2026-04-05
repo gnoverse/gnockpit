@@ -102,6 +102,58 @@ func TestManager_SendPush_RemovesBadRequestSubscription(t *testing.T) {
 	testSendPushRemovesStaleSubscription(t, http.StatusBadRequest)
 }
 
+func TestManager_SendTest_Success(t *testing.T) {
+	var received bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		received = true
+		w.WriteHeader(http.StatusCreated)
+	}))
+	defer srv.Close()
+
+	db, err := push.OpenDB(":memory:")
+	if err != nil {
+		t.Fatalf("OpenDB: %v", err)
+	}
+	defer db.Close()
+	m, err := push.NewManager(db, 30, 10)
+	if err != nil {
+		t.Fatalf("NewManager: %v", err)
+	}
+
+	if err := db.SaveSubscription(push.Subscription{
+		ID:       "test-sub",
+		Endpoint: srv.URL,
+		P256dh:   "BNNL5ZaTfK81qhXOx23-wewhigUeFb632jN6LvRWCFH1ubQr77FE_9qV1FuojuRmHP42zmf34rXgW80OvUVDgTk",
+		Auth:     "zqbxT6JKstKSY9JKibZLSQ",
+	}); err != nil {
+		t.Fatalf("SaveSubscription: %v", err)
+	}
+
+	if err := m.SendTest("test-sub"); err != nil {
+		t.Fatalf("SendTest: %v", err)
+	}
+	if !received {
+		t.Error("expected push service to receive a request")
+	}
+}
+
+func TestManager_SendTest_NotFound(t *testing.T) {
+	db, err := push.OpenDB(":memory:")
+	if err != nil {
+		t.Fatalf("OpenDB: %v", err)
+	}
+	defer db.Close()
+	m, err := push.NewManager(db, 30, 10)
+	if err != nil {
+		t.Fatalf("NewManager: %v", err)
+	}
+
+	err = m.SendTest("nonexistent")
+	if err == nil {
+		t.Fatal("expected error for nonexistent subscription")
+	}
+}
+
 func TestManager_EvaluateAndNotify_CapturesChainName(t *testing.T) {
 	db, err := push.OpenDB(":memory:")
 	if err != nil {

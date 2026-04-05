@@ -91,6 +91,20 @@ func (m *Manager) NotifyAlert(a Alert) {
 	}
 }
 
+// SendTest sends a test notification to a specific subscription.
+func (m *Manager) SendTest(subID string) error {
+	sub, err := m.db.GetSubscription(subID)
+	if err != nil {
+		return fmt.Errorf("get subscription: %w", err)
+	}
+	m.sendPush(sub, Alert{
+		Firing: true,
+		Title:  "gnockpit test",
+		Body:   "Push notifications are working.",
+	})
+	return nil
+}
+
 type pushPayload struct {
 	Title string `json:"title"`
 	Body  string `json:"body"`
