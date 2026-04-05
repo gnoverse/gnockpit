@@ -464,6 +464,7 @@ document.addEventListener('click', function(e) {
   var key = th.getAttribute('data-sort');
   if (peerSortKey === key) peerSortAsc = !peerSortAsc;
   else { peerSortKey = key; peerSortAsc = true; }
+  _lastNetworkFingerprint = ''; // Invalidate to force rebuild on sort change
   renderNetwork();
 });
 
@@ -833,8 +834,48 @@ function peerHealth(p) {
   return { text: status, className: cls, popover: issues.length ? issues.join('\n') : 'Healthy', tags: tags };
 }
 
+/* Debounced render: coalesce multiple data updates into a single DOM rebuild per frame */
+var _renderNetworkPending = false;
+function scheduleRenderNetwork() {
+    if (!_renderNetworkPending) {
+        _renderNetworkPending = true;
+        requestAnimationFrame(function() {
+            _renderNetworkPending = false;
+            renderNetwork();
+        });
+    }
+}
+
+/* Quick data fingerprint to skip full DOM rebuild when nothing changed */
+var _lastNetworkFingerprint = '';
+function networkFingerprint() {
+  var f = '';
+  if (lastVotes) {
+    f += lastVotes.height + '/' + lastVotes.round + '/' + lastVotes.step;
+    if (lastVotes.validators) {
+      for (var i = 0; i < lastVotes.validators.length; i++) {
+        var v = lastVotes.validators[i];
+        f += (v.prevoted ? '1' : '0') + (v.precommit ? '1' : '0');
+      }
+    }
+  }
+  if (lastPeers) {
+    f += '|' + lastPeers.length;
+    for (var i = 0; i < lastPeers.length; i++) {
+      f += ':' + (lastPeers[i].peer_height || '');
+    }
+  }
+  if (lastStatus && lastStatus.sync_info) f += '|' + lastStatus.sync_info.latest_block_height;
+  return f;
+}
+
 /* Merged network table render */
 function renderNetwork() {
+  // Skip full DOM rebuild when data hasn't changed
+  var fp = networkFingerprint();
+  if (fp === _lastNetworkFingerprint) return;
+  _lastNetworkFingerprint = fp;
+
   var scrollY = window.scrollY;
   var tbody = $('network-body');
   clearChildren(tbody);
@@ -1922,7 +1963,7 @@ function handleStatus(d) {
         setText('d-pubkey', d.validator_info.pub_key.value);
     }
     // Re-render network if this is the first status (so "this node" row appears)
-    if (!hadStatus && lastPeers) renderNetwork();
+    if (!hadStatus && lastPeers) scheduleRenderNetwork();
 }
 
 function handleSigning(d) {
@@ -2048,21 +2089,34 @@ function setVotes(d) {
     }
 }
 
-function handlePeers(d) { setPeers(d); renderNetwork(); }
+function handlePeers(d) { setPeers(d); scheduleRenderNetwork(); }
 
-function handleVotes(d) { setVotes(d); renderNetwork(); }
+function handleVotes(d) { setVotes(d); scheduleRenderNetwork(); }
 
 var logQueue = [];
 var logFlushScheduled = false;
+var logLineCount = 0; // Track visible log-line DOM count to avoid querySelectorAll
+
+// Force a string copy to detach from JSON.parse source string.
+// V8 may keep parsed strings as slices of the original JSON buffer,
+// preventing the entire WS message from being garbage collected.
+function detachStr(s) { return typeof s === 'string' ? (' ' + s).slice(1) : s; }
 
 function handleLogLine(entry) {
     if (!lastLogLines) lastLogLines = [];
+    // Detach strings from the JSON.parse source to allow GC of WS message
+    entry.msg = detachStr(entry.msg);
+    entry.time = detachStr(entry.time);
+    entry.level = detachStr(entry.level);
+    entry.module = detachStr(entry.module);
     // Truncate huge extra values to prevent memory bloat
     if (entry.extra) {
       var ek = Object.keys(entry.extra);
       for (var i = 0; i < ek.length; i++) {
         var v = entry.extra[ek[i]];
-        if (typeof v === 'string' && v.length > 200) entry.extra[ek[i]] = v.substring(0, 200) + '...';
+        if (typeof v === 'string') {
+          entry.extra[ek[i]] = v.length > 200 ? v.substring(0, 200) + '...' : detachStr(v);
+        }
       }
     }
     lastLogLines.push(entry);
@@ -2070,8 +2124,8 @@ function handleLogLine(entry) {
     if (entry.module) addModule(entry.module);
     if (logsPaused) return;
     logQueue.push(entry);
-    // Cap queue to prevent unbounded growth when RAF is delayed (background tabs)
-    if (logQueue.length > 500) logQueue.splice(0, logQueue.length - 500);
+    // Cap queue at display limit to avoid creating DOM nodes that are immediately trimmed
+    if (logQueue.length > 200) logQueue.splice(0, logQueue.length - 200);
     if (!logFlushScheduled) {
       logFlushScheduled = true;
       requestAnimationFrame(flushLogQueue);
@@ -2133,8 +2187,26 @@ function flushLogQueue() {
     if (count > 0) {
       var atBottom = body.scrollHeight - body.scrollTop - body.clientHeight < 40;
       body.appendChild(frag);
-      var logLines = body.querySelectorAll('.log-line');
-      for (var li = 0; li < logLines.length - 200; li++) { logLines[li].remove(); }
+      logLineCount += count;
+      // Trim excess log lines from the top without creating a NodeList
+      while (logLineCount > 200) {
+        var first = body.firstElementChild;
+        if (first && first.classList.contains('log-line')) {
+          body.removeChild(first);
+          logLineCount--;
+        } else if (first) {
+          // Skip non-log-line elements (e.g. #logs-empty)
+          first = first.nextElementSibling;
+          if (first && first.classList.contains('log-line')) {
+            body.removeChild(first);
+            logLineCount--;
+          } else {
+            break;
+          }
+        } else {
+          break;
+        }
+      }
       updateEmptyState();
       if (atBottom) { requestAnimationFrame(function() { body.scrollTop = body.scrollHeight; }); }
     }
@@ -2180,13 +2252,15 @@ function connect() {
   ws.onmessage = function(e) {
     var msg = JSON.parse(e.data);
     switch(msg.type) {
-      case 'snapshot':
+      case 'update':   // Batched periodic update (all fields in one message)
+      case 'snapshot':  // Initial full state on connect
         if (msg.data.status) handleStatus(msg.data.status);
         if (msg.data.time) handleTime(msg.data.time);
         if (msg.data.peers) setPeers(msg.data.peers);
         if (msg.data.votes) setVotes(msg.data.votes);
-        if (msg.data.peers || msg.data.votes) renderNetwork();
+        if (msg.data.peers || msg.data.votes) scheduleRenderNetwork();
         if (msg.data.checks) handleChecks(msg.data.checks);
+        if (msg.data.signing) handleSigning(msg.data.signing);
         break;
       case 'status': handleStatus(msg.data); break;
       case 'peers': handlePeers(msg.data); break;
@@ -2218,6 +2292,7 @@ ovCb.checked = onlyVals;
 ovCb.addEventListener('change', function() {
   onlyVals = ovCb.checked;
   saveURL();
+  _lastNetworkFingerprint = ''; // Invalidate to force rebuild on filter change
   renderNetwork();
 });
 
@@ -2333,8 +2408,13 @@ function colorizeVal(val, parent, depth) {
 function renderLogs(entries) {
   var body = $('logs-body');
   // Remove existing log-line elements, preserving #logs-empty
-  var existing = body.querySelectorAll('.log-line');
-  for (var j = 0; j < existing.length; j++) body.removeChild(existing[j]);
+  var child = body.firstElementChild;
+  while (child) {
+    var next = child.nextElementSibling;
+    if (child.classList.contains('log-line')) body.removeChild(child);
+    child = next;
+  }
+  logLineCount = 0;
   var textFilter = (logsText || $('logs-filter').value).toLowerCase();
   for (var i = 0; i < entries.length; i++) {
     var entry = entries[i];
@@ -2344,6 +2424,7 @@ function renderLogs(entries) {
     var searchStr = (entry.msg + ' ' + JSON.stringify(entry.extra || {})).toLowerCase();
     if (textFilter && searchStr.indexOf(textFilter) === -1) continue;
     body.appendChild(buildLogDiv(entry));
+    logLineCount++;
   }
   updateEmptyState();
   requestAnimationFrame(function() { body.scrollTop = body.scrollHeight; });

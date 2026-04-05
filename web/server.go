@@ -276,6 +276,29 @@ func (s *Server) buildSnapshotMsg(snap *node.Snapshot) wsMsg {
 	return wsMsg{Type: "snapshot", Data: sd}
 }
 
+// buildUpdateMsg builds a batched periodic update message.
+// Sending one message instead of 5-6 individual ones reduces JSON.parse
+// calls and WS event handler invocations on the frontend.
+func (s *Server) buildUpdateMsg(snap *node.Snapshot) wsMsg {
+	type updateData struct {
+		Time    string             `json:"time"`
+		Status  *node.Status       `json:"status,omitempty"`
+		Peers   []node.Peer        `json:"peers,omitempty"`
+		Votes   *node.VotesReport  `json:"votes,omitempty"`
+		Checks  checkData          `json:"checks"`
+		Signing *node.SigningStats `json:"signing,omitempty"`
+	}
+	ud := updateData{
+		Time:    snap.Timestamp.Format("15:04:05"),
+		Status:  snap.Status,
+		Peers:   snap.Peers,
+		Votes:   s.buildVotesReport(snap),
+		Checks:  s.buildCheckData(snap),
+		Signing: snap.Signing,
+	}
+	return wsMsg{Type: "update", Data: ud}
+}
+
 // --- HTTP Handlers ---
 
 func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
@@ -917,21 +940,9 @@ func (s *Server) publishLoop(ctx context.Context) {
 		}
 		broadcastSSEJSON("checks", s.buildCheckData(snap))
 
-		// Broadcast to WebSocket clients
-		s.broadcastWS(wsMsg{Type: "time", Data: timeStr})
-		if snap.Status != nil {
-			s.broadcastWS(wsMsg{Type: "status", Data: snap.Status})
-		}
-		if snap.Peers != nil {
-			s.broadcastWS(wsMsg{Type: "peers", Data: snap.Peers})
-		}
-		if report := s.buildVotesReport(snap); report != nil {
-			s.broadcastWS(wsMsg{Type: "votes", Data: report})
-		}
-		s.broadcastWS(wsMsg{Type: "checks", Data: s.buildCheckData(snap)})
-		if snap.Signing != nil {
-			s.broadcastWS(wsMsg{Type: "signing", Data: snap.Signing})
-		}
+		// Broadcast to WebSocket clients as a single batched message to reduce
+		// JSON.parse calls and WS message overhead on the frontend.
+		s.broadcastWS(s.buildUpdateMsg(snap))
 	}
 
 	publish()
