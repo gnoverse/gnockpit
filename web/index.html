@@ -224,6 +224,17 @@ a.rpc-link.blue { color: var(--blue); }
   #ns-compact-label { display: none; }
   #node-compact-label { display: none; }
 }
+/* ---- Click-to-copy */
+.kv .v { cursor: pointer; }
+#network-body td[data-copy] { cursor: pointer; }
+.log-line { cursor: pointer; }
+#recent-blocks-body .info-btn { cursor: pointer !important; }
+.copy-toast {
+  position: fixed; pointer-events: none; z-index: 9999;
+  background: var(--green); color: #fff;
+  padding: 2px 8px; border-radius: 4px; font-size: 11px;
+  opacity: 0; transition: opacity 0.4s; transform: translateX(-50%);
+}
 </style>
 </head>
 <body>
@@ -259,9 +270,9 @@ a.rpc-link.blue { color: var(--blue); }
   <h2 data-section="connect">Connect</h2>
   <div class="section-body"><div style="font-size:13px">
     <div class="kv">
-      <span class="k">our p2p</span><span class="v" id="c-seed" style="cursor:pointer;user-select:all" title="Click to copy" onclick="copyText(this)">-</span>
+      <span class="k">our p2p</span><span class="v" id="c-seed">-</span>
       <span class="k">seeds</span><span class="v" id="c-seeds" style="font-size:11px">-</span>
-      <span class="k">genesis sha256</span><span class="v hash" id="c-genesis" style="cursor:pointer;user-select:all" title="Click to copy" onclick="copyText(this)">-</span>
+      <span class="k">genesis sha256</span><span class="v hash" id="c-genesis">-</span>
     </div>
   </div></div>
 </div>
@@ -472,16 +483,25 @@ var ws;
 var currentHighlight = null;
 var activePopover = null;
 
-function copyText(el) {
-  var text = el.textContent || el.innerText;
-  if (text && text !== '-') {
-    navigator.clipboard.writeText(text).then(function() {
-      var orig = el.style.background;
-      el.style.background = 'rgba(63,185,80,0.2)';
-      setTimeout(function() { el.style.background = orig; }, 400);
-    });
+var _copyToast = null;
+var _copyToastTimer = 0;
+function copyNotify(text, e) {
+  if (!text || text === '-') return;
+  navigator.clipboard.writeText(text);
+  if (!_copyToast) {
+    _copyToast = document.createElement('div');
+    _copyToast.className = 'copy-toast';
+    document.body.appendChild(_copyToast);
   }
+  _copyToast.textContent = 'Copied!';
+  _copyToast.style.left = e.clientX + 'px';
+  _copyToast.style.top = (e.clientY - 28) + 'px';
+  _copyToast.style.opacity = '1';
+  clearTimeout(_copyToastTimer);
+  _copyToastTimer = setTimeout(function() { _copyToast.style.opacity = '0'; }, 800);
 }
+
+
 
 // Cached state for merging
 var lastVotes = null;
@@ -558,15 +578,10 @@ function clearChildren(el) { while (el.firstChild) el.removeChild(el.firstChild)
 function b64toHex(b64) {
   try { var raw = atob(b64); var hex = ''; for (var i = 0; i < raw.length; i++) { var h = raw.charCodeAt(i).toString(16); hex += h.length < 2 ? '0' + h : h; } return hex.toUpperCase(); } catch(e) { return b64; }
 }
-function addCopyBtn(parent, text) {
-  var btn = document.createElement('button');
-  btn.className = 'cp'; btn.textContent = '\ud83d\udccb'; btn.title = 'Copy';
-  btn.onclick = function() { navigator.clipboard.writeText(text); btn.textContent = '\u2713'; setTimeout(function() { btn.textContent = '\ud83d\udccb'; }, 1000); };
-  parent.appendChild(btn);
-}
+
 function setHashWithHeight(id, b64val, height) {
   var el = $(id);
-  if (!b64val || b64val === '-') { el.textContent = '-'; el.className = 'v'; el.title = ''; return; }
+  if (!b64val || b64val === '-') { el.textContent = '-'; el.className = 'v'; el.title = ''; el.removeAttribute('data-copy'); return; }
   var hex = b64toHex(b64val);
   clearChildren(el);
   el.appendChild(document.createTextNode(hex + ' '));
@@ -574,17 +589,17 @@ function setHashWithHeight(id, b64val, height) {
   num.style.color = 'var(--fg2)';
   num.textContent = '(' + height + ')';
   el.appendChild(num);
-  addCopyBtn(el, hex);
+  el.setAttribute('data-copy', hex);
   el.className = 'v hash ok';
   el.title = 'base64: ' + b64val;
 }
 function setHash(id, b64val) {
   var el = $(id);
-  if (!b64val || b64val === '-') { el.textContent = '-'; el.className = 'v'; el.title = ''; return; }
+  if (!b64val || b64val === '-') { el.textContent = '-'; el.className = 'v'; el.title = ''; el.removeAttribute('data-copy'); return; }
   var hex = b64toHex(b64val);
   clearChildren(el);
   el.appendChild(document.createTextNode(hex));
-  addCopyBtn(el, hex);
+  el.setAttribute('data-copy', hex);
   el.className = 'v hash ok';
   el.title = 'base64: ' + b64val;
 }
@@ -619,6 +634,7 @@ function createCell(cellDef) {
     }
     if (cellDef.style) td.setAttribute('style', cellDef.style);
     if (cellDef.highlight) td.setAttribute('data-highlight', cellDef.highlight);
+    if (cellDef.copy) td.setAttribute('data-copy', cellDef.copy);
     if (cellDef.tags) {
       for (var t = 0; t < cellDef.tags.length; t++)
         td.appendChild(mkEl('span', cellDef.tags[t].text, 'tag ' + cellDef.tags[t].cls));
@@ -1008,6 +1024,7 @@ function renderNetwork() {
       // Name
       var nameTd = document.createElement('td');
       nameTd.setAttribute('data-highlight', cleanName);
+      nameTd.setAttribute('data-copy', cleanName);
       var displayName = (cleanName.indexOf('g1') === 0 && cleanName.length > 20) ? shortAddr(cleanName) : cleanName;
       nameTd.appendChild(document.createTextNode(displayName));
       if (displayName !== cleanName) nameTd.title = cleanName;
@@ -1015,7 +1032,7 @@ function renderNetwork() {
       tr.appendChild(nameTd);
 
       // Address
-      tr.appendChild(createCell({ text: shortAddr(v.address), style: 'font-size:11px;color:var(--fg2)', popover: v.address, highlight: cleanName }));
+      tr.appendChild(createCell({ text: shortAddr(v.address), style: 'font-size:11px;color:var(--fg2)', popover: v.address, highlight: cleanName, copy: v.address }));
 
       // IP — for "this host", use server IP from net_address
       var ip = mp ? mp.remote_ip : '';
@@ -1028,7 +1045,7 @@ function renderNetwork() {
           ip = ci > 0 ? hp.substring(0, ci) : hp;
         }
       }
-      tr.appendChild(createCell({ text: ip, highlight: ip }));
+      tr.appendChild(createCell({ text: ip, highlight: ip, copy: ip }));
 
       // Consensus (merged: h/r/s + pv/pc/p)
       var consTd = document.createElement('td');
@@ -1050,6 +1067,7 @@ function renderNetwork() {
         consTd.textContent = '-';
       }
       consTd.setAttribute('data-sort-val', peerH || '0');
+      if (peerH) consTd.setAttribute('data-copy', peerH + '/' + peerR + '/' + peerS);
       tr.appendChild(consTd);
 
       // Sign rate
@@ -1256,9 +1274,9 @@ function renderNetwork() {
       var peerVotes = p.peer_prevotes ? p.peer_prevotes + ' PV ' + p.peer_precommits + ' PC' : '';
 
       var tr2 = document.createElement('tr');
-      tr2.appendChild(createCell({ text: p.moniker || '', highlight: hlKey }));
-      tr2.appendChild(createCell({ text: pAddr, style: 'font-size:11px;color:var(--fg2)', popover: pAddrPop || undefined, highlight: hlKey }));
-      tr2.appendChild(createCell({ text: p.remote_ip || '', highlight: p.remote_ip || '' }));
+      tr2.appendChild(createCell({ text: p.moniker || '', highlight: hlKey, copy: p.moniker || '' }));
+      tr2.appendChild(createCell({ text: pAddr, style: 'font-size:11px;color:var(--fg2)', popover: pAddrPop || undefined, highlight: hlKey, copy: pAddrPop }));
+      tr2.appendChild(createCell({ text: p.remote_ip || '', highlight: p.remote_ip || '', copy: p.remote_ip || '' }));
       // Consensus (merged for peers)
       var pConsTd = document.createElement('td');
       pConsTd.style.fontSize = '12px';
@@ -1268,6 +1286,7 @@ function renderNetwork() {
         var hCls2 = ph2 >= netH2 ? 'ok' : ph2 >= netH2 - 1 ? 'warn' : 'err';
         pConsTd.appendChild(mkEl('span', p.peer_height, hCls2));
         pConsTd.appendChild(document.createTextNode('/' + p.peer_round + '/' + p.peer_step));
+        pConsTd.setAttribute('data-copy', p.peer_height + '/' + p.peer_round + '/' + p.peer_step);
       }
       tr2.appendChild(pConsTd);
       tr2.appendChild(createCell({ text: '-', className: 'full-role' })); // Sign%
@@ -1824,9 +1843,14 @@ function renderRecentBlocks(blocks) {
     }
     if (b.block_ms !== 0) tip += '\nBlock time: ' + b.block_ms + 'ms';
     if (b.missing && b.missing.length > 0) {
+      var sorted = b.missing.slice().sort(function(a, b) {
+        var na = (a.name || a.address).toLowerCase();
+        var nb = (b.name || b.address).toLowerCase();
+        return na < nb ? -1 : na > nb ? 1 : 0;
+      });
       tip += '\nMissing:';
-      for (var j = 0; j < b.missing.length; j++) {
-        var m = b.missing[j];
+      for (var j = 0; j < sorted.length; j++) {
+        var m = sorted[j];
         tip += '\n  ' + (m.name ? m.name + ' (' + m.address + ')' : m.address);
       }
     }
@@ -2775,6 +2799,41 @@ function diagOverallStatus(report) {
 
 setupHighlight();
 connect();
+
+// ---- Click-to-copy handlers (delegated)
+
+// KV values in Connect, Network State, Node State sections
+document.addEventListener('click', function(e) {
+  var v = e.target.closest('.kv .v');
+  if (!v) return;
+  // Don't interfere with links or buttons inside the value
+  if (e.target.closest('a, button')) return;
+  var text = v.getAttribute('data-copy') || v.textContent.trim();
+  copyNotify(text, e);
+});
+
+// Table cells with data-copy attribute
+document.addEventListener('click', function(e) {
+  var td = e.target.closest('#network-body td[data-copy]');
+  if (!td) return;
+  if (e.target.closest('a, button, .info-btn')) return;
+  copyNotify(td.getAttribute('data-copy'), e);
+});
+
+// Log lines
+document.addEventListener('click', function(e) {
+  var line = e.target.closest('.log-line');
+  if (!line) return;
+  copyNotify(line.textContent.trim(), e);
+});
+
+// Block boxes — copy tooltip content
+document.addEventListener('click', function(e) {
+  var block = e.target.closest('#recent-blocks-body .info-btn');
+  if (!block) return;
+  var tip = block.getAttribute('data-popover');
+  if (tip) copyNotify(tip, e);
+});
 
 // Update "ago" + genesis countdown every second
 setInterval(function() {
