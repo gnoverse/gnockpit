@@ -2912,6 +2912,7 @@ async function openAlertsModal() {
         _pushEntities = { validators: [], chain_stuck_secs: 30, missed_blocks_pct: 5, window_size: 100 };
     }
     renderAlertsForm();
+    document.getElementById('push-test-btn').style.display = _pushSubID ? '' : 'none';
     const saved = localStorage.getItem('gnockpitAlertPrefs');
     if (saved) {
         const prefs = JSON.parse(saved);
@@ -3098,6 +3099,34 @@ async function pushSaveSettings() {
     closeAlertsModal();
 }
 
+async function pushTestNotification() {
+    if (!_pushSubID) return;
+    const btn = document.getElementById('push-test-btn');
+    btn.disabled = true;
+    btn.textContent = 'Sending\u2026';
+    showAlertsError('');
+    try {
+        const r = await fetch('/api/push/test', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ id: _pushSubID }),
+        });
+        if (!r.ok) {
+            showAlertsError('Test notification failed (' + r.status + ').');
+            btn.textContent = 'Test';
+            btn.disabled = false;
+            return;
+        }
+        btn.textContent = 'Sent!';
+        setTimeout(function() { btn.textContent = 'Test'; btn.disabled = false; }, 2000);
+    } catch (e) {
+        showAlertsError('Test notification failed. See console.');
+        console.error('push test failed:', e);
+        btn.textContent = 'Test';
+        btn.disabled = false;
+    }
+}
+
 initPush();
 </script>
 <div style="text-align:center;padding:16px;font-size:11px;color:var(--fg2)"><a href="https://github.com/gnoverse/gnockpit" target="_blank" style="color:var(--fg2);text-decoration:none">gnockpit</a> <a id="gnockpit-version" href="#" target="_blank" style="color:var(--fg2);text-decoration:none"></a> <button onclick="resetCache()" style="background:none;border:1px solid var(--border);color:var(--fg2);border-radius:4px;padding:1px 6px;cursor:pointer;font-size:10px;font-family:inherit;margin-left:8px">clear cache</button></div>
@@ -3113,6 +3142,7 @@ initPush();
     <p id="alerts-error" style="display:none; margin:0 0 12px; font-size:0.82em; color:#e55;"></p>
     <div id="alerts-form"></div>
     <div style="margin-top:20px; display:flex; gap:8px; justify-content:flex-end; flex-wrap:wrap;">
+      <button id="push-test-btn" onclick="pushTestNotification()" style="padding:5px 14px; cursor:pointer; display:none;">Test</button>
       <button onclick="pushSaveSettings()" style="padding:5px 14px; cursor:pointer;">Save</button>
     </div>
   </div>
