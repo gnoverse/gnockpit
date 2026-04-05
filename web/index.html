@@ -2991,6 +2991,12 @@ function showAlertsError(msg) {
 }
 
 function onAlertCheck(cb) {
+    // Unchecking an alert also unchecks its recovery (no recovery without the alert).
+    if (!cb.checked) {
+        const type = cb.dataset.type, entity = cb.dataset.entity;
+        const rec = document.querySelector(`#alerts-form input[data-rec-type="${type}"][data-rec-entity="${entity}"]`);
+        if (rec) rec.checked = false;
+    }
     syncValAllState();
 }
 
@@ -3015,6 +3021,13 @@ function onValAllCheck(cb, isRec) {
         document.querySelectorAll('#alerts-form input[data-type="validator_missing_blocks"][data-entity]')
             .forEach(el => { el.checked = true; });
         document.getElementById('chk-val-all').checked = true;
+    }
+    if (!isRec && !cb.checked) {
+        // Unchecking all alerts also unchecks all recovery.
+        document.querySelectorAll('#alerts-form input[data-rec-type="validator_missing_blocks"]')
+            .forEach(el => { el.checked = false; });
+        const recAll = document.getElementById('rec-val-all');
+        if (recAll) recAll.checked = false;
     }
 }
 
