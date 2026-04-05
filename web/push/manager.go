@@ -3,6 +3,7 @@ package push
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 
@@ -10,10 +11,11 @@ import (
 	"github.com/gnoverse/gnockpit/node"
 )
 
-// vapidSubject is passed to webpush-go which prepends "mailto:" automatically,
-// so we must not include the prefix ourselves or it becomes double-prefixed in
-// the JWT claim (breaking iOS APNs with 403 BadJwtToken).
-const vapidSubject = "gnockpit@localhost"
+// vapidSubject is the VAPID JWT "sub" claim identifying this server.
+// webpush-go prepends "mailto:" unless the value starts with "https:", so we
+// use the project URL directly to avoid needing a real email address. Apple
+// APNs rejects "mailto:" with non-routable domains like localhost (403 BadJwtToken).
+const vapidSubject = "https://github.com/gnoverse/gnockpit"
 
 // Manager coordinates VAPID key lifecycle, alert detection, and push delivery.
 type Manager struct {
@@ -137,6 +139,12 @@ func (m *Manager) sendPush(sub Subscription, a Alert) {
 		return
 	}
 	defer resp.Body.Close()
+
+	log.Printf("push: send to %s: status %d", sub.ID, resp.StatusCode)
+	if resp.StatusCode >= 300 {
+		body, _ := io.ReadAll(resp.Body)
+		log.Printf("push: send to %s: response body: %s", sub.ID, body)
+	}
 
 	// 410 Gone: FCM/standard expired subscription.
 	// 400 Bad Request: WNS (Edge on Windows) uses this for expired channels.
