@@ -8,6 +8,7 @@ import (
 	"net/http"
 
 	webpush "github.com/SherClockHolmes/webpush-go"
+	"github.com/containrrr/shoutrrr/pkg/router"
 	"github.com/gnoverse/gnockpit/node"
 )
 
@@ -26,6 +27,7 @@ type Manager struct {
 	chainStuckSecs  int
 	missedBlocksPct int
 	chainName       string
+	notifier        *router.ServiceRouter
 }
 
 // NewManager creates a Manager, loading or auto-generating VAPID keys.
@@ -68,6 +70,17 @@ func (m *Manager) VAPIDPublicKey() string { return m.vapidPublicKey }
 // DB returns the underlying database (used by HTTP handlers).
 func (m *Manager) DB() *DB { return m.db }
 
+// SetNotifyURLs configures external notification delivery via Shoutrrr service URLs.
+// Pass nil or empty to disable. Call before the publish loop starts.
+func (m *Manager) SetNotifyURLs(urls []string) error {
+	r, err := NewNotifier(urls)
+	if err != nil {
+		return err
+	}
+	m.notifier = r
+	return nil
+}
+
 // EvaluateAndNotify detects alert transitions from snap and delivers push notifications.
 func (m *Manager) EvaluateAndNotify(snap *node.Snapshot) {
 	if snap.Status != nil && snap.Status.NodeInfo.Network != "" {
@@ -90,6 +103,17 @@ func (m *Manager) NotifyAlert(a Alert) {
 			continue
 		}
 		m.sendPush(sb.Sub, a)
+	}
+
+	if m.notifier != nil {
+		msg := FormatAlert(m.chainName, a)
+		if errs := m.notifier.Send(msg, nil); len(errs) > 0 {
+			for _, err := range errs {
+				if err != nil {
+					log.Printf("notify: %v", err)
+				}
+			}
+		}
 	}
 }
 
