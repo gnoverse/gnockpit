@@ -37,6 +37,7 @@ var (
 	flagNamesPath   string
 	flagService     string
 	flagContainer   string
+	flagNotifyURLs  []string
 )
 
 func main() {
@@ -668,6 +669,11 @@ func webCmd() *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("init push manager: %w", err)
 			}
+			if len(flagNotifyURLs) > 0 {
+				if err := pushMgr.SetNotifyURLs(flagNotifyURLs); err != nil {
+					return fmt.Errorf("invalid notify URL: %w", err)
+				}
+			}
 			srv.PushManager = pushMgr
 
 			return srv.Run(ctx)
@@ -681,5 +687,7 @@ func webCmd() *cobra.Command {
 		"seconds without a new block before the chain-stuck alert fires")
 	cmd.Flags().IntVar(&flagMissedBlocksPct, "missed-blocks-pct", 5,
 		"percentage of blocks missed in the signing window before the validator-missing-blocks alert fires (e.g. 5 = 5%)")
+	cmd.Flags().StringSliceVar(&flagNotifyURLs, "notify", nil,
+		"Shoutrrr notification URL (repeatable); e.g. --notify 'discord://token@id' --notify 'telegram://token@telegram?chats=@chan'")
 	return cmd
 }
