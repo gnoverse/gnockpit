@@ -1447,6 +1447,41 @@ func (s *Server) handlePushTest(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 }
 
+func (s *Server) handleNotifyChannels(w http.ResponseWriter, r *http.Request) {
+	if s.PushManager == nil {
+		http.Error(w, "notifications not configured", http.StatusServiceUnavailable)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"channels": s.PushManager.NotifyChannels(),
+	})
+}
+
+func (s *Server) handleNotifyTest(w http.ResponseWriter, r *http.Request) {
+	if s.PushManager == nil {
+		http.Error(w, "notifications not configured", http.StatusServiceUnavailable)
+		return
+	}
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var req struct {
+		Channels []int  `json:"channels"`
+		Message  string `json:"message"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+	results := s.PushManager.SendTestNotify(req.Channels, req.Message)
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"results": results,
+	})
+}
+
 // Run starts the web server, publish loop, and log streamer.
 // computeGenesisSHA hashes the local genesis file to avoid hardcoding.
 func (s *Server) computeGenesisSHA() string {
@@ -1526,6 +1561,8 @@ func (s *Server) Run(ctx context.Context) error {
 	mux.HandleFunc("/api/push/subscribe", s.handlePushSubscribe)
 	mux.HandleFunc("/api/push/entities", s.handlePushEntities)
 	mux.HandleFunc("/api/push/test", s.handlePushTest)
+	mux.HandleFunc("/api/notify/channels", s.handleNotifyChannels)
+	mux.HandleFunc("/api/notify/test", s.handleNotifyTest)
 
 	srv := &http.Server{
 		Addr:    s.Addr,
