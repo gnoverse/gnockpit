@@ -10,16 +10,22 @@ import (
 )
 
 // NewNotifier creates a Shoutrrr service router for the given URLs.
-// Returns nil if urls is empty.
+// Empty strings are filtered out. Returns nil if no valid URLs remain.
 func NewNotifier(urls []string) (*router.ServiceRouter, error) {
-	if len(urls) == 0 {
+	var valid []string
+	for _, u := range urls {
+		if u != "" {
+			valid = append(valid, u)
+		}
+	}
+	if len(valid) == 0 {
 		return nil, nil
 	}
-	r, err := shoutrrr.CreateSender(urls...)
+	r, err := shoutrrr.CreateSender(valid...)
 	if err != nil {
 		return nil, fmt.Errorf("create shoutrrr sender: %w", err)
 	}
-	log.Printf("notify: configured %d notification URL(s)", len(urls))
+	log.Printf("notify: configured %d notification URL(s)", len(valid))
 	return r, nil
 }
 

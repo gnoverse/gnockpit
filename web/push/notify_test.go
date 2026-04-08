@@ -49,6 +49,16 @@ func TestNewNotifier(t *testing.T) {
 		}
 	})
 
+	t.Run("nil when all urls are empty strings", func(t *testing.T) {
+		r, err := NewNotifier([]string{""})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if r != nil {
+			t.Fatal("expected nil router for all-empty URL strings")
+		}
+	})
+
 	t.Run("valid logger url", func(t *testing.T) {
 		r, err := NewNotifier([]string{"logger://"})
 		if err != nil {
