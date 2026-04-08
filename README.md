@@ -107,7 +107,7 @@ Alerts are sent to all configured URLs whenever a state transition occurs (firin
 
 See the [Shoutrrr documentation](https://containrrr.dev/shoutrrr/latest/) for the full list of supported services and URL formats.
 
-**Signal:** Requires a [signal-cli-rest-api](https://github.com/bbernhard/signal-cli-rest-api) sidecar. See [gnockpit-compose](https://github.com/gnoverse/gnockpit-compose) for a ready-made Docker Compose setup.
+**Signal:** Requires a [signal-cli-rest-api](https://github.com/bbernhard/signal-cli-rest-api) sidecar.
 
 ## Features
 
