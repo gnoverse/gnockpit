@@ -164,6 +164,7 @@ type BlockInfo struct {
 	Missing  []MissingValidator `json:"missing,omitempty"`
 	Proposer string             `json:"proposer"`          // proposer name
 	BlockMs  int                `json:"block_ms"`          // time since previous block in ms; 0 for oldest block in window
+	AppHash  string             `json:"app_hash"`
 }
 
 // ValidatorPerf tracks per-validator performance metrics.
@@ -194,9 +195,7 @@ type Snapshot struct {
 	Peers          []Peer           `json:"peers,omitempty"`
 	Validators     []Validator      `json:"validators,omitempty"`
 	GenesisSHA     string           `json:"genesis_sha256"`
-	AppHashB2      string           `json:"apphash_b2"`
 	AppHashLast    string           `json:"apphash_last"`
-	AppHashPrev    string           `json:"apphash_prev"`
 	Uptime         string           `json:"uptime,omitempty"`
 	RoundStartTime string           `json:"round_start_time,omitempty"`
 	System         *SystemInfo      `json:"system,omitempty"`

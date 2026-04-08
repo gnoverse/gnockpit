@@ -235,6 +235,9 @@ func (c *Client) GetSigningStats(ctx context.Context, currentHeight int, window 
 				} `json:"header"`
 			} `json:"block_meta"`
 			Block struct {
+				Header struct {
+					AppHash string `json:"app_hash"`
+				} `json:"header"`
 				LastCommit struct {
 					Precommits []json.RawMessage `json:"precommits"`
 				} `json:"last_commit"`
@@ -261,6 +264,7 @@ func (c *Client) GetSigningStats(ctx context.Context, currentHeight int, window 
 			Time:     block.BlockMeta.Header.Time,
 			Total:    blockTotal,
 			Proposer: proposerName,
+			AppHash:  block.Block.Header.AppHash,
 		}
 
 		signed := map[string]bool{}

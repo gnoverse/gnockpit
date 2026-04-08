@@ -289,9 +289,7 @@ a.rpc-link.blue { color: var(--blue); }
       <span class="k" data-compact="hide">chain</span><span class="v" id="d-network" data-compact="hide">-</span>
       <span class="k" data-compact="hide">genesis time</span><span class="v" id="c-gentime" data-compact="hide">-</span>
       <span class="k">genesis age</span><span class="v" id="ns-genesis-age">-</span>
-      <span class="k" data-compact="hide">apphash (blk 2)</span><span class="v" id="d-apphash" data-compact="hide">-</span>
-      <span class="k" data-compact="hide">apphash last</span><span class="v hash" id="d-apphash-last" data-compact="hide">-</span>
-      <span class="k" data-compact="hide">apphash last-1</span><span class="v hash" id="d-apphash-prev" data-compact="hide">-</span>
+      <span class="k" data-compact="hide">apphash</span><span class="v hash" id="d-apphash-last" data-compact="hide">-</span>
       <span class="k" data-compact="hide">peers</span><span class="v" id="ns-peers" data-compact="hide">-</span>
       <span class="k">node uptime</span><span class="v" id="d-gnoland-uptime">-</span>
     </div>
@@ -1842,6 +1840,11 @@ function renderRecentBlocks(blocks) {
              ' ' + pad(dt.getUTCHours()) + ':' + pad(dt.getUTCMinutes()) + ':' + pad(dt.getUTCSeconds()) + ' UTC';
     }
     if (b.block_ms !== 0) tip += '\nBlock time: ' + b.block_ms + 'ms';
+    var fullAppHash = '';
+    if (b.app_hash) {
+      fullAppHash = b64toHex(b.app_hash);
+      tip += '\nAppHash: ' + fullAppHash.substring(0, 8) + '\u2026' + fullAppHash.substring(fullAppHash.length - 8);
+    }
     if (b.missing && b.missing.length > 0) {
       var sorted = b.missing.slice().sort(function(a, b) {
         var na = (a.name || a.address).toLowerCase();
@@ -1855,6 +1858,10 @@ function renderRecentBlocks(blocks) {
       }
     }
     box.setAttribute('data-popover', tip);
+    if (fullAppHash) {
+      var copyTip = tip.replace(/\nAppHash: .*/, '\nAppHash: ' + fullAppHash);
+      box.setAttribute('data-copy', copyTip);
+    }
     body.appendChild(box);
   }
   lastRecentBlockHeight = newestHeight;
@@ -2036,15 +2043,9 @@ function handleChecks(d) {
     } else {
       setText('c-seeds', 'none configured');
     }
-    if (d.apphash_b2 && d.apphash_b2 !== '') {
-      setHash('d-apphash', d.apphash_b2);
-    } else {
-      $('d-apphash').textContent = 'block 2 not reached'; $('d-apphash').className = 'v err';
-    }
     if (d.apphash_last && lastStatus && lastStatus.sync_info) {
       var h = lastStatus.sync_info.latest_block_height;
       setHashWithHeight('d-apphash-last', d.apphash_last, h);
-      setHashWithHeight('d-apphash-prev', d.apphash_prev, parseInt(h) - 1);
     }
     if (d.uptime) setText('d-uptime', d.uptime);
     if (d.system && d.system.node_time) {
@@ -2827,11 +2828,11 @@ document.addEventListener('click', function(e) {
   copyNotify(line.textContent.trim(), e);
 });
 
-// Block boxes — copy tooltip content
+// Block boxes — copy tooltip content (prefer data-copy for full apphash)
 document.addEventListener('click', function(e) {
   var block = e.target.closest('#recent-blocks-body .info-btn');
   if (!block) return;
-  var tip = block.getAttribute('data-popover');
+  var tip = block.getAttribute('data-copy') || block.getAttribute('data-popover');
   if (tip) copyNotify(tip, e);
 });
 
