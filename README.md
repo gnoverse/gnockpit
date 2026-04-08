@@ -109,46 +109,6 @@ See the [Shoutrrr documentation](https://containrrr.dev/shoutrrr/latest/) for th
 
 **Signal:** Requires a [signal-cli-rest-api](https://github.com/bbernhard/signal-cli-rest-api) sidecar. See [gnockpit-compose](https://github.com/gnoverse/gnockpit-compose) for a ready-made Docker Compose setup.
 
-## Docker
-
-The image is available on GitHub Container Registry:
-
-```bash
-docker pull ghcr.io/gnoverse/gnockpit:latest
-```
-
-### Volumes
-
-| Mount | Required | Description |
-|-------|----------|-------------|
-| `/var/run/docker.sock` | Yes (container mode) | Docker socket to access gnoland container logs via `docker logs` / `docker inspect` |
-| Genesis / data directory | Recommended | Mount gnoland's data directory so gnockpit can read `genesis.json` and compute disk usage |
-| Persistent data directory | Recommended | For `-names` and `-db-path` — defaults write to `/tmp` which is lost on restart |
-
-### Example
-
-```bash
-docker run -d \
-  -p 8080:8080 \
-  -v /var/run/docker.sock:/var/run/docker.sock:ro \
-  -v /path/to/gnoland-data:/gnoland-data:ro \
-  -v gnockpit-data:/data \
-  ghcr.io/gnoverse/gnockpit:latest \
-  web \
-  -container gnoland \
-  -rpc http://gnoland:26657 \
-  -data-dir /gnoland-data \
-  -names /data/names.json \
-  -db-path /data/gnockpit.db
-```
-
-### Notes
-
-- The `-container` flag is required — the default systemd backend does not work inside containers.
-- The image includes the Docker CLI so `docker logs` / `docker inspect` work when the socket is mounted.
-- `/proc` access (system stats, process memory) works natively in Linux containers. If monitoring a gnoland container running on the same host, memory stats require `--pid=host` or will reflect gnockpit's own container.
-- The `-rpc` URL should use the gnoland container hostname if both are on the same Docker network (e.g., `http://gnoland:26657`).
-
 ## Features
 
 - Live WebSocket dashboard with real-time updates
