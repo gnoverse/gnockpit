@@ -902,6 +902,9 @@ func (s *Server) publishLoop(ctx context.Context) {
 	defer ticker.Stop()
 
 	publish := func() {
+		if s.Client != nil && s.Client.Names != nil {
+			s.Client.Names.ReloadIfChanged()
+		}
 		snap := s.fetchSnapshot(ctx)
 		s.setSnapshot(snap)
 		if s.PushManager != nil {

@@ -1,6 +1,11 @@
 package node
 
-import "testing"
+import (
+	"os"
+	"path/filepath"
+	"testing"
+	"time"
+)
 
 func TestNameRegistry(t *testing.T) {
 	r := NewNameRegistry()
@@ -34,6 +39,32 @@ func TestNameRegistry(t *testing.T) {
 	}
 	if r.IsKnownMoniker("unknown") {
 		t.Error("expected IsKnownMoniker(unknown) = false")
+	}
+}
+
+func TestNameRegistry_ReloadIfChanged(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "names.json")
+	os.WriteFile(path, []byte(`{"g1abc":"alice"}`), 0644)
+
+	r := NewNameRegistryWithPersist(path)
+	if got := r.Name("g1abc"); got != "alice" {
+		t.Fatalf("initial load: got %q, want alice", got)
+	}
+
+	// Overwrite with new content; bump modtime to ensure detection.
+	time.Sleep(10 * time.Millisecond)
+	os.WriteFile(path, []byte(`{"g1abc":"alice","g1def":"bob"}`), 0644)
+
+	r.ReloadIfChanged()
+	if got := r.Name("g1def"); got != "bob" {
+		t.Errorf("after ReloadIfChanged: got %q, want bob", got)
+	}
+
+	// Call again without changing the file — should not reload (no-op).
+	r.Register("g1zzz", "temp")
+	r.ReloadIfChanged()
+	if got := r.Name("g1zzz"); got != "temp" {
+		t.Errorf("expected in-memory entry preserved when file unchanged, got %q", got)
 	}
 }
 

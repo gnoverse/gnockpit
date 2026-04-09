@@ -4,20 +4,22 @@ import (
 	"encoding/json"
 	"os"
 	"sync"
+	"time"
 )
 
 // NameRegistry dynamically maps validator addresses to monikers,
 // discovered from /net_info peers and their /status responses.
 // Persists to a JSON file so discoveries survive restarts.
 type NameRegistry struct {
-	mu          sync.RWMutex
-	addrToName  map[string]string // validator address → moniker
-	nameToAddr  map[string]string // moniker → validator address
+	mu           sync.RWMutex
+	addrToName   map[string]string // validator address → moniker
+	nameToAddr   map[string]string // moniker → validator address
 	addrToPubKey map[string]string // validator address → base64 pubkey
-	ourAddress  string
-	ourMoniker  string
-	persistPath string
-	GenesisTime string // from genesis.json
+	ourAddress   string
+	ourMoniker   string
+	persistPath  string
+	lastModTime  time.Time
+	GenesisTime  string // from genesis.json
 }
 
 // NewNameRegistry creates a registry, optionally loading from a persist file.
@@ -45,6 +47,11 @@ func (r *NameRegistry) load() {
 	if r.persistPath == "" {
 		return
 	}
+	info, err := os.Stat(r.persistPath)
+	if err != nil {
+		return
+	}
+	r.lastModTime = info.ModTime()
 	data, err := os.ReadFile(r.persistPath)
 	if err != nil {
 		return
@@ -56,6 +63,20 @@ func (r *NameRegistry) load() {
 			r.nameToAddr[name] = addr
 		}
 	}
+}
+
+// ReloadIfChanged reloads the name registry from disk if the file has been
+// modified since the last load. This allows external edits to be picked up
+// automatically without a full restart.
+func (r *NameRegistry) ReloadIfChanged() {
+	if r.persistPath == "" {
+		return
+	}
+	info, err := os.Stat(r.persistPath)
+	if err != nil || !info.ModTime().After(r.lastModTime) {
+		return
+	}
+	r.Reload()
 }
 
 func (r *NameRegistry) save() {
