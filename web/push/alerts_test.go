@@ -141,13 +141,36 @@ func TestDetect_ValidatorMissingBlocks_ThresholdNotReached(t *testing.T) {
 	}
 }
 
+func TestDetect_ValidatorMissingBlocks_SuppressFirstTransition(t *testing.T) {
+	d := push.NewAlertDetector(30, testThreshold)
+	// First evaluation (warmup): establishes firstSeen.
+	d.Detect(makeSnapWithSigning("100", testWindow, map[string]int{"g1bbb": 85}))
+	// Second evaluation: first time this key is evaluated — should record state
+	// silently, not emit an alert. This prevents re-notifications after restarts.
+	alerts := d.Detect(makeSnapWithSigning("200", testWindow, map[string]int{"g1bbb": 85}))
+	if a := findAlert(alerts, push.AlertValidatorMissingBlocks, "g1bbb"); a != nil {
+		t.Error("expected no alert on first evaluation of a key (startup suppression)")
+	}
+	// Third evaluation: same state, no change, no alert.
+	alerts = d.Detect(makeSnapWithSigning("201", testWindow, map[string]int{"g1bbb": 85}))
+	if a := findAlert(alerts, push.AlertValidatorMissingBlocks, "g1bbb"); a != nil {
+		t.Error("expected no re-fire while still above threshold")
+	}
+	// Recovery: state changes from firing → not firing — SHOULD emit.
+	alerts = d.Detect(makeSnapWithSigning("202", testWindow, map[string]int{"g1bbb": 98}))
+	if a := findAlert(alerts, push.AlertValidatorMissingBlocks, "g1bbb"); a == nil || a.Firing {
+		t.Error("expected recovery alert after suppressed initial fire")
+	}
+}
+
 func TestDetect_ValidatorMissingBlocks_Fires(t *testing.T) {
 	d := push.NewAlertDetector(30, testThreshold)
-	// bbb: 15% missed (85/100 signed) — above threshold.
-	// aaa: 0% missed (100/100 signed) — no alert.
-	signs := map[string]int{"g1bbb": 85, "g1aaa": 100}
-	d.Detect(makeSnapWithSigning("100", testWindow, signs))
-	alerts := d.Detect(makeSnapWithSigning("200", testWindow, signs))
+	good := map[string]int{"g1bbb": 100, "g1aaa": 100}
+	bad := map[string]int{"g1bbb": 85, "g1aaa": 100}
+	d.Detect(makeSnapWithSigning("100", testWindow, good)) // warmup
+	d.Detect(makeSnapWithSigning("200", testWindow, good)) // baseline (silent)
+	// bbb starts missing blocks — transition fires.
+	alerts := d.Detect(makeSnapWithSigning("300", testWindow, bad))
 	if a := findAlert(alerts, push.AlertValidatorMissingBlocks, "g1bbb"); a == nil || !a.Firing {
 		t.Error("expected validator_missing_blocks to fire for g1bbb")
 	}

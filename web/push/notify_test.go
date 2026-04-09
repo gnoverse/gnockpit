@@ -6,6 +6,7 @@ func TestFormatAlert(t *testing.T) {
 	tests := []struct {
 		name      string
 		chainName string
+		publicURL string
 		alert     Alert
 		want      string
 	}{
@@ -27,10 +28,23 @@ func TestFormatAlert(t *testing.T) {
 			alert:     Alert{Firing: true, Title: "Chain stuck", Body: "No new block for 30+ seconds"},
 			want:      "🚨 Chain stuck\nNo new block for 30+ seconds",
 		},
+		{
+			name:      "with public URL",
+			chainName: "test4",
+			publicURL: "https://gnockpit.example.com",
+			alert:     Alert{Firing: true, Title: "Chain stuck", Body: "No new block for 30+ seconds"},
+			want:      "🚨 test4 — Chain stuck\nNo new block for 30+ seconds\nhttps://gnockpit.example.com",
+		},
+		{
+			name:      "empty public URL omitted",
+			chainName: "test4",
+			alert:     Alert{Firing: true, Title: "Chain stuck", Body: "No new block for 30+ seconds"},
+			want:      "🚨 test4 — Chain stuck\nNo new block for 30+ seconds",
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := FormatAlert(tt.chainName, tt.alert)
+			got := FormatAlert(tt.chainName, tt.publicURL, tt.alert)
 			if got != tt.want {
 				t.Errorf("FormatAlert() = %q, want %q", got, tt.want)
 			}

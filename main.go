@@ -38,6 +38,7 @@ var (
 	flagService     string
 	flagContainer   string
 	flagNotifyURLs  []string
+	flagPublicURL   string
 )
 
 func main() {
@@ -674,6 +675,9 @@ func webCmd() *cobra.Command {
 					return fmt.Errorf("invalid notify URL: %w", err)
 				}
 			}
+			if flagPublicURL != "" {
+				pushMgr.SetPublicURL(flagPublicURL)
+			}
 			srv.PushManager = pushMgr
 
 			return srv.Run(ctx)
@@ -689,5 +693,7 @@ func webCmd() *cobra.Command {
 		"percentage of blocks missed in the signing window before the validator-missing-blocks alert fires (e.g. 5 = 5%)")
 	cmd.Flags().StringSliceVar(&flagNotifyURLs, "notify", nil,
 		"Shoutrrr notification URL (repeatable); e.g. --notify 'discord://token@id' --notify 'telegram://token@telegram?chats=@chan'")
+	cmd.Flags().StringVar(&flagPublicURL, "public-url", "",
+		"public URL of this gnockpit instance, appended to external notification messages")
 	return cmd
 }

@@ -72,13 +72,20 @@ func URLScheme(raw string) string {
 }
 
 // FormatAlert formats an Alert as a plain text message for external services.
-func FormatAlert(chainName string, a Alert) string {
+// If publicURL is non-empty, it is appended as a link on its own line.
+func FormatAlert(chainName, publicURL string, a Alert) string {
 	icon := "🚨"
 	if !a.Firing {
 		icon = "✅"
 	}
+	var msg string
 	if chainName != "" {
-		return fmt.Sprintf("%s %s — %s\n%s", icon, chainName, a.Title, a.Body)
+		msg = fmt.Sprintf("%s %s — %s\n%s", icon, chainName, a.Title, a.Body)
+	} else {
+		msg = fmt.Sprintf("%s %s\n%s", icon, a.Title, a.Body)
 	}
-	return fmt.Sprintf("%s %s\n%s", icon, a.Title, a.Body)
+	if publicURL != "" {
+		msg += "\n" + publicURL
+	}
+	return msg
 }

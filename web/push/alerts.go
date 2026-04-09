@@ -50,13 +50,19 @@ func (d *AlertDetector) Detect(snap *node.Snapshot) []Alert {
 }
 
 // transition returns an Alert if the state for (alertType, entityID) changed,
-// or nil if it is the same as before.
+// or nil if it is the same as before. The first time a key is seen, the state
+// is recorded silently without emitting an alert — this prevents spurious
+// notifications after a restart when pre-existing conditions are re-detected.
 func (d *AlertDetector) transition(alertType AlertType, entityID string, firing bool, firingTitle, firingBody, recoveryTitle, recoveryBody string) *Alert {
 	key := alertKey{alertType, entityID}
-	if d.firingAlerts[key] == firing {
+	prev, exists := d.firingAlerts[key]
+	d.firingAlerts[key] = firing
+	if !exists {
 		return nil
 	}
-	d.firingAlerts[key] = firing
+	if prev == firing {
+		return nil
+	}
 	a := Alert{Type: alertType, EntityID: entityID, Firing: firing}
 	if firing {
 		a.Title, a.Body = firingTitle, firingBody

@@ -30,6 +30,7 @@ type Manager struct {
 	chainName       string
 	notifier        *router.ServiceRouter
 	notifyURLs      []string
+	publicURL       string
 }
 
 // NewManager creates a Manager, loading or auto-generating VAPID keys.
@@ -72,6 +73,9 @@ func (m *Manager) VAPIDPublicKey() string { return m.vapidPublicKey }
 // DB returns the underlying database (used by HTTP handlers).
 func (m *Manager) DB() *DB { return m.db }
 
+// SetPublicURL sets the public-facing URL appended to Shoutrrr alert messages.
+func (m *Manager) SetPublicURL(url string) { m.publicURL = url }
+
 // SetNotifyURLs configures external notification delivery via Shoutrrr service URLs.
 // Pass nil or empty to disable. Call before the publish loop starts.
 func (m *Manager) SetNotifyURLs(urls []string) error {
@@ -109,7 +113,7 @@ func (m *Manager) NotifyChannels() []Channel {
 // Push channel sends to all subscribers. Returns one result per channel attempted.
 func (m *Manager) SendTestNotify(channelIDs []int, message string) []TestResult {
 	if message == "" {
-		message = FormatAlert(m.chainName, Alert{
+		message = FormatAlert(m.chainName, m.publicURL, Alert{
 			Firing: true,
 			Title:  "Test alert",
 			Body:   "This is a test notification from gnockpit.",
@@ -187,7 +191,7 @@ func (m *Manager) NotifyAlert(a Alert) {
 	}
 
 	if m.notifier != nil {
-		msg := FormatAlert(m.chainName, a)
+		msg := FormatAlert(m.chainName, m.publicURL, a)
 		if errs := m.notifier.Send(msg, nil); len(errs) > 0 {
 			for _, err := range errs {
 				if err != nil {
