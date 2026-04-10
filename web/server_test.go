@@ -604,3 +604,39 @@ func TestHandlePushEntities_WithSnapshot(t *testing.T) {
 		t.Errorf("expected missed_blocks_pct=5, got %d", entities.MissedBlocksPct)
 	}
 }
+
+func TestBuildVotesReport_VotingPower(t *testing.T) {
+	c := node.NewClient("http://localhost:1", time.Second)
+	srv := NewServer(c, "127.0.0.1:0", 5*time.Second)
+
+	snap := &node.Snapshot{
+		Consensus: &node.ConsensusState{
+			Height: "100",
+			Round:  "0",
+			Step:   "1",
+			Votes: []node.VoteInfo{
+				{Index: 0, Address: "g1aaa", Name: "alice"},
+				{Index: 1, Address: "g1bbb", Name: "bob"},
+			},
+		},
+		Validators: []node.Validator{
+			{Address: "g1aaa", VotingPower: "1000"},
+			{Address: "g1bbb", VotingPower: "500"},
+		},
+		Timestamp: time.Now(),
+	}
+
+	report := srv.buildVotesReport(snap)
+	if report == nil {
+		t.Fatal("expected non-nil report")
+	}
+	if len(report.Validators) != 2 {
+		t.Fatalf("expected 2 validators, got %d", len(report.Validators))
+	}
+	if report.Validators[0].VotingPower != "1000" {
+		t.Errorf("validator 0 voting power = %q, want %q", report.Validators[0].VotingPower, "1000")
+	}
+	if report.Validators[1].VotingPower != "500" {
+		t.Errorf("validator 1 voting power = %q, want %q", report.Validators[1].VotingPower, "500")
+	}
+}

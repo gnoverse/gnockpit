@@ -104,13 +104,14 @@ type DumpPeer struct {
 
 // VoteInfo holds decoded vote information per validator.
 type VoteInfo struct {
-	Index      int    `json:"index"`
-	Address    string `json:"address"`
-	Name       string `json:"name"`
-	Prevoted   bool   `json:"prevoted"`
-	Precommit  bool   `json:"precommit"`
-	SignRate   int    `json:"sign_rate"`    // signed blocks / window (0-100%)
-	AvgBlockMs int    `json:"avg_block_ms"` // avg block time when proposing (ms)
+	Index       int    `json:"index"`
+	Address     string `json:"address"`
+	Name        string `json:"name"`
+	VotingPower string `json:"voting_power,omitempty"`
+	Prevoted    bool   `json:"prevoted"`
+	Precommit   bool   `json:"precommit"`
+	SignRate    int    `json:"sign_rate"`    // signed blocks / window (0-100%)
+	AvgBlockMs  int    `json:"avg_block_ms"` // avg block time when proposing (ms)
 }
 
 // PeerState from dump_consensus_state peer_state (base64-encoded).

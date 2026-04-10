@@ -330,9 +330,9 @@ a.rpc-link.blue { color: var(--blue); }
   <div class="table-wrap">
   <table>
     <thead><tr>
-      <th data-sort="name" style="cursor:pointer">Name</th><th>Address</th><th>IP</th><th data-sort="consensus" style="cursor:pointer" class="info-btn" data-popover="H=height / R=round / S=step / PV=prevoted / PC=precommitted / P=proposer">Consensus</th><th data-sort="sign" style="cursor:pointer" class="info-btn" data-popover="Blocks signed in last 100 blocks (%)">Sign%</th><th data-sort="speed" style="cursor:pointer" class="info-btn" data-popover="Avg block time when this validator proposes, over last 100 blocks (lower=faster, ~3s expected)">Speed</th><th data-sort="health" style="cursor:pointer">Status</th>
+      <th data-sort="name" style="cursor:pointer">Name</th><th>Address</th><th>IP</th><th data-sort="consensus" style="cursor:pointer" class="info-btn" data-popover="H=height / R=round / S=step / PV=prevoted / PC=precommitted / P=proposer">Consensus</th><th data-sort="vp" style="cursor:pointer" class="info-btn" data-popover="Voting power (stake weight in the validator set)">VP</th><th data-sort="sign" style="cursor:pointer" class="info-btn" data-popover="Blocks signed in last 100 blocks (%)">Sign%</th><th data-sort="speed" style="cursor:pointer" class="info-btn" data-popover="Avg block time when this validator proposes, over last 100 blocks (lower=faster, ~3s expected)">Speed</th><th data-sort="health" style="cursor:pointer">Status</th>
     </tr></thead>
-    <tbody id="network-body"><tr><td colspan="7">loading...</td></tr></tbody>
+    <tbody id="network-body"><tr><td colspan="8">loading...</td></tr></tbody>
   </table>
   </div></div>
 </div>
@@ -981,7 +981,7 @@ function renderNetwork() {
     var sep = document.createElement('tr');
     sep.className = 'sep';
     var sepTd = document.createElement('td');
-    sepTd.colSpan = 7;
+    sepTd.colSpan = 8;
     sepTd.textContent = 'validators (' + valsetSize + ')';
     sep.appendChild(sepTd);
     tbody.appendChild(sep);
@@ -996,6 +996,9 @@ function renderNetwork() {
       } else if (peerSortKey === 'speed') {
         va = typeof a.avg_block_ms === 'number' && a.avg_block_ms > 0 ? a.avg_block_ms : 99999;
         vb = typeof b.avg_block_ms === 'number' && b.avg_block_ms > 0 ? b.avg_block_ms : 99999;
+      } else if (peerSortKey === 'vp') {
+        va = a.voting_power ? parseInt(a.voting_power, 10) : 0;
+        vb = b.voting_power ? parseInt(b.voting_power, 10) : 0;
       } else if (peerSortKey === 'consensus') {
         // Sort by peer height (need to look up from peers)
         va = a.name || ''; vb = b.name || '';
@@ -1067,6 +1070,21 @@ function renderNetwork() {
       consTd.setAttribute('data-sort-val', peerH || '0');
       if (peerH) consTd.setAttribute('data-copy', peerH + '/' + peerR + '/' + peerS);
       tr.appendChild(consTd);
+
+      // Voting Power
+      var vpTd = document.createElement('td');
+      vpTd.style.fontSize = '12px';
+      var vp = v.voting_power;
+      if (vp) {
+        var vpNum = parseInt(vp, 10);
+        vpTd.textContent = vpNum >= 1e9 ? (vpNum / 1e9).toFixed(1) + 'B' : vpNum >= 1e6 ? (vpNum / 1e6).toFixed(1) + 'M' : vpNum >= 1e3 ? (vpNum / 1e3).toFixed(1) + 'K' : vp;
+        vpTd.setAttribute('data-sort-val', String(vpNum));
+        vpTd.setAttribute('data-copy', vp);
+      } else {
+        vpTd.textContent = '-';
+        vpTd.setAttribute('data-sort-val', '0');
+      }
+      tr.appendChild(vpTd);
 
       // Sign rate
       var signTd = document.createElement('td');
@@ -1186,7 +1204,7 @@ function renderNetwork() {
     var thisSep = document.createElement('tr');
     thisSep.className = 'sep';
     var thisSepTd = document.createElement('td');
-    thisSepTd.colSpan = 7;
+    thisSepTd.colSpan = 8;
     thisSepTd.textContent = 'this node (full node)';
     thisSep.appendChild(thisSepTd);
     tbody.appendChild(thisSep);
@@ -1213,6 +1231,7 @@ function renderNetwork() {
       thisCons.appendChild(document.createTextNode('/' + votes.round + '/' + votes.step));
     }
     thisTr.appendChild(thisCons);
+    thisTr.appendChild(createCell({ text: '-' })); // VP
     thisTr.appendChild(createCell({ text: '-' })); // Sign%
     thisTr.appendChild(createCell({ text: '-' })); // Speed
     // Status
@@ -1248,7 +1267,7 @@ function renderNetwork() {
     var sep2 = document.createElement('tr');
     sep2.className = 'sep';
     var sep2Td = document.createElement('td');
-    sep2Td.colSpan = 7;
+    sep2Td.colSpan = 8;
     sep2Td.textContent = 'other peers (' + otherPeers.length + ') \u2014 fullnodes, sentries, ...';
     sep2.appendChild(sep2Td);
     tbody.appendChild(sep2);
@@ -1287,6 +1306,7 @@ function renderNetwork() {
         pConsTd.setAttribute('data-copy', p.peer_height + '/' + p.peer_round + '/' + p.peer_step);
       }
       tr2.appendChild(pConsTd);
+      tr2.appendChild(createCell({ text: '-', className: 'full-role' })); // VP
       tr2.appendChild(createCell({ text: '-', className: 'full-role' })); // Sign%
       tr2.appendChild(createCell({ text: '-', className: 'full-role' })); // Speed
       // Status (merged RPC+Health for peers) — same layout as validators
