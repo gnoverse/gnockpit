@@ -270,7 +270,7 @@ func TestParseLogEventPeerExtraction(t *testing.T) {
 }
 
 func TestHTMLEmbedded(t *testing.T) {
-	data, err := content.ReadFile("index.html")
+	data, err := Content.ReadFile("index.html")
 	if err != nil {
 		t.Fatal("index.html not embedded:", err)
 	}
@@ -294,7 +294,7 @@ func TestHTMLEmbedded(t *testing.T) {
 
 func TestJSSyntax(t *testing.T) {
 	// Extract JS from HTML and validate with node --check
-	data, err := content.ReadFile("index.html")
+	data, err := Content.ReadFile("index.html")
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -25,7 +25,7 @@ import (
 )
 
 //go:embed index.html service-worker.js
-var content embed.FS
+var Content embed.FS
 
 // Version is set at build time via -ldflags or computed at startup.
 var Version = ""
@@ -311,7 +311,7 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/?v="+Version, http.StatusFound)
 		return
 	}
-	data, err := content.ReadFile("index.html")
+	data, err := Content.ReadFile("index.html")
 	if err != nil {
 		http.Error(w, "internal error", 500)
 		return
@@ -714,7 +714,9 @@ func (s *Server) collectSystemInfo(ctx context.Context) *node.SystemInfo {
 
 // --- Data Fetching ---
 
-func (s *Server) fetchSnapshot(ctx context.Context) *node.Snapshot {
+// FetchSnapshot collects all monitoring data from the RPC endpoint.
+// Exported for use by the probe mode.
+func (s *Server) FetchSnapshot(ctx context.Context) *node.Snapshot {
 	snap := &node.Snapshot{
 		GenesisSHA: s.genesisSHA,
 		Timestamp:  time.Now(),
@@ -914,7 +916,7 @@ func (s *Server) publishLoop(ctx context.Context) {
 	defer ticker.Stop()
 
 	publish := func() {
-		snap := s.fetchSnapshot(ctx)
+		snap := s.FetchSnapshot(ctx)
 		s.setSnapshot(snap)
 		if s.PushManager != nil {
 			s.PushManager.EvaluateAndNotify(snap)
@@ -1018,7 +1020,7 @@ func (s *Server) parseLogEvent(entry LogEntry) {
 		go func() {
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
-			snap := s.fetchSnapshot(ctx)
+			snap := s.FetchSnapshot(ctx)
 			s.setSnapshot(snap)
 			timeStr := snap.Timestamp.Format("15:04:05")
 			s.broadcastWS(wsMsg{Type: "time", Data: timeStr})
@@ -1329,7 +1331,7 @@ func generateID() string {
 }
 
 func (s *Server) handleServiceWorker(w http.ResponseWriter, r *http.Request) {
-	data, err := content.ReadFile("service-worker.js")
+	data, err := Content.ReadFile("service-worker.js")
 	if err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return

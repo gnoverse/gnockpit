@@ -9,10 +9,14 @@ import (
 	"sort"
 	"time"
 
+	"database/sql"
+
+	"github.com/gnoverse/gnockpit/hub"
 	"github.com/gnoverse/gnockpit/node"
 	"github.com/gnoverse/gnockpit/web"
 	"github.com/gnoverse/gnockpit/web/push"
 	"github.com/spf13/cobra"
+	_ "modernc.org/sqlite"
 )
 
 const (
@@ -70,6 +74,9 @@ func rootCmd() *cobra.Command {
 	root.AddCommand(checkCmd())
 	root.AddCommand(infoCmd())
 	root.AddCommand(webCmd())
+	root.AddCommand(serverCmd())
+	root.AddCommand(probeCmd())
+	root.AddCommand(tokenCmd())
 
 	return root
 }
@@ -681,5 +688,188 @@ func webCmd() *cobra.Command {
 		"seconds without a new block before the chain-stuck alert fires")
 	cmd.Flags().IntVar(&flagMissedBlocksPct, "missed-blocks-pct", 5,
 		"percentage of blocks missed in the signing window before the validator-missing-blocks alert fires (e.g. 5 = 5%)")
+	return cmd
+}
+
+// --- server (hub) ---
+
+var (
+	flagServerPort     int
+	flagServerAddr     string
+	flagServerDBPath   string
+	flagProbeRateLimit int
+)
+
+func serverCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "server",
+		Short: "Start cluster hub server (aggregates probe data)",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ctx, cancel := newContext()
+			defer cancel()
+
+			db, err := sql.Open("sqlite", flagServerDBPath)
+			if err != nil {
+				return fmt.Errorf("open database: %w", err)
+			}
+			defer db.Close()
+			db.SetMaxOpenConns(1)
+
+			tokens, err := hub.NewTokenStore(db)
+			if err != nil {
+				return err
+			}
+
+			addr := fmt.Sprintf("%s:%d", flagServerAddr, flagServerPort)
+			h := hub.New(tokens, addr)
+			h.MaxRate = flagProbeRateLimit
+
+			return h.Run(ctx, web.Content)
+		},
+	}
+	cmd.Flags().IntVar(&flagServerPort, "port", 8080, "server port")
+	cmd.Flags().StringVar(&flagServerAddr, "addr", "0.0.0.0", "server bind address")
+	cmd.Flags().StringVar(&flagServerDBPath, "db-path", "/tmp/gnockpit-hub.db", "SQLite database for tokens and probe metadata")
+	cmd.Flags().IntVar(&flagProbeRateLimit, "probe-rate-limit", 1, "max snapshots/sec per probe (0=unlimited)")
+	return cmd
+}
+
+// --- probe ---
+
+var (
+	flagProbeServer string
+	flagProbeToken  string
+	flagProbePort   int
+)
+
+func probeCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "probe",
+		Short: "Run as a probe, pushing snapshots to a hub server",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ctx, cancel := newContext()
+			defer cancel()
+			c := newClient()
+
+			// Build a snapshot fetcher reusing existing web.Server logic
+			srv := web.NewServer(c, "", flagInterval)
+			srv.DataDir = findDataDir()
+			srv.GenesisPath = findGenesis()
+			if flagService != "" && flagContainer != "" {
+				return fmt.Errorf("-service and -container are mutually exclusive")
+			}
+			srv.Backend = buildBackend(flagService, flagContainer, srv)
+
+			probe := &hub.ProbeClient{
+				ServerURL: flagProbeServer + "/ws/probe",
+				Token:     flagProbeToken,
+				RPC:       c,
+				Interval:  flagInterval,
+			}
+			return probe.Run(ctx, srv.FetchSnapshot)
+		},
+	}
+	cmd.Flags().StringVar(&flagProbeServer, "server", "", "hub server URL (e.g. wss://gnockpit.example.com)")
+	cmd.Flags().StringVar(&flagProbeToken, "token", "", "bearer token for hub authentication")
+	cmd.MarkFlagRequired("server")
+	cmd.MarkFlagRequired("token")
+	cmd.Flags().IntVar(&flagProbePort, "port", 0, "optional local dashboard port (0=disabled)")
+	return cmd
+}
+
+// --- token ---
+
+func tokenCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "token",
+		Short: "Manage probe authentication tokens",
+	}
+	cmd.PersistentFlags().StringVar(&flagServerDBPath, "db-path", "/tmp/gnockpit-hub.db", "SQLite database path")
+
+	cmd.AddCommand(&cobra.Command{
+		Use:   "create [name]",
+		Short: "Create a new probe token",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			db, err := sql.Open("sqlite", flagServerDBPath)
+			if err != nil {
+				return err
+			}
+			defer db.Close()
+			db.SetMaxOpenConns(1)
+			store, err := hub.NewTokenStore(db)
+			if err != nil {
+				return err
+			}
+			token, err := store.Create(args[0])
+			if err != nil {
+				return err
+			}
+			fmt.Printf("Token for %q:\n%s\n\nSave this — it won't be shown again.\n", args[0], token)
+			return nil
+		},
+	})
+
+	cmd.AddCommand(&cobra.Command{
+		Use:   "list",
+		Short: "List all probe tokens",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			db, err := sql.Open("sqlite", flagServerDBPath)
+			if err != nil {
+				return err
+			}
+			defer db.Close()
+			db.SetMaxOpenConns(1)
+			store, err := hub.NewTokenStore(db)
+			if err != nil {
+				return err
+			}
+			tokens, err := store.List()
+			if err != nil {
+				return err
+			}
+			if flagJSON {
+				printJSON(tokens)
+				return nil
+			}
+			fmt.Printf("%-4s %-20s %-20s %-20s %-20s\n", "ID", "NAME", "CREATED", "REVOKED", "LAST SEEN")
+			for _, t := range tokens {
+				revoked := "-"
+				if t.RevokedAt != "" {
+					revoked = t.RevokedAt
+				}
+				lastSeen := "-"
+				if t.LastSeen != "" {
+					lastSeen = t.LastSeen
+				}
+				fmt.Printf("%-4d %-20s %-20s %-20s %-20s\n", t.ID, t.Name, t.CreatedAt, revoked, lastSeen)
+			}
+			return nil
+		},
+	})
+
+	cmd.AddCommand(&cobra.Command{
+		Use:   "revoke [name]",
+		Short: "Revoke a probe token",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			db, err := sql.Open("sqlite", flagServerDBPath)
+			if err != nil {
+				return err
+			}
+			defer db.Close()
+			db.SetMaxOpenConns(1)
+			store, err := hub.NewTokenStore(db)
+			if err != nil {
+				return err
+			}
+			if err := store.Revoke(args[0]); err != nil {
+				return err
+			}
+			fmt.Printf("Token %q revoked.\n", args[0])
+			return nil
+		},
+	})
+
 	return cmd
 }
