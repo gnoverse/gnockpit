@@ -74,6 +74,13 @@ func (p *ProbeClient) connectAndPush(ctx context.Context, fetchSnapshot func(con
 	}
 	log.Printf("probe: connected to %s", p.ServerURL)
 
+	// Set generous read deadline — hub may not send anything for a while
+	conn.SetReadDeadline(time.Now().Add(120 * time.Second))
+	conn.SetPongHandler(func(string) error {
+		conn.SetReadDeadline(time.Now().Add(120 * time.Second))
+		return nil
+	})
+
 	// Read pump (drain acks, detect close)
 	done := make(chan error, 1)
 	go func() {
@@ -83,6 +90,7 @@ func (p *ProbeClient) connectAndPush(ctx context.Context, fetchSnapshot func(con
 				done <- err
 				return
 			}
+			conn.SetReadDeadline(time.Now().Add(120 * time.Second))
 		}
 	}()
 

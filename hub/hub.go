@@ -161,6 +161,20 @@ func (h *Hub) HandleProbeWS(w http.ResponseWriter, r *http.Request) {
 	log.Printf("hub: probe %q connected", name)
 	h.broadcastBrowser(wsMsg{Type: "probe_connected", Data: name})
 
+	// Ping probe every 30s to keep connection alive
+	go func() {
+		pingT := time.NewTicker(30 * time.Second)
+		defer pingT.Stop()
+		for {
+			select {
+			case <-pingT.C:
+				if err := conn.WriteControl(websocket.PingMessage, nil, time.Now().Add(5*time.Second)); err != nil {
+					return
+				}
+			}
+		}
+	}()
+
 	defer func() {
 		conn.Close()
 		h.mu.Lock()
