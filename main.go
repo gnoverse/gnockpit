@@ -710,7 +710,7 @@ func serverCmd() *cobra.Command {
 			ctx, cancel := newContext()
 			defer cancel()
 
-			db, err := sql.Open("sqlite", flagServerDBPath)
+			db, err := sql.Open("sqlite", flagServerDBPath+"?_pragma=busy_timeout(5000)&_pragma=journal_mode(wal)")
 			if err != nil {
 				return fmt.Errorf("open database: %w", err)
 			}

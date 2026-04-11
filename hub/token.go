@@ -65,20 +65,31 @@ func (s *TokenStore) Create(name string) (string, error) {
 // Verify checks a raw bearer token against all active (non-revoked) tokens.
 // Returns the token name on success, or an error.
 func (s *TokenStore) Verify(rawToken string) (name string, err error) {
+	// Load all tokens into memory first, then close rows before doing bcrypt
+	// (avoids deadlock with SetMaxOpenConns(1) when updating last_seen)
+	type tokenRow struct {
+		name string
+		hash string
+	}
 	rows, err := s.db.Query(`SELECT name, token_hash FROM tokens WHERE revoked_at IS NULL`)
 	if err != nil {
 		return "", err
 	}
-	defer rows.Close()
+	var tokens []tokenRow
 	for rows.Next() {
-		var n, hash string
-		if err := rows.Scan(&n, &hash); err != nil {
+		var t tokenRow
+		if err := rows.Scan(&t.name, &t.hash); err != nil {
+			rows.Close()
 			return "", err
 		}
-		if bcrypt.CompareHashAndPassword([]byte(hash), []byte(rawToken)) == nil {
-			// Update last_seen
-			s.db.Exec(`UPDATE tokens SET last_seen = ? WHERE name = ?`, time.Now().UTC().Format(time.RFC3339), n)
-			return n, nil
+		tokens = append(tokens, t)
+	}
+	rows.Close()
+
+	for _, t := range tokens {
+		if bcrypt.CompareHashAndPassword([]byte(t.hash), []byte(rawToken)) == nil {
+			s.db.Exec(`UPDATE tokens SET last_seen = ? WHERE name = ?`, time.Now().UTC().Format(time.RFC3339), t.name)
+			return t.name, nil
 		}
 	}
 	return "", fmt.Errorf("invalid token")

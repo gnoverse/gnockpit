@@ -109,6 +109,7 @@ func (h *Hub) Probe(name string) (*ProbeState, bool) {
 // --- Probe WebSocket endpoint ---
 
 func (h *Hub) HandleProbeWS(w http.ResponseWriter, r *http.Request) {
+	log.Printf("hub: probe WS request from %s", r.RemoteAddr)
 	// Auth
 	auth := r.Header.Get("Authorization")
 	if auth == "" {
@@ -117,14 +118,18 @@ func (h *Hub) HandleProbeWS(w http.ResponseWriter, r *http.Request) {
 	}
 	token := strings.TrimPrefix(auth, "Bearer ")
 	if token == "" || token == auth {
+		log.Printf("hub: probe WS: no token")
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
+	log.Printf("hub: probe WS: verifying token...")
 	name, err := h.Tokens.Verify(token)
 	if err != nil {
+		log.Printf("hub: probe WS: invalid token: %v", err)
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
+	log.Printf("hub: probe WS: token verified for %q, upgrading...", name)
 
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {

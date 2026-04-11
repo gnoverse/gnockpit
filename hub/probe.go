@@ -62,7 +62,10 @@ func (p *ProbeClient) connectAndPush(ctx context.Context, fetchSnapshot func(con
 	header := http.Header{}
 	header.Set("Authorization", "Bearer "+p.Token)
 
-	conn, _, err := websocket.DefaultDialer.DialContext(ctx, p.ServerURL, header)
+	dialer := websocket.Dialer{
+		HandshakeTimeout: 30 * time.Second,
+	}
+	conn, _, err := dialer.DialContext(ctx, p.ServerURL, header)
 	if err != nil {
 		return err
 	}
@@ -109,7 +112,10 @@ func (p *ProbeClient) connectAndPush(ctx context.Context, fetchSnapshot func(con
 	defer ticker.Stop()
 
 	push := func() error {
+		log.Printf("probe: fetching snapshot...")
+		start := time.Now()
 		snap := fetchSnapshot(ctx)
+		log.Printf("probe: snapshot fetched in %s, sending to hub...", time.Since(start).Truncate(time.Millisecond))
 		msg := struct {
 			Type string         `json:"type"`
 			Data *node.Snapshot `json:"data"`
@@ -118,7 +124,14 @@ func (p *ProbeClient) connectAndPush(ctx context.Context, fetchSnapshot func(con
 		if err != nil {
 			return err
 		}
-		return conn.WriteMessage(websocket.TextMessage, b)
+		log.Printf("probe: sending %d bytes", len(b))
+		err = conn.WriteMessage(websocket.TextMessage, b)
+		if err != nil {
+			log.Printf("probe: write error: %v", err)
+		} else {
+			log.Printf("probe: snapshot sent successfully")
+		}
+		return err
 	}
 
 	// Push immediately
