@@ -162,7 +162,7 @@ a.rpc-link.blue { color: var(--blue); }
 .peer-card-hint { font-size:10px; }
 .peer-card.has-rpc .peer-card-hint { color:var(--blue); opacity:1; }
 .peer-card.no-rpc .peer-card-hint { color:var(--fg2); opacity:0.3; }
-.peer-card.no-rpc { cursor:default; }
+.peer-card.no-rpc { cursor:pointer; }
 @keyframes no-rpc-flash {
   0%   { border-color:var(--red); background:rgba(248,81,73,0.12); }
   60%  { border-color:var(--red); background:rgba(248,81,73,0.08); }
@@ -1468,16 +1468,18 @@ function renderNetwork() {
       footer.appendChild(hint);
       card.appendChild(footer);
 
-      // Click handler
-      if (data.rpcUrl) {
-        card.addEventListener('click', function() { window.open(data.rpcUrl + '/status', '_blank'); });
-      } else {
-        card.addEventListener('click', function() {
-          card.style.animation = 'none';
-          card.offsetHeight; // reflow to restart animation
-          card.style.animation = 'no-rpc-flash 0.6s ease-out forwards';
-        });
-      }
+      // Click handler — copy all node info
+      var copyLines = [data.name];
+      if (data.fullAddress) copyLines.push('address: ' + data.fullAddress);
+      if (data.pubKey) copyLines.push('pubkey: ' + data.pubKey);
+      if (data.ip && data.ip !== '-') copyLines.push('ip: ' + data.ip);
+      if (data.vp && data.vp !== '-') copyLines.push('vp: ' + data.vp);
+      if (data.rpcUrl) copyLines.push('rpc: ' + data.rpcUrl);
+      var copyText = copyLines.join('\n');
+      card.addEventListener('click', function(e) {
+        if (e.target.closest('.peer-card-footer')) return; // let footer handle its own clicks
+        copyNotify(copyText, e);
+      });
       return card;
     }
 
@@ -1526,6 +1528,8 @@ function renderNetwork() {
           healthText: hText,
           healthCls: hCls,
           address: shortAddr(v.address),
+          fullAddress: v.address,
+          pubKey: v.pub_key || '',
           ip: ip,
           consensus: consStr,
           signRate: signRate !== null ? signRate + '%' : '-',
@@ -1562,6 +1566,8 @@ function renderNetwork() {
           healthText: 'peer',
           healthCls: 'ok',
           address: p.val_address ? shortAddr(p.val_address) : '-',
+          fullAddress: p.val_address || '',
+          pubKey: p.val_pubkey || '',
           ip: p.remote_ip || '-',
           consensus: pConsStr,
           signRate: '-',
