@@ -1,6 +1,13 @@
 package node
 
-import "time"
+import (
+	"encoding/base64"
+	"time"
+
+	"github.com/gnolang/gno/tm2/pkg/crypto"
+	"github.com/gnolang/gno/tm2/pkg/crypto/ed25519"
+	"github.com/gnolang/gno/tm2/pkg/crypto/secp256k1"
+)
 
 // Status represents the node's current status.
 type Status struct {
@@ -31,6 +38,38 @@ type ValInfo struct {
 type PubKey struct {
 	Type  string `json:"type"`
 	Value string `json:"value"`
+}
+
+// Bech32 returns the bech32-encoded public key (gpub1...).
+// Returns empty string if the key type is unknown or the value is invalid.
+func (pk PubKey) Bech32() string {
+	if pk.Value == "" {
+		return ""
+	}
+	raw, err := base64.StdEncoding.DecodeString(pk.Value)
+	if err != nil {
+		return ""
+	}
+	var cpk crypto.PubKey
+	switch pk.Type {
+	case "ed25519":
+		if len(raw) != ed25519.PubKeyEd25519Size {
+			return ""
+		}
+		var key ed25519.PubKeyEd25519
+		copy(key[:], raw)
+		cpk = key
+	case "secp256k1":
+		if len(raw) != secp256k1.PubKeySecp256k1Size {
+			return ""
+		}
+		var key secp256k1.PubKeySecp256k1
+		copy(key[:], raw)
+		cpk = key
+	default:
+		return ""
+	}
+	return crypto.PubKeyToBech32(cpk)
 }
 
 // Peer represents a connected peer.

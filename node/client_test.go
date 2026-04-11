@@ -350,3 +350,13 @@ func TestGetNPeers(t *testing.T) {
 		t.Errorf("got %d peers, want 5", n)
 	}
 }
+
+func TestPubKeyBech32(t *testing.T) {
+	// Known test vector: ed25519 pubkey [0x00..0x1f]
+	pk := PubKey{Type: "ed25519", Value: "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8="}
+	want := "gpub1pggj7ard9eg82cjtv4u52epjx56nzwgjyg9zqqqpqgpsgpgxquyqjzstpsxsurcszyfpx9q4zct3sxg6rvwp68sluq9csv"
+	got := pk.Bech32()
+	if got != want {
+		t.Errorf("PubKey.Bech32() = %q, want %q", got, want)
+	}
+}

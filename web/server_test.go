@@ -650,8 +650,8 @@ func TestBuildVotesReport_VotingPower(t *testing.T) {
 			},
 		},
 		Validators: []node.Validator{
-			{Address: "g1aaa", VotingPower: "1000", PubKey: node.PubKey{Value: "AAAA"}},
-			{Address: "g1bbb", VotingPower: "500", PubKey: node.PubKey{Value: "BBBB"}},
+			{Address: "g1aaa", VotingPower: "1000", PubKey: node.PubKey{Type: "ed25519", Value: "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8="}},
+			{Address: "g1bbb", VotingPower: "500", PubKey: node.PubKey{Type: "ed25519", Value: "HyAdHBsaGRgXFhUUExIREA8ODQwLCgkIBwYFBAMCAQA="}},
 		},
 		Timestamp: time.Now(),
 	}
@@ -669,10 +669,12 @@ func TestBuildVotesReport_VotingPower(t *testing.T) {
 	if report.Validators[1].VotingPower != "500" {
 		t.Errorf("validator 1 voting power = %q, want %q", report.Validators[1].VotingPower, "500")
 	}
-	if report.Validators[0].PubKey != "AAAA" {
-		t.Errorf("validator 0 pub_key = %q, want %q", report.Validators[0].PubKey, "AAAA")
+	wantPK0 := "gpub1pggj7ard9eg82cjtv4u52epjx56nzwgjyg9zqqqpqgpsgpgxquyqjzstpsxsurcszyfpx9q4zct3sxg6rvwp68sluq9csv"
+	if report.Validators[0].PubKey != wantPK0 {
+		t.Errorf("validator 0 pub_key = %q, want %q", report.Validators[0].PubKey, wantPK0)
 	}
-	if report.Validators[1].PubKey != "BBBB" {
-		t.Errorf("validator 1 pub_key = %q, want %q", report.Validators[1].PubKey, "BBBB")
+	wantPK1 := "gpub1pggj7ard9eg82cjtv4u52epjx56nzwgjyg9zq8eqr5wpkxserqt3v9g5zvfpzyq0pcxsczc2pyyqwps9qspsyqgqn4c4hp"
+	if report.Validators[1].PubKey != wantPK1 {
+		t.Errorf("validator 1 pub_key = %q, want %q", report.Validators[1].PubKey, wantPK1)
 	}
 }

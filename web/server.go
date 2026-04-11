@@ -225,12 +225,12 @@ func (s *Server) buildVotesReport(snap *node.Snapshot) *node.VotesReport {
 		Validators:     snap.Consensus.Votes,
 		Timestamp:      snap.Timestamp,
 	}
-	// Enrich with voting power and pubkey from validator set
+	// Enrich with voting power and bech32 pubkey from validator set
 	vpByAddr := make(map[string]string, len(snap.Validators))
 	pkByAddr := make(map[string]string, len(snap.Validators))
 	for _, v := range snap.Validators {
 		vpByAddr[v.Address] = v.VotingPower
-		pkByAddr[v.Address] = v.PubKey.Value
+		pkByAddr[v.Address] = v.PubKey.Bech32()
 	}
 	for i := range report.Validators {
 		addr := report.Validators[i].Address
