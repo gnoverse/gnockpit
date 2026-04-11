@@ -352,11 +352,18 @@ func TestGetNPeers(t *testing.T) {
 }
 
 func TestPubKeyBech32(t *testing.T) {
-	// Known test vector: ed25519 pubkey [0x00..0x1f]
-	pk := PubKey{Type: "ed25519", Value: "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8="}
 	want := "gpub1pggj7ard9eg82cjtv4u52epjx56nzwgjyg9zqqqpqgpsgpgxquyqjzstpsxsurcszyfpx9q4zct3sxg6rvwp68sluq9csv"
-	got := pk.Bech32()
-	if got != want {
-		t.Errorf("PubKey.Bech32() = %q, want %q", got, want)
+	b64 := "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8="
+
+	// "type" field (legacy format)
+	pk := PubKey{Type: "ed25519", Value: b64}
+	if got := pk.Bech32(); got != want {
+		t.Errorf("PubKey{Type}.Bech32() = %q, want %q", got, want)
+	}
+
+	// "@type" field (gno RPC amino format)
+	pk2 := PubKey{AminoType: "/tm.PubKeyEd25519", Value: b64}
+	if got := pk2.Bech32(); got != want {
+		t.Errorf("PubKey{AminoType}.Bech32() = %q, want %q", got, want)
 	}
 }

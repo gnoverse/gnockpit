@@ -36,8 +36,23 @@ type ValInfo struct {
 }
 
 type PubKey struct {
-	Type  string `json:"type"`
-	Value string `json:"value"`
+	Type     string `json:"type"`
+	AminoType string `json:"@type"` // gno RPC uses "@type" with "/tm.PubKeyEd25519" format
+	Value    string `json:"value"`
+}
+
+// keyType returns the normalized key type string.
+func (pk PubKey) keyType() string {
+	if pk.Type != "" {
+		return pk.Type
+	}
+	switch pk.AminoType {
+	case "/tm.PubKeyEd25519":
+		return "ed25519"
+	case "/tm.PubKeySecp256k1":
+		return "secp256k1"
+	}
+	return pk.AminoType
 }
 
 // Bech32 returns the bech32-encoded public key (gpub1...).
@@ -51,7 +66,7 @@ func (pk PubKey) Bech32() string {
 		return ""
 	}
 	var cpk crypto.PubKey
-	switch pk.Type {
+	switch pk.keyType() {
 	case "ed25519":
 		if len(raw) != ed25519.PubKeyEd25519Size {
 			return ""
