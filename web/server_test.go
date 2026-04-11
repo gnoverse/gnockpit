@@ -313,6 +313,13 @@ func TestNetworkStateVPFields(t *testing.T) {
 	if !strings.Contains(html, "function formatVP(") {
 		t.Error("missing formatVP utility function")
 	}
+	// Peers column in validator table (peers moved from Network State)
+	if strings.Contains(html, `id="ns-peers"`) {
+		t.Error("ns-peers should be removed from Network State (moved to peers table)")
+	}
+	if !strings.Contains(html, `data-sort="peers"`) {
+		t.Error("missing sortable Peers column in validator table")
+	}
 }
 
 func TestJSSyntax(t *testing.T) {

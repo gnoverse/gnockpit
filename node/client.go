@@ -141,6 +141,19 @@ func (c *Client) GetNetInfo(ctx context.Context) ([]Peer, error) {
 	return peers, nil
 }
 
+// GetNPeers fetches /net_info and returns just the peer count.
+func (c *Client) GetNPeers(ctx context.Context) (int, error) {
+	var result struct {
+		NPeers string `json:"n_peers"`
+	}
+	if err := c.rpcGetJSON(ctx, "/net_info", &result); err != nil {
+		return 0, err
+	}
+	var n int
+	fmt.Sscanf(result.NPeers, "%d", &n)
+	return n, nil
+}
+
 // GetValidators fetches /validators and returns the validator set.
 func (c *Client) GetValidators(ctx context.Context) ([]Validator, error) {
 	var result struct {
@@ -714,6 +727,13 @@ func QueryAllPeers(ctx context.Context, peers []Peer, rpcPort string, timeout ti
 				}
 			} else {
 				results[idx].Role = "full"
+			}
+
+			// Fetch peer count from their /net_info
+			pc2 := PeerClient(peer.RemoteIP, rpcPort, timeout)
+			pc2.LogFn = logFn
+			if n, err := pc2.GetNPeers(ctx); err == nil {
+				results[idx].NPeers = n
 			}
 
 			if withConsensus {

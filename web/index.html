@@ -290,7 +290,6 @@ a.rpc-link.blue { color: var(--blue); }
       <span class="k" data-compact="hide">genesis time</span><span class="v" id="c-gentime" data-compact="hide">-</span>
       <span class="k">genesis age</span><span class="v" id="ns-genesis-age">-</span>
       <span class="k" data-compact="hide">apphash</span><span class="v hash" id="d-apphash-last" data-compact="hide">-</span>
-      <span class="k" data-compact="hide">peers</span><span class="v" id="ns-peers" data-compact="hide">-</span>
       <span class="k">node uptime</span><span class="v" id="d-gnoland-uptime">-</span>
     </div>
     <div class="kv">
@@ -329,9 +328,9 @@ a.rpc-link.blue { color: var(--blue); }
   <div class="table-wrap">
   <table>
     <thead><tr>
-      <th data-sort="name" style="cursor:pointer">Name</th><th>Address</th><th>IP</th><th data-sort="consensus" style="cursor:pointer" class="info-btn" data-popover="H=height / R=round / S=step / PV=prevoted / PC=precommitted / P=proposer">Consensus</th><th data-sort="vp" style="cursor:pointer" class="info-btn" data-popover="Voting power (stake weight in the validator set)">VP</th><th data-sort="sign" style="cursor:pointer" class="info-btn" data-popover="Blocks signed in last 100 blocks (%)">Sign%</th><th data-sort="speed" style="cursor:pointer" class="info-btn" data-popover="Avg block time when this validator proposes, over last 100 blocks (lower=faster, ~3s expected)">Speed</th><th data-sort="health" style="cursor:pointer">Status</th>
+      <th data-sort="name" style="cursor:pointer">Name</th><th>Address</th><th>IP</th><th data-sort="consensus" style="cursor:pointer" class="info-btn" data-popover="H=height / R=round / S=step / PV=prevoted / PC=precommitted / P=proposer">Consensus</th><th data-sort="vp" style="cursor:pointer" class="info-btn" data-popover="Voting power (stake weight in the validator set)">VP</th><th data-sort="peers" style="cursor:pointer" class="info-btn" data-popover="Number of P2P peers connected to this node (from their /net_info)">Peers</th><th data-sort="sign" style="cursor:pointer" class="info-btn" data-popover="Blocks signed in last 100 blocks (%)">Sign%</th><th data-sort="speed" style="cursor:pointer" class="info-btn" data-popover="Avg block time when this validator proposes, over last 100 blocks (lower=faster, ~3s expected)">Speed</th><th data-sort="health" style="cursor:pointer">Status</th>
     </tr></thead>
-    <tbody id="network-body"><tr><td colspan="8">loading...</td></tr></tbody>
+    <tbody id="network-body"><tr><td colspan="9">loading...</td></tr></tbody>
   </table>
   </div></div>
 </div>
@@ -975,7 +974,6 @@ function renderNetwork() {
       setText('ns-timeouts', 'propose ' + c.timeout_propose + ' / prevote ' + c.timeout_prevote + ' / precommit ' + c.timeout_precommit + ' / commit ' + c.timeout_commit);
     }
   }
-  setText('ns-peers', String(peerCount));
   $('network-header').textContent = 'Network';
 
   // Build peer lookup by validator name for merging
@@ -999,7 +997,7 @@ function renderNetwork() {
     var sep = document.createElement('tr');
     sep.className = 'sep';
     var sepTd = document.createElement('td');
-    sepTd.colSpan = 8;
+    sepTd.colSpan = 9;
     sepTd.textContent = 'validators (' + valsetSize + ')';
     sep.appendChild(sepTd);
     tbody.appendChild(sep);
@@ -1017,6 +1015,11 @@ function renderNetwork() {
       } else if (peerSortKey === 'vp') {
         va = a.voting_power ? parseInt(a.voting_power, 10) : 0;
         vb = b.voting_power ? parseInt(b.voting_power, 10) : 0;
+      } else if (peerSortKey === 'peers') {
+        var ma = peerByName[(a.name || '').replace(' (us)', '')] || peerByAddr[a.address];
+        var mb = peerByName[(b.name || '').replace(' (us)', '')] || peerByAddr[b.address];
+        va = ma && ma.n_peers ? ma.n_peers : -1;
+        vb = mb && mb.n_peers ? mb.n_peers : -1;
       } else if (peerSortKey === 'consensus') {
         // Sort by peer height (need to look up from peers)
         va = a.name || ''; vb = b.name || '';
@@ -1103,6 +1106,20 @@ function renderNetwork() {
         vpTd.setAttribute('data-sort-val', '0');
       }
       tr.appendChild(vpTd);
+
+      // Peers (from matched peer's n_peers via /net_info)
+      var peersTd = document.createElement('td');
+      peersTd.style.fontSize = '12px';
+      var nPeers = mp && mp.n_peers ? mp.n_peers : (isUs ? peerCount : 0);
+      if (nPeers > 0) {
+        peersTd.textContent = String(nPeers);
+        peersTd.setAttribute('data-sort-val', String(nPeers));
+        peersTd.className = nPeers >= 3 ? 'ok' : nPeers >= 1 ? 'warn' : 'err';
+      } else {
+        peersTd.textContent = '-';
+        peersTd.setAttribute('data-sort-val', '0');
+      }
+      tr.appendChild(peersTd);
 
       // Sign rate
       var signTd = document.createElement('td');
@@ -1222,7 +1239,7 @@ function renderNetwork() {
     var thisSep = document.createElement('tr');
     thisSep.className = 'sep';
     var thisSepTd = document.createElement('td');
-    thisSepTd.colSpan = 8;
+    thisSepTd.colSpan = 9;
     thisSepTd.textContent = 'this node (full node)';
     thisSep.appendChild(thisSepTd);
     tbody.appendChild(thisSep);
@@ -1250,6 +1267,7 @@ function renderNetwork() {
     }
     thisTr.appendChild(thisCons);
     thisTr.appendChild(createCell({ text: '-' })); // VP
+    thisTr.appendChild(createCell({ text: String(peerCount) })); // Peers
     thisTr.appendChild(createCell({ text: '-' })); // Sign%
     thisTr.appendChild(createCell({ text: '-' })); // Speed
     // Status
@@ -1285,7 +1303,7 @@ function renderNetwork() {
     var sep2 = document.createElement('tr');
     sep2.className = 'sep';
     var sep2Td = document.createElement('td');
-    sep2Td.colSpan = 8;
+    sep2Td.colSpan = 9;
     sep2Td.textContent = 'other peers (' + otherPeers.length + ') \u2014 fullnodes, sentries, ...';
     sep2.appendChild(sep2Td);
     tbody.appendChild(sep2);
@@ -1325,6 +1343,8 @@ function renderNetwork() {
       }
       tr2.appendChild(pConsTd);
       tr2.appendChild(createCell({ text: '-', className: 'full-role' })); // VP
+      var pNPeers = p.n_peers ? String(p.n_peers) : '-';
+      tr2.appendChild(createCell({ text: pNPeers, className: 'full-role' })); // Peers
       tr2.appendChild(createCell({ text: '-', className: 'full-role' })); // Sign%
       tr2.appendChild(createCell({ text: '-', className: 'full-role' })); // Speed
       // Status (merged RPC+Health for peers) — same layout as validators

@@ -51,6 +51,7 @@ type Peer struct {
 	Error          string `json:"error,omitempty"`
 	FirstSeen      string `json:"first_seen,omitempty"`
 	LastSeen       string `json:"last_seen,omitempty"`
+	NPeers         int    `json:"n_peers,omitempty"`
 	// From dump_consensus_state peer data
 	PeerHeight     string `json:"peer_height,omitempty"`
 	PeerRound      string `json:"peer_round,omitempty"`

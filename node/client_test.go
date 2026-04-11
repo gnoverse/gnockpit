@@ -325,3 +325,28 @@ func TestVerboseLogging(t *testing.T) {
 		t.Error("LogFn was not called")
 	}
 }
+
+func TestGetNPeers(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `{"jsonrpc":"2.0","result":{
+			"n_peers":"5",
+			"peers":[
+				{"node_info":{"moniker":"a","id":"1"},"remote_ip":"1.1.1.1"},
+				{"node_info":{"moniker":"b","id":"2"},"remote_ip":"2.2.2.2"},
+				{"node_info":{"moniker":"c","id":"3"},"remote_ip":"3.3.3.3"},
+				{"node_info":{"moniker":"d","id":"4"},"remote_ip":"4.4.4.4"},
+				{"node_info":{"moniker":"e","id":"5"},"remote_ip":"5.5.5.5"}
+			]
+		}}`)
+	}))
+	defer srv.Close()
+
+	c := NewClient(srv.URL, 5*time.Second)
+	n, err := c.GetNPeers(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 5 {
+		t.Errorf("got %d peers, want 5", n)
+	}
+}
