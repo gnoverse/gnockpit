@@ -650,8 +650,8 @@ func TestBuildVotesReport_VotingPower(t *testing.T) {
 			},
 		},
 		Validators: []node.Validator{
-			{Address: "g1aaa", VotingPower: "1000"},
-			{Address: "g1bbb", VotingPower: "500"},
+			{Address: "g1aaa", VotingPower: "1000", PubKey: node.PubKey{Value: "AAAA"}},
+			{Address: "g1bbb", VotingPower: "500", PubKey: node.PubKey{Value: "BBBB"}},
 		},
 		Timestamp: time.Now(),
 	}
@@ -668,5 +668,11 @@ func TestBuildVotesReport_VotingPower(t *testing.T) {
 	}
 	if report.Validators[1].VotingPower != "500" {
 		t.Errorf("validator 1 voting power = %q, want %q", report.Validators[1].VotingPower, "500")
+	}
+	if report.Validators[0].PubKey != "AAAA" {
+		t.Errorf("validator 0 pub_key = %q, want %q", report.Validators[0].PubKey, "AAAA")
+	}
+	if report.Validators[1].PubKey != "BBBB" {
+		t.Errorf("validator 1 pub_key = %q, want %q", report.Validators[1].PubKey, "BBBB")
 	}
 }

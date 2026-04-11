@@ -108,6 +108,7 @@ type VoteInfo struct {
 	Index       int    `json:"index"`
 	Address     string `json:"address"`
 	Name        string `json:"name"`
+	PubKey      string `json:"pub_key,omitempty"`
 	VotingPower string `json:"voting_power,omitempty"`
 	Prevoted    bool   `json:"prevoted"`
 	Precommit   bool   `json:"precommit"`

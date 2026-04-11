@@ -225,13 +225,17 @@ func (s *Server) buildVotesReport(snap *node.Snapshot) *node.VotesReport {
 		Validators:     snap.Consensus.Votes,
 		Timestamp:      snap.Timestamp,
 	}
-	// Build address→voting_power lookup from validator set
+	// Enrich with voting power and pubkey from validator set
 	vpByAddr := make(map[string]string, len(snap.Validators))
+	pkByAddr := make(map[string]string, len(snap.Validators))
 	for _, v := range snap.Validators {
 		vpByAddr[v.Address] = v.VotingPower
+		pkByAddr[v.Address] = v.PubKey.Value
 	}
 	for i := range report.Validators {
-		report.Validators[i].VotingPower = vpByAddr[report.Validators[i].Address]
+		addr := report.Validators[i].Address
+		report.Validators[i].VotingPower = vpByAddr[addr]
+		report.Validators[i].PubKey = pkByAddr[addr]
 	}
 	// Enrich with signing rate + proposer speed from signing stats
 	if snap.Signing != nil && snap.Signing.WindowSize > 0 {

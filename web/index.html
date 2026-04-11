@@ -1053,8 +1053,9 @@ function renderNetwork() {
       if (isUs) nameTd.appendChild(mkEl('span', ' (this host)', 'this-host'));
       tr.appendChild(nameTd);
 
-      // Address
-      tr.appendChild(createCell({ text: shortAddr(v.address), style: 'font-size:11px;color:var(--fg2)', popover: v.address, highlight: cleanName, copy: v.address }));
+      // Address (copy includes pubkey when available)
+      var addrCopy = v.pub_key ? v.address + ' ' + v.pub_key : v.address;
+      tr.appendChild(createCell({ text: shortAddr(v.address), style: 'font-size:11px;color:var(--fg2)', popover: v.address + (v.pub_key ? '\npubkey: ' + v.pub_key : ''), highlight: cleanName, copy: addrCopy }));
 
       // IP — for "this host", use server IP from net_address
       var ip = mp ? mp.remote_ip : '';
