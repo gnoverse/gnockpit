@@ -1100,7 +1100,10 @@ function renderNetwork() {
       if (vp) {
         var vpNum = parseInt(vp, 10);
         var vpPct = totalVP > 0 ? Math.round(vpNum * 100 / totalVP) : 0;
-        vpTd.textContent = formatVP(vpNum) + ' (' + vpPct + '%)';
+        vpTd.appendChild(document.createTextNode(formatVP(vpNum) + ' '));
+        var pctSpan = mkEl('span', '(' + vpPct + '%)', null);
+        pctSpan.style.cssText = 'color:var(--fg2);font-weight:normal';
+        vpTd.appendChild(pctSpan);
         vpTd.setAttribute('data-sort-val', String(vpNum));
         vpTd.setAttribute('data-copy', vp);
       } else {
