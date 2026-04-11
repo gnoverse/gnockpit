@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/signal"
 	"sort"
+	"strings"
 	"time"
 
 	"database/sql"
@@ -77,6 +78,7 @@ func rootCmd() *cobra.Command {
 	root.AddCommand(serverCmd())
 	root.AddCommand(probeCmd())
 	root.AddCommand(tokenCmd())
+	root.AddCommand(doctorCmd())
 
 	return root
 }
@@ -872,4 +874,101 @@ func tokenCmd() *cobra.Command {
 	})
 
 	return cmd
+}
+
+// --- doctor ---
+
+var (
+	flagDoctorServer string
+	flagDoctorToken  string
+	flagDoctorLive   bool
+)
+
+func doctorCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "doctor",
+		Short: "Run diagnostics against a node or cluster",
+		Long: `Run health checks against a single node or a cluster hub.
+
+Examples:
+  gnockpit doctor                                                      # check local node
+  gnockpit doctor --rpc http://1.2.3.4:26657                           # check remote node
+  gnockpit doctor --server https://hub.example.com --token <token>      # check cluster
+  gnockpit doctor --server https://hub.example.com --token <token> --live  # live monitoring`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ctx, cancel := newContext()
+			defer cancel()
+
+			if flagDoctorServer != "" {
+				if flagDoctorLive {
+					return hub.DoctorLive(ctx, flagDoctorServer, flagDoctorToken, func(health *hub.HealthReport) {
+						if flagJSON {
+							printJSON(health)
+							return
+						}
+						fmt.Print("\033[2J\033[H")
+						fmt.Printf("=== gnockpit doctor (live) ===\n\n")
+						fmt.Printf("probes: %d total, %d healthy, %d warn, %d error\n\n",
+							health.Total, health.Healthy, health.Warning, health.Error)
+						if len(health.Issues) == 0 {
+							fmt.Println("\033[32m  All healthy\033[0m")
+						} else {
+							for _, issue := range health.Issues {
+								icon := severityIcon(issue.Severity)
+								probes := ""
+								if len(issue.Probes) > 0 {
+									probes = " [" + strings.Join(issue.Probes, ", ") + "]"
+								}
+								fmt.Printf("  %s %-25s %s%s\n", icon, issue.Check, issue.Detail, probes)
+							}
+						}
+						fmt.Printf("\nupdated: %s\n", time.Now().Format("15:04:05"))
+					})
+				}
+				report, err := hub.DoctorCluster(ctx, flagDoctorServer, flagDoctorToken)
+				if err != nil {
+					return err
+				}
+				return printDoctorReport(report)
+			}
+
+			report := hub.DoctorSingle(ctx, flagRPC, 10*time.Second)
+			return printDoctorReport(report)
+		},
+	}
+	cmd.Flags().StringVar(&flagDoctorServer, "server", "", "hub server URL for cluster diagnostics")
+	cmd.Flags().StringVar(&flagDoctorToken, "token", "", "bearer token for hub authentication")
+	cmd.Flags().BoolVar(&flagDoctorLive, "live", false, "live monitoring mode (requires --server)")
+	return cmd
+}
+
+func printDoctorReport(report *hub.DoctorReport) error {
+	if flagJSON {
+		printJSON(report)
+		return nil
+	}
+	fmt.Printf("=== gnockpit doctor (%s) ===\n\n", report.Mode)
+	for _, check := range report.Checks {
+		icon := severityIcon(check.Severity)
+		probes := ""
+		if len(check.Probes) > 0 {
+			probes = " [" + strings.Join(check.Probes, ", ") + "]"
+		}
+		fmt.Printf("  %s %-25s %s%s\n", icon, check.Check, check.Detail, probes)
+	}
+	fmt.Printf("\n%s\n", report.Summary)
+	return nil
+}
+
+func severityIcon(s string) string {
+	switch s {
+	case "ok":
+		return "\033[32m[ok]\033[0m  "
+	case "warn":
+		return "\033[33m[warn]\033[0m"
+	case "error":
+		return "\033[31m[ERR]\033[0m "
+	default:
+		return "      "
+	}
 }
