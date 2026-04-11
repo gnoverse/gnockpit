@@ -1098,7 +1098,8 @@ function renderNetwork() {
       var vp = v.voting_power;
       if (vp) {
         var vpNum = parseInt(vp, 10);
-        vpTd.textContent = formatVP(vpNum);
+        var vpPct = totalVP > 0 ? Math.round(vpNum * 100 / totalVP) : 0;
+        vpTd.textContent = formatVP(vpNum) + ' (' + vpPct + '%)';
         vpTd.setAttribute('data-sort-val', String(vpNum));
         vpTd.setAttribute('data-copy', vp);
       } else {
@@ -1530,7 +1531,7 @@ function renderNetwork() {
           signCls: signRate !== null ? (signRate >= 100 ? 'ok' : signRate >= 80 ? 'warn' : 'err') : '',
           speed: speedText,
           speedCls: speedCls,
-          vp: v.voting_power ? formatVP(parseInt(v.voting_power, 10)) : '-',
+          vp: v.voting_power ? formatVP(parseInt(v.voting_power, 10)) + ' (' + (totalVP > 0 ? Math.round(parseInt(v.voting_power, 10) * 100 / totalVP) : 0) + '%)' : '-',
           rpcUrl: rpcUrl,
           rpcText: rpcText,
           rpcCls: rpcCls
