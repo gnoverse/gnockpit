@@ -79,6 +79,55 @@ gnockpit can send browser push notifications for validator monitoring alerts. Th
 
 **Per-device settings:** Each browser/device has its own independent subscription. Changing notification settings on mobile does not affect desktop.
 
+## Cluster Mode
+
+Monitor multiple validator nodes from a single dashboard.
+
+### Setup
+
+```bash
+# 1. On the hub server — create the database and tokens
+gnockpit token create moul-val-01 --db-path /var/lib/gnockpit/hub.db
+gnockpit token create gnocore-val --db-path /var/lib/gnockpit/hub.db
+
+# 2. Start the hub server
+gnockpit server --port 8080 --db-path /var/lib/gnockpit/hub.db
+
+# 3. On each validator node — run a probe
+gnockpit probe --server wss://gnockpit.example.com --token <token> --rpc http://127.0.0.1:26657
+```
+
+### Commands
+
+| Command | Description |
+|---------|-------------|
+| `gnockpit server` | Start cluster hub server |
+| `gnockpit probe` | Push snapshots to hub |
+| `gnockpit token create <name>` | Generate probe token |
+| `gnockpit token list` | List all tokens |
+| `gnockpit token revoke <name>` | Revoke a token |
+| `gnockpit doctor` | One-shot diagnostics |
+| `gnockpit doctor --server <url> --token <t>` | Cluster health report |
+| `gnockpit doctor --server <url> --token <t> --live` | Live monitoring |
+
+### Cluster Dashboard
+
+The hub serves a cluster-aware dashboard with:
+
+- **Overview** — cards per probe with status, chain, height, peers
+- **Health** — automated issue detection (height drift, staleness, version mismatch, etc.)
+- **Compare** — side-by-side view of two probes
+
+### Health Checks
+
+- Height drift (>5 blocks behind)
+- Probe staleness (>30s without data)
+- Probe disconnected
+- Consensus round mismatch
+- Validator set divergence
+- Chain ID mismatch
+- Version mismatch
+
 ## Features
 
 - Live WebSocket dashboard with real-time updates
@@ -87,6 +136,7 @@ gnockpit can send browser push notifications for validator monitoring alerts. Th
 - Signing stats — per-validator sign rate and proposer speed over last 100 blocks
 - Doctor diagnostics — deadlock detection, split-height alerts, gossip analysis
 - Block history — recent blocks with signing visualization
+- Cluster mode — multi-node monitoring with hub/probe architecture
 
 ## License
 
