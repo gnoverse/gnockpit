@@ -296,11 +296,10 @@ a.rpc-link.blue { color: var(--blue); }
     <div class="kv">
       <span class="k">consensus</span><span class="v" id="ns-consensus">-</span>
       <span class="k">proposer</span><span class="v" id="ns-proposer">-</span>
-      <span class="k" data-compact="hide">valset</span><span class="v" id="ns-valset" data-compact="hide">-</span>
-      <span class="k" data-compact="hide">min bft</span><span class="v" id="ns-bft" data-compact="hide">-</span>
       <span class="k">votes (pv/pc)</span><span class="v" id="ns-votes">-</span>
       <span class="k">round age</span><span class="v" id="ns-roundage">-</span>
       <span class="k" data-compact="hide">active vals</span><span class="v" id="ns-active" data-compact="hide">-</span>
+      <span class="k" data-compact="hide">active vp</span><span class="v" id="ns-active-vp" data-compact="hide">-</span>
       <span class="k" data-compact="hide">avg block time</span><span class="v" id="ns-avgblock" data-compact="hide">-</span>
       <span class="k" data-compact="show-only">active vals</span>
       <span class="v" id="ns-active-compact" data-compact="show-only">-</span>
@@ -760,6 +759,14 @@ function shortAddr(addr) {
   return prefix + addr.substring(2, 8) + '\u2026' + addr.substring(addr.length - 6);
 }
 
+function formatVP(n) {
+  var abs = Math.abs(n), sign = n < 0 ? '-' : '';
+  if (abs >= 1e9) return sign + (abs / 1e9).toFixed(1) + 'B';
+  if (abs >= 1e6) return sign + (abs / 1e6).toFixed(1) + 'M';
+  if (abs >= 1e3) return sign + (abs / 1e3).toFixed(1) + 'K';
+  return String(n);
+}
+
 function valHealth(v, mp, isUs) {
   if (isUs) return { text: 'OK', className: 'health-ok', popover: 'This is our validator node' };
   var issues = [], tags = [], status = 'OK', cls = 'health-ok';
@@ -897,16 +904,21 @@ function renderNetwork() {
   var votes = lastVotes;
   var peers = lastPeers;
 
-  // Build consensus meta
+  // Build consensus meta (VP-based for BFT quorum)
   var valsetSize = votes && votes.validators ? votes.validators.length : '?';
-  var bftNeeded = typeof valsetSize === 'number' ? Math.floor(valsetSize * 2 / 3) + 1 : '?';
   var pvCount = 0, pcCount = 0;
+  var totalVP = 0, pvVP = 0, pcVP = 0, activeVP = 0;
   if (votes && votes.validators) {
     for (var i = 0; i < votes.validators.length; i++) {
-      if (votes.validators[i].prevoted) pvCount++;
-      if (votes.validators[i].precommit) pcCount++;
+      var vi = votes.validators[i];
+      var vp = vi.voting_power ? parseInt(vi.voting_power, 10) : 0;
+      totalVP += vp;
+      if (vi.prevoted) { pvCount++; pvVP += vp; }
+      if (vi.precommit) { pcCount++; pcVP += vp; }
+      if (typeof vi.sign_rate === 'number' && vi.sign_rate > 0) activeVP += vp;
     }
   }
+  var bftVP = Math.floor(totalVP * 2 / 3) + 1;
 
   var peerCount = peers ? peers.length : 0;
   $('s-peers').textContent = String(peerCount);
@@ -923,17 +935,24 @@ function renderNetwork() {
     if (propDisplay !== propName) propSpan.title = propName;
     propEl.appendChild(propSpan);
     propEl.className = 'v';
-    setText('ns-valset', String(valsetSize));
-    setText('ns-bft', String(bftNeeded));
 
-    // Merged pv/pc display with color: green (above bft), orange (exactly bft), red (below)
+    // Votes display: VP that voted / total VP, colored by BFT quorum (⅔+1 of total VP)
     var votesEl = $('ns-votes');
     clearChildren(votesEl);
-    function voteColor(n) { return n > bftNeeded ? 'ok' : n === bftNeeded ? 'warn' : 'err'; }
-    votesEl.appendChild(mkEl('span', String(pvCount), voteColor(pvCount)));
+    function vpColor(vp) { return vp >= bftVP ? 'ok' : vp >= bftVP * 0.8 ? 'warn' : 'err'; }
+    votesEl.appendChild(mkEl('span', formatVP(pvVP), vpColor(pvVP)));
     votesEl.appendChild(document.createTextNode('/'));
-    votesEl.appendChild(mkEl('span', String(pcCount), voteColor(pcCount)));
+    votesEl.appendChild(mkEl('span', formatVP(pcVP), vpColor(pcVP)));
+    if (totalVP > 0) votesEl.appendChild(document.createTextNode(' of ' + formatVP(totalVP)));
     votesEl.className = 'v';
+
+    // Active VP (signing validators' power vs total)
+    var vpMargin = activeVP - bftVP;
+    var activeVpEl = $('ns-active-vp');
+    if (activeVpEl && totalVP > 0) {
+      activeVpEl.textContent = formatVP(activeVP) + '/' + formatVP(totalVP) + ' (margin: ' + (vpMargin >= 0 ? '+' : '') + formatVP(vpMargin) + ')';
+      activeVpEl.className = vpMargin >= totalVP * 0.1 ? 'v ok' : vpMargin > 0 ? 'v warn' : 'v err';
+    }
 
     // Round age
     var rstStr = votes.round_start_time || '';
@@ -957,7 +976,6 @@ function renderNetwork() {
     }
   }
   setText('ns-peers', String(peerCount));
-
   $('network-header').textContent = 'Network';
 
   // Build peer lookup by validator name for merging
@@ -1077,7 +1095,7 @@ function renderNetwork() {
       var vp = v.voting_power;
       if (vp) {
         var vpNum = parseInt(vp, 10);
-        vpTd.textContent = vpNum >= 1e9 ? (vpNum / 1e9).toFixed(1) + 'B' : vpNum >= 1e6 ? (vpNum / 1e6).toFixed(1) + 'M' : vpNum >= 1e3 ? (vpNum / 1e3).toFixed(1) + 'K' : vp;
+        vpTd.textContent = formatVP(vpNum);
         vpTd.setAttribute('data-sort-val', String(vpNum));
         vpTd.setAttribute('data-copy', vp);
       } else {
@@ -1396,7 +1414,7 @@ function renderNetwork() {
         ['consensus', data.consensus],
         ['sign%',   { text: data.signRate, cls: data.signCls }],
         ['speed',   { text: data.speed,    cls: data.speedCls }],
-        ['status',  { text: data.healthText, cls: data.healthCls }]
+        ['vp',      data.vp || '-']
       ];
       for (var fi = 0; fi < fields.length; fi++) {
         var fk = document.createElement('span');
@@ -1492,6 +1510,7 @@ function renderNetwork() {
           signCls: signRate !== null ? (signRate >= 100 ? 'ok' : signRate >= 80 ? 'warn' : 'err') : '',
           speed: speedText,
           speedCls: speedCls,
+          vp: v.voting_power ? formatVP(parseInt(v.voting_power, 10)) : '-',
           rpcUrl: rpcUrl,
           rpcText: rpcText,
           rpcCls: rpcCls
@@ -1527,6 +1546,7 @@ function renderNetwork() {
           signCls: '',
           speed: '-',
           speedCls: '',
+          vp: '-',
           rpcUrl: pRpcUrl,
           rpcText: pRpcText,
           rpcCls: pRpcCls
@@ -2020,15 +2040,15 @@ function handleStatus(d) {
 function handleSigning(d) {
     if (!d) return;
     var activeEl = $('ns-active');
-    setText('ns-active', d.active_count + '/' + d.total_count + ' (margin: ' + (d.margin >= 0 ? '+' : '') + d.margin + ')');
-    activeEl.className = d.margin >= 2 ? 'v ok' : d.margin >= 1 ? 'v warn' : 'v err';
+    setText('ns-active', d.active_count + '/' + d.total_count);
+    activeEl.className = d.active_count >= d.total_count ? 'v ok' : d.active_count > d.total_count * 2 / 3 ? 'v warn' : 'v err';
     if (d.avg_block_ms > 0) {
       setText('ns-avgblock', (d.avg_block_ms / 1000).toFixed(1) + 's');
     }
     var activeCt = document.getElementById('ns-active-compact');
     if (activeCt) {
       var avgStr = d.avg_block_ms > 0 ? (d.avg_block_ms / 1000).toFixed(1) + 's' : '-';
-      activeCt.textContent = d.active_count + '/' + d.total_count + ' (margin: ' + (d.margin >= 0 ? '+' : '') + d.margin + ')' + ' · ' + avgStr + ' avg';
+      activeCt.textContent = d.active_count + '/' + d.total_count + ' · ' + avgStr + ' avg';
     }
 
     // Recent blocks

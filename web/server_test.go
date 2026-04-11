@@ -292,6 +292,29 @@ func TestHTMLEmbedded(t *testing.T) {
 	}
 }
 
+func TestNetworkStateVPFields(t *testing.T) {
+	data, err := content.ReadFile("index.html")
+	if err != nil {
+		t.Fatal("index.html not embedded:", err)
+	}
+	html := string(data)
+	// VP-based active voting power field
+	if !strings.Contains(html, `id="ns-active-vp"`) {
+		t.Error("missing ns-active-vp element for VP-based liveness margin")
+	}
+	// Removed fields (redundant with VP-based approach)
+	if strings.Contains(html, `id="ns-valset"`) {
+		t.Error("ns-valset should be removed (redundant with active vals)")
+	}
+	if strings.Contains(html, `id="ns-bft"`) {
+		t.Error("ns-bft should be removed (BFT quorum is VP-based, shown in votes)")
+	}
+	// formatVP utility function
+	if !strings.Contains(html, "function formatVP(") {
+		t.Error("missing formatVP utility function")
+	}
+}
+
 func TestJSSyntax(t *testing.T) {
 	// Extract JS from HTML and validate with node --check
 	data, err := content.ReadFile("index.html")
