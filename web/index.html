@@ -3160,5 +3160,306 @@ initPush();
     </div>
   </div>
 </div>
+<script>
+// Cluster mode detection and overlay
+(function() {
+  fetch('/api/mode').then(function(r) { return r.json(); }).then(function(d) {
+    if (d.mode !== 'cluster') return;
+    document.title = 'gnockpit cluster';
+    initClusterUI();
+  }).catch(function() { /* single-node mode, do nothing */ });
+
+  function initClusterUI() {
+    // Hide single-node content
+    var cards = document.querySelectorAll('.card, .status-bar, #error-banner, h1, .subtitle');
+    for (var i = 0; i < cards.length; i++) cards[i].style.display = 'none';
+    // Close existing WS if any
+    if (typeof ws !== 'undefined' && ws) { ws.onclose = null; ws.close(); }
+
+    var root = document.createElement('div');
+    root.id = 'cluster-root';
+    root.innerHTML = [
+      '<h1 style="color:var(--blue);font-size:18px;margin-bottom:4px;">gnockpit cluster</h1>',
+      '<div class="status-bar" id="cluster-status" style="display:flex;">',
+      '  <span id="cluster-total">probes: -</span>',
+      '  <span class="ok" id="cluster-healthy">healthy: -</span>',
+      '  <span class="warn" id="cluster-warn">warn: -</span>',
+      '  <span class="err" id="cluster-error">error: -</span>',
+      '  <span class="sb-right" id="cluster-time">-</span>',
+      '</div>',
+      '<div style="margin-bottom:12px;display:flex;gap:8px;align-items:center;">',
+      '  <label style="color:var(--fg2);font-size:12px;">View:</label>',
+      '  <select id="cluster-view" style="background:var(--bg2);color:var(--fg);border:1px solid var(--border);padding:4px 8px;border-radius:4px;font-family:inherit;font-size:13px;">',
+      '    <option value="overview">Cluster Overview</option>',
+      '    <option value="health">Health Issues</option>',
+      '    <option value="compare">Compare</option>',
+      '  </select>',
+      '  <select id="cluster-probe-select" style="display:none;background:var(--bg2);color:var(--fg);border:1px solid var(--border);padding:4px 8px;border-radius:4px;font-family:inherit;font-size:13px;">',
+      '  </select>',
+      '</div>',
+      '<div id="cluster-content"></div>',
+    ].join('\n');
+    document.body.insertBefore(root, document.body.firstChild);
+
+    var clusterProbes = {};
+    var clusterHealth = null;
+
+    // View switching
+    var viewSelect = document.getElementById('cluster-view');
+    var probeSelect = document.getElementById('cluster-probe-select');
+    viewSelect.addEventListener('change', renderCluster);
+    probeSelect.addEventListener('change', renderCluster);
+
+    // Connect to hub WS
+    var proto = (location.protocol === 'https:' ? 'wss:' : 'ws:');
+    var cws;
+    function connectCluster() {
+      cws = new WebSocket(proto + '//' + location.host + '/ws');
+      cws.onmessage = function(e) {
+        var msg = JSON.parse(e.data);
+        switch(msg.type) {
+          case 'cluster_snapshot':
+            clusterProbes = msg.data || {};
+            updateProbeSelect();
+            renderCluster();
+            break;
+          case 'probe_update':
+            if (msg.data && msg.data.probe) {
+              if (!clusterProbes[msg.data.probe]) clusterProbes[msg.data.probe] = {};
+              var ps = clusterProbes[msg.data.probe];
+              ps.name = msg.data.probe;
+              ps.snapshot = msg.data.data;
+              ps.connected = true;
+              ps.last_update = new Date().toISOString();
+              if (msg.data.data && msg.data.data.status) {
+                ps.chain_id = msg.data.data.status.node_info.network;
+                ps.height = msg.data.data.status.sync_info.latest_block_height;
+              }
+              updateProbeSelect();
+              renderCluster();
+            }
+            break;
+          case 'cluster_health':
+            clusterHealth = msg.data;
+            renderClusterStatus();
+            if (viewSelect.value === 'health') renderCluster();
+            break;
+          case 'probe_connected':
+            if (clusterProbes[msg.data]) clusterProbes[msg.data].connected = true;
+            else clusterProbes[msg.data] = {name: msg.data, connected: true};
+            updateProbeSelect();
+            renderCluster();
+            break;
+          case 'probe_disconnected':
+            if (clusterProbes[msg.data]) clusterProbes[msg.data].connected = false;
+            renderCluster();
+            break;
+        }
+      };
+      cws.onclose = function() {
+        setTimeout(connectCluster, 2000);
+      };
+    }
+    connectCluster();
+
+    function updateProbeSelect() {
+      var names = Object.keys(clusterProbes).sort();
+      var cur = probeSelect.value;
+      probeSelect.textContent = '';
+      for (var i = 0; i < names.length; i++) {
+        var opt = document.createElement('option');
+        opt.value = names[i];
+        opt.textContent = names[i];
+        probeSelect.appendChild(opt);
+      }
+      if (cur && clusterProbes[cur]) probeSelect.value = cur;
+    }
+
+    function renderClusterStatus() {
+      if (!clusterHealth) return;
+      document.getElementById('cluster-total').textContent = 'probes: ' + clusterHealth.total_probes;
+      document.getElementById('cluster-healthy').textContent = 'healthy: ' + clusterHealth.healthy;
+      document.getElementById('cluster-warn').textContent = 'warn: ' + clusterHealth.warning;
+      document.getElementById('cluster-error').textContent = 'error: ' + clusterHealth.error;
+      document.getElementById('cluster-time').textContent = new Date().toLocaleTimeString();
+    }
+
+    function renderCluster() {
+      var view = viewSelect.value;
+      probeSelect.style.display = (view === 'compare') ? '' : 'none';
+      var el = document.getElementById('cluster-content');
+      switch(view) {
+        case 'overview': renderOverview(el); break;
+        case 'health': renderHealth(el); break;
+        case 'compare': renderCompare(el); break;
+      }
+      renderClusterStatus();
+    }
+
+    function renderOverview(el) {
+      var names = Object.keys(clusterProbes).sort();
+      if (names.length === 0) {
+        el.textContent = '';
+        var card = document.createElement('div');
+        card.className = 'card';
+        var p = document.createElement('p');
+        p.style.color = 'var(--fg2)';
+        p.textContent = 'No probes connected yet. Run gnockpit probe --server <url> --token <token> on your validator nodes.';
+        card.appendChild(p);
+        el.appendChild(card);
+        return;
+      }
+      var grid = document.createElement('div');
+      grid.style.cssText = 'display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:12px;';
+      for (var i = 0; i < names.length; i++) {
+        var ps = clusterProbes[names[i]];
+        var color = ps.connected ? 'var(--green)' : 'var(--red)';
+        var card = document.createElement('div');
+        card.className = 'card';
+        card.style.borderLeft = '3px solid ' + color;
+        var h2 = document.createElement('h2');
+        h2.style.cursor = 'default';
+        h2.textContent = names[i];
+        card.appendChild(h2);
+        var kv = document.createElement('div');
+        kv.className = 'kv';
+        addKV(kv, 'status', ps.connected ? 'connected' : 'disconnected', color);
+        addKV(kv, 'chain', ps.chain_id || '-');
+        addKV(kv, 'height', ps.height || '-');
+        if (ps.snapshot && ps.snapshot.consensus) {
+          addKV(kv, 'consensus', 'r=' + ps.snapshot.consensus.round + ' s=' + ps.snapshot.consensus.step);
+        }
+        if (ps.snapshot && ps.snapshot.peers) {
+          addKV(kv, 'peers', String(ps.snapshot.peers.length));
+        }
+        if (ps.last_update) {
+          var sec = Math.floor((Date.now() - new Date(ps.last_update).getTime()) / 1000);
+          addKV(kv, 'last update', sec + 's ago');
+        }
+        if (ps.msg_per_min) addKV(kv, 'msg/min', String(ps.msg_per_min));
+        if (ps.violations) addKV(kv, 'violations', String(ps.violations), 'var(--red)');
+        card.appendChild(kv);
+        grid.appendChild(card);
+      }
+      el.textContent = '';
+      el.appendChild(grid);
+    }
+
+    function renderHealth(el) {
+      el.textContent = '';
+      if (!clusterHealth || !clusterHealth.issues || clusterHealth.issues.length === 0) {
+        var card = document.createElement('div');
+        card.className = 'card';
+        var p = document.createElement('p');
+        p.className = 'ok';
+        p.style.fontSize = '16px';
+        p.textContent = 'All healthy \u2014 no issues detected';
+        card.appendChild(p);
+        el.appendChild(card);
+        return;
+      }
+      var card = document.createElement('div');
+      card.className = 'card';
+      var tbl = document.createElement('table');
+      var thead = document.createElement('tr');
+      ['Severity','Check','Detail','Probes'].forEach(function(t) {
+        var th = document.createElement('th');
+        th.textContent = t;
+        thead.appendChild(th);
+      });
+      tbl.appendChild(thead);
+      for (var i = 0; i < clusterHealth.issues.length; i++) {
+        var issue = clusterHealth.issues[i];
+        var tr = document.createElement('tr');
+        var td1 = document.createElement('td');
+        td1.className = issue.severity === 'error' ? 'err' : (issue.severity === 'warn' ? 'warn' : 'ok');
+        td1.textContent = issue.severity;
+        tr.appendChild(td1);
+        var td2 = document.createElement('td');
+        td2.textContent = issue.check;
+        tr.appendChild(td2);
+        var td3 = document.createElement('td');
+        td3.textContent = issue.detail;
+        tr.appendChild(td3);
+        var td4 = document.createElement('td');
+        td4.textContent = issue.probes ? issue.probes.join(', ') : '-';
+        tr.appendChild(td4);
+        tbl.appendChild(tr);
+      }
+      card.appendChild(tbl);
+      el.appendChild(card);
+    }
+
+    function renderCompare(el) {
+      el.textContent = '';
+      var names = Object.keys(clusterProbes).sort();
+      if (names.length < 2) {
+        var card = document.createElement('div');
+        card.className = 'card';
+        var p = document.createElement('p');
+        p.style.color = 'var(--fg2)';
+        p.textContent = 'Need at least 2 probes to compare.';
+        card.appendChild(p);
+        el.appendChild(card);
+        return;
+      }
+      var left = probeSelect.value || names[0];
+      var right = names[0] === left ? names[1] : names[0];
+      var a = clusterProbes[left] || {};
+      var b = clusterProbes[right] || {};
+      var rows = [
+        ['status', a.connected ? 'connected' : 'disconnected', b.connected ? 'connected' : 'disconnected'],
+        ['chain', a.chain_id || '-', b.chain_id || '-'],
+        ['height', a.height || '-', b.height || '-'],
+      ];
+      if (a.snapshot && a.snapshot.consensus) rows.push(['round', a.snapshot.consensus.round + '/' + a.snapshot.consensus.step, (b.snapshot && b.snapshot.consensus) ? b.snapshot.consensus.round + '/' + b.snapshot.consensus.step : '-']);
+      if (a.snapshot && a.snapshot.peers) rows.push(['peers', String(a.snapshot.peers.length), (b.snapshot && b.snapshot.peers) ? String(b.snapshot.peers.length) : '-']);
+      if (a.snapshot && a.snapshot.validators) rows.push(['validators', String(a.snapshot.validators.length), (b.snapshot && b.snapshot.validators) ? String(b.snapshot.validators.length) : '-']);
+
+      var card = document.createElement('div');
+      card.className = 'card';
+      var tbl = document.createElement('table');
+      var thead = document.createElement('tr');
+      ['Metric', left, right].forEach(function(t) {
+        var th = document.createElement('th');
+        th.textContent = t;
+        thead.appendChild(th);
+      });
+      tbl.appendChild(thead);
+      for (var i = 0; i < rows.length; i++) {
+        var diff = rows[i][1] !== rows[i][2];
+        var tr = document.createElement('tr');
+        var td0 = document.createElement('td');
+        td0.style.color = 'var(--fg2)';
+        td0.textContent = rows[i][0];
+        tr.appendChild(td0);
+        var td1 = document.createElement('td');
+        if (diff) td1.className = 'err';
+        td1.textContent = rows[i][1];
+        tr.appendChild(td1);
+        var td2 = document.createElement('td');
+        if (diff) td2.className = 'err';
+        td2.textContent = rows[i][2];
+        tr.appendChild(td2);
+        tbl.appendChild(tr);
+      }
+      card.appendChild(tbl);
+      el.appendChild(card);
+    }
+
+    function addKV(parent, key, val, color) {
+      var k = document.createElement('span');
+      k.className = 'k';
+      k.textContent = key;
+      parent.appendChild(k);
+      var v = document.createElement('span');
+      v.className = 'v';
+      v.textContent = val;
+      if (color) v.style.color = color;
+      parent.appendChild(v);
+    }
+  }
+})();
+</script>
 </body>
 </html>
