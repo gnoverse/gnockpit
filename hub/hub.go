@@ -136,6 +136,14 @@ func (h *Hub) HandleProbeWS(w http.ResponseWriter, r *http.Request) {
 		conn.SetReadLimit(int64(h.MaxMsgKB) * 1024)
 	}
 
+	// Probes may take a long time to fetch snapshots (100 block queries),
+	// so set a generous read deadline and keep it alive with pongs.
+	conn.SetReadDeadline(time.Now().Add(120 * time.Second))
+	conn.SetPongHandler(func(string) error {
+		conn.SetReadDeadline(time.Now().Add(120 * time.Second))
+		return nil
+	})
+
 	pc := &probeConn{name: name, conn: conn}
 
 	h.mu.Lock()
@@ -168,6 +176,7 @@ func (h *Hub) HandleProbeWS(w http.ResponseWriter, r *http.Request) {
 	}()
 
 	for {
+		conn.SetReadDeadline(time.Now().Add(120 * time.Second))
 		_, msg, err := conn.ReadMessage()
 		if err != nil {
 			return

@@ -86,6 +86,17 @@ func (p *ProbeClient) connectAndPush(ctx context.Context, fetchSnapshot func(con
 		}
 	}()
 
+	// Ping loop to keep connection alive during long snapshot fetches
+	pingTicker := time.NewTicker(30 * time.Second)
+	defer pingTicker.Stop()
+	go func() {
+		for range pingTicker.C {
+			if err := conn.WriteControl(websocket.PingMessage, nil, time.Now().Add(5*time.Second)); err != nil {
+				return
+			}
+		}
+	}()
+
 	ticker := time.NewTicker(p.Interval)
 	defer ticker.Stop()
 
