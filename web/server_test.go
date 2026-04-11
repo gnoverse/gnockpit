@@ -145,20 +145,20 @@ func TestDockerBackendBinaryHashArgs(t *testing.T) {
 	}
 }
 
-func TestDockerBackendStreamLogsIncludesSince(t *testing.T) {
+func TestDockerBackendStreamLogsIncludesTail(t *testing.T) {
 	b := &DockerBackend{ContainerName: "mycontainer"}
 	args := b.streamLogsArgs()
-	hasSince := false
+	hasTail := false
 	for i, a := range args {
-		if a == "--since" && i+1 < len(args) {
-			hasSince = true
-			if args[i+1] != "1m" {
-				t.Errorf("--since value = %q, want %q", args[i+1], "1m")
+		if a == "--tail" && i+1 < len(args) {
+			hasTail = true
+			if args[i+1] != "300" {
+				t.Errorf("--tail value = %q, want %q", args[i+1], "300")
 			}
 		}
 	}
-	if !hasSince {
-		t.Errorf("streamLogsArgs() = %v, missing --since flag", args)
+	if !hasTail {
+		t.Errorf("streamLogsArgs() = %v, missing --tail flag", args)
 	}
 }
 
