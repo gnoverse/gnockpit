@@ -3167,61 +3167,145 @@ initPush();
     if (d.mode !== 'cluster') return;
     document.title = 'gnockpit cluster';
     initClusterUI();
-  }).catch(function() { /* single-node mode, do nothing */ });
+  }).catch(function() {});
 
   function initClusterUI() {
-    // Hide single-node content
-    var cards = document.querySelectorAll('.card, .status-bar, #error-banner, h1, .subtitle');
-    for (var i = 0; i < cards.length; i++) cards[i].style.display = 'none';
-    // Close existing WS if any
+    // Save references to single-node elements before hiding
+    var singleNodeEls = document.querySelectorAll('.card, .status-bar, #error-banner');
+    var singleH1 = document.querySelector('h1');
+    var singleSubtitle = document.querySelector('.subtitle');
+    for (var i = 0; i < singleNodeEls.length; i++) singleNodeEls[i].style.display = 'none';
+    if (singleH1) singleH1.style.display = 'none';
+    if (singleSubtitle) singleSubtitle.style.display = 'none';
     if (typeof ws !== 'undefined' && ws) { ws.onclose = null; ws.close(); }
-
-    var root = document.createElement('div');
-    root.id = 'cluster-root';
-    root.innerHTML = [
-      '<h1 style="color:var(--blue);font-size:18px;margin-bottom:4px;">gnockpit cluster</h1>',
-      '<div class="status-bar" id="cluster-status" style="display:flex;">',
-      '  <span id="cluster-total">probes: -</span>',
-      '  <span class="ok" id="cluster-healthy">healthy: -</span>',
-      '  <span class="warn" id="cluster-warn">warn: -</span>',
-      '  <span class="err" id="cluster-error">error: -</span>',
-      '  <span class="sb-right" id="cluster-time">-</span>',
-      '</div>',
-      '<div style="margin-bottom:12px;display:flex;gap:8px;align-items:center;">',
-      '  <label style="color:var(--fg2);font-size:12px;">View:</label>',
-      '  <select id="cluster-view" style="background:var(--bg2);color:var(--fg);border:1px solid var(--border);padding:4px 8px;border-radius:4px;font-family:inherit;font-size:13px;">',
-      '    <option value="overview">Cluster Overview</option>',
-      '    <option value="health">Health Issues</option>',
-      '    <option value="compare">Compare</option>',
-      '  </select>',
-      '  <select id="cluster-probe-select" style="display:none;background:var(--bg2);color:var(--fg);border:1px solid var(--border);padding:4px 8px;border-radius:4px;font-family:inherit;font-size:13px;">',
-      '  </select>',
-      '</div>',
-      '<div id="cluster-content"></div>',
-    ].join('\n');
-    document.body.insertBefore(root, document.body.firstChild);
 
     var clusterProbes = {};
     var clusterHealth = null;
+    var activeTab = 'overview';
+    var singleNodeVisible = false;
 
-    // View switching
-    var viewSelect = document.getElementById('cluster-view');
-    var probeSelect = document.getElementById('cluster-probe-select');
-    viewSelect.addEventListener('change', renderCluster);
-    probeSelect.addEventListener('change', renderCluster);
+    // Build top bar
+    var topBar = document.createElement('div');
+    topBar.id = 'cluster-topbar';
+    topBar.style.cssText = 'display:flex;align-items:center;gap:0;margin-bottom:12px;border-bottom:1px solid var(--border);padding-bottom:0;flex-wrap:wrap;';
+
+    var title = document.createElement('span');
+    title.style.cssText = 'color:var(--blue);font-size:16px;font-weight:bold;margin-right:16px;padding-bottom:8px;';
+    title.textContent = 'gnockpit';
+    topBar.appendChild(title);
+
+    var tabs = ['overview','health','compare','view-as'];
+    var tabLabels = {overview:'Overview',health:'Health',compare:'Compare','view-as':'View As'};
+    var tabEls = {};
+    tabs.forEach(function(t) {
+      var btn = document.createElement('button');
+      btn.textContent = tabLabels[t];
+      btn.dataset.tab = t;
+      btn.style.cssText = 'background:none;border:none;border-bottom:2px solid transparent;color:var(--fg2);font-family:inherit;font-size:13px;padding:6px 12px 8px;cursor:pointer;';
+      btn.addEventListener('click', function() { switchTab(t); });
+      topBar.appendChild(btn);
+      tabEls[t] = btn;
+    });
+
+    // Probe dropdown (for view-as and compare)
+    var probeSelect = document.createElement('select');
+    probeSelect.id = 'cluster-probe-select';
+    probeSelect.style.cssText = 'display:none;background:var(--bg2);color:var(--fg);border:1px solid var(--border);padding:4px 8px;border-radius:4px;font-family:inherit;font-size:13px;margin-left:8px;';
+    probeSelect.addEventListener('change', function() { renderTab(); });
+    topBar.appendChild(probeSelect);
+
+    // Status summary (right-aligned)
+    var statusSpan = document.createElement('span');
+    statusSpan.id = 'cluster-status-summary';
+    statusSpan.style.cssText = 'margin-left:auto;font-size:12px;color:var(--fg2);padding-bottom:8px;';
+    topBar.appendChild(statusSpan);
+
+    document.body.insertBefore(topBar, document.body.firstChild);
+
+    // Content area
+    var content = document.createElement('div');
+    content.id = 'cluster-content';
+    topBar.insertAdjacentElement('afterend', content);
+
+    function switchTab(tab) {
+      activeTab = tab;
+      // Update tab styles
+      tabs.forEach(function(t) {
+        tabEls[t].style.borderBottomColor = t === tab ? 'var(--blue)' : 'transparent';
+        tabEls[t].style.color = t === tab ? 'var(--fg)' : 'var(--fg2)';
+      });
+      // Show/hide probe dropdown
+      probeSelect.style.display = (tab === 'view-as' || tab === 'compare') ? '' : 'none';
+      // Show/hide single-node dashboard
+      if (tab === 'view-as') {
+        showSingleNodeDashboard();
+      } else {
+        hideSingleNodeDashboard();
+      }
+      renderTab();
+    }
+
+    function showSingleNodeDashboard() {
+      if (singleNodeVisible) return;
+      singleNodeVisible = true;
+      content.style.display = 'none';
+      for (var i = 0; i < singleNodeEls.length; i++) singleNodeEls[i].style.display = '';
+      // Hide h1/subtitle in view-as mode — topbar is enough
+      if (singleH1) singleH1.style.display = 'none';
+      if (singleSubtitle) singleSubtitle.style.display = 'none';
+      feedProbeToSingleNode();
+    }
+
+    function hideSingleNodeDashboard() {
+      if (!singleNodeVisible) return;
+      singleNodeVisible = false;
+      content.style.display = '';
+      for (var i = 0; i < singleNodeEls.length; i++) singleNodeEls[i].style.display = 'none';
+    }
+
+    function feedProbeToSingleNode() {
+      var name = probeSelect.value;
+      var ps = clusterProbes[name];
+      if (!ps || !ps.snapshot) return;
+      var snap = ps.snapshot;
+      // Feed data into the existing single-node render functions
+      if (snap.status && typeof handleStatus === 'function') handleStatus(snap.status);
+      if (snap.peers && typeof setPeers === 'function') { setPeers(snap.peers); if (typeof scheduleRenderNetwork === 'function') scheduleRenderNetwork(); }
+      if (snap.consensus && typeof setVotes === 'function') {
+        // Build a votes report matching what the single-node WS sends
+        var votes = {
+          height: snap.consensus.height,
+          round: snap.consensus.round,
+          step: snap.consensus.step,
+          proposer: snap.consensus.proposer,
+          validators: snap.consensus.votes || []
+        };
+        setVotes(votes);
+        if (typeof scheduleRenderNetwork === 'function') scheduleRenderNetwork();
+      }
+      if (snap.signing && typeof handleSigning === 'function') handleSigning(snap.signing);
+      if (typeof handleChecks === 'function') {
+        handleChecks({
+          genesis_sha256: snap.genesis_sha256 || '',
+          apphash_b2: snap.apphash_b2 || '',
+          uptime: snap.uptime || '',
+          system: snap.system || null
+        });
+      }
+      if (typeof handleTime === 'function') handleTime(new Date().toLocaleTimeString());
+    }
 
     // Connect to hub WS
     var proto = (location.protocol === 'https:' ? 'wss:' : 'ws:');
-    var cws;
     function connectCluster() {
-      cws = new WebSocket(proto + '//' + location.host + '/ws');
+      var cws = new WebSocket(proto + '//' + location.host + '/ws');
       cws.onmessage = function(e) {
         var msg = JSON.parse(e.data);
         switch(msg.type) {
           case 'cluster_snapshot':
             clusterProbes = msg.data || {};
             updateProbeSelect();
-            renderCluster();
+            renderTab();
             break;
           case 'probe_update':
             if (msg.data && msg.data.probe) {
@@ -3236,29 +3320,28 @@ initPush();
                 ps.height = msg.data.data.status.sync_info.latest_block_height;
               }
               updateProbeSelect();
-              renderCluster();
+              if (singleNodeVisible && probeSelect.value === msg.data.probe) feedProbeToSingleNode();
+              else renderTab();
             }
             break;
           case 'cluster_health':
             clusterHealth = msg.data;
-            renderClusterStatus();
-            if (viewSelect.value === 'health') renderCluster();
+            renderStatusSummary();
+            if (activeTab === 'health') renderTab();
             break;
           case 'probe_connected':
             if (clusterProbes[msg.data]) clusterProbes[msg.data].connected = true;
             else clusterProbes[msg.data] = {name: msg.data, connected: true};
             updateProbeSelect();
-            renderCluster();
+            renderTab();
             break;
           case 'probe_disconnected':
             if (clusterProbes[msg.data]) clusterProbes[msg.data].connected = false;
-            renderCluster();
+            renderTab();
             break;
         }
       };
-      cws.onclose = function() {
-        setTimeout(connectCluster, 2000);
-      };
+      cws.onclose = function() { setTimeout(connectCluster, 2000); };
     }
     connectCluster();
 
@@ -3275,36 +3358,40 @@ initPush();
       if (cur && clusterProbes[cur]) probeSelect.value = cur;
     }
 
-    function renderClusterStatus() {
+    function renderStatusSummary() {
       if (!clusterHealth) return;
-      document.getElementById('cluster-total').textContent = 'probes: ' + clusterHealth.total_probes;
-      document.getElementById('cluster-healthy').textContent = 'healthy: ' + clusterHealth.healthy;
-      document.getElementById('cluster-warn').textContent = 'warn: ' + clusterHealth.warning;
-      document.getElementById('cluster-error').textContent = 'error: ' + clusterHealth.error;
-      document.getElementById('cluster-time').textContent = new Date().toLocaleTimeString();
+      var parts = [];
+      parts.push(clusterHealth.total_probes + ' probes');
+      if (clusterHealth.healthy) parts.push(clusterHealth.healthy + ' ok');
+      if (clusterHealth.warning) parts.push(clusterHealth.warning + ' warn');
+      if (clusterHealth.error) parts.push(clusterHealth.error + ' err');
+      statusSpan.textContent = parts.join(' \u00b7 ') + ' \u00b7 ' + new Date().toLocaleTimeString();
+      // Color based on worst
+      if (clusterHealth.error > 0) statusSpan.style.color = 'var(--red)';
+      else if (clusterHealth.warning > 0) statusSpan.style.color = 'var(--yellow)';
+      else statusSpan.style.color = 'var(--green)';
     }
 
-    function renderCluster() {
-      var view = viewSelect.value;
-      probeSelect.style.display = (view === 'compare') ? '' : 'none';
-      var el = document.getElementById('cluster-content');
-      switch(view) {
+    function renderTab() {
+      if (activeTab === 'view-as') return; // handled by feedProbeToSingleNode
+      var el = content;
+      switch(activeTab) {
         case 'overview': renderOverview(el); break;
         case 'health': renderHealth(el); break;
         case 'compare': renderCompare(el); break;
       }
-      renderClusterStatus();
+      renderStatusSummary();
     }
 
     function renderOverview(el) {
       var names = Object.keys(clusterProbes).sort();
+      el.textContent = '';
       if (names.length === 0) {
-        el.textContent = '';
         var card = document.createElement('div');
         card.className = 'card';
         var p = document.createElement('p');
         p.style.color = 'var(--fg2)';
-        p.textContent = 'No probes connected yet. Run gnockpit probe --server <url> --token <token> on your validator nodes.';
+        p.textContent = 'No probes connected. Run: gnockpit probe --server <url> --token <token>';
         card.appendChild(p);
         el.appendChild(card);
         return;
@@ -3316,9 +3403,14 @@ initPush();
         var color = ps.connected ? 'var(--green)' : 'var(--red)';
         var card = document.createElement('div');
         card.className = 'card';
-        card.style.borderLeft = '3px solid ' + color;
+        card.style.cssText = 'border-left:3px solid ' + color + ';cursor:pointer;';
+        card.dataset.probe = names[i];
+        card.addEventListener('click', function() {
+          probeSelect.value = this.dataset.probe;
+          switchTab('view-as');
+        });
         var h2 = document.createElement('h2');
-        h2.style.cursor = 'default';
+        h2.style.cursor = 'pointer';
         h2.textContent = names[i];
         card.appendChild(h2);
         var kv = document.createElement('div');
@@ -3326,12 +3418,8 @@ initPush();
         addKV(kv, 'status', ps.connected ? 'connected' : 'disconnected', color);
         addKV(kv, 'chain', ps.chain_id || '-');
         addKV(kv, 'height', ps.height || '-');
-        if (ps.snapshot && ps.snapshot.consensus) {
-          addKV(kv, 'consensus', 'r=' + ps.snapshot.consensus.round + ' s=' + ps.snapshot.consensus.step);
-        }
-        if (ps.snapshot && ps.snapshot.peers) {
-          addKV(kv, 'peers', String(ps.snapshot.peers.length));
-        }
+        if (ps.snapshot && ps.snapshot.consensus) addKV(kv, 'consensus', 'r=' + ps.snapshot.consensus.round + ' s=' + ps.snapshot.consensus.step);
+        if (ps.snapshot && ps.snapshot.peers) addKV(kv, 'peers', String(ps.snapshot.peers.length));
         if (ps.last_update) {
           var sec = Math.floor((Date.now() - new Date(ps.last_update).getTime()) / 1000);
           addKV(kv, 'last update', sec + 's ago');
@@ -3341,7 +3429,6 @@ initPush();
         card.appendChild(kv);
         grid.appendChild(card);
       }
-      el.textContent = '';
       el.appendChild(grid);
     }
 
@@ -3363,9 +3450,7 @@ initPush();
       var tbl = document.createElement('table');
       var thead = document.createElement('tr');
       ['Severity','Check','Detail','Probes'].forEach(function(t) {
-        var th = document.createElement('th');
-        th.textContent = t;
-        thead.appendChild(th);
+        var th = document.createElement('th'); th.textContent = t; thead.appendChild(th);
       });
       tbl.appendChild(thead);
       for (var i = 0; i < clusterHealth.issues.length; i++) {
@@ -3375,15 +3460,9 @@ initPush();
         td1.className = issue.severity === 'error' ? 'err' : (issue.severity === 'warn' ? 'warn' : 'ok');
         td1.textContent = issue.severity;
         tr.appendChild(td1);
-        var td2 = document.createElement('td');
-        td2.textContent = issue.check;
-        tr.appendChild(td2);
-        var td3 = document.createElement('td');
-        td3.textContent = issue.detail;
-        tr.appendChild(td3);
-        var td4 = document.createElement('td');
-        td4.textContent = issue.probes ? issue.probes.join(', ') : '-';
-        tr.appendChild(td4);
+        var td2 = document.createElement('td'); td2.textContent = issue.check; tr.appendChild(td2);
+        var td3 = document.createElement('td'); td3.textContent = issue.detail; tr.appendChild(td3);
+        var td4 = document.createElement('td'); td4.textContent = issue.probes ? issue.probes.join(', ') : '-'; tr.appendChild(td4);
         tbl.appendChild(tr);
       }
       card.appendChild(tbl);
@@ -3421,26 +3500,15 @@ initPush();
       var tbl = document.createElement('table');
       var thead = document.createElement('tr');
       ['Metric', left, right].forEach(function(t) {
-        var th = document.createElement('th');
-        th.textContent = t;
-        thead.appendChild(th);
+        var th = document.createElement('th'); th.textContent = t; thead.appendChild(th);
       });
       tbl.appendChild(thead);
       for (var i = 0; i < rows.length; i++) {
         var diff = rows[i][1] !== rows[i][2];
         var tr = document.createElement('tr');
-        var td0 = document.createElement('td');
-        td0.style.color = 'var(--fg2)';
-        td0.textContent = rows[i][0];
-        tr.appendChild(td0);
-        var td1 = document.createElement('td');
-        if (diff) td1.className = 'err';
-        td1.textContent = rows[i][1];
-        tr.appendChild(td1);
-        var td2 = document.createElement('td');
-        if (diff) td2.className = 'err';
-        td2.textContent = rows[i][2];
-        tr.appendChild(td2);
+        var td0 = document.createElement('td'); td0.style.color = 'var(--fg2)'; td0.textContent = rows[i][0]; tr.appendChild(td0);
+        var td1 = document.createElement('td'); if (diff) td1.className = 'err'; td1.textContent = rows[i][1]; tr.appendChild(td1);
+        var td2 = document.createElement('td'); if (diff) td2.className = 'err'; td2.textContent = rows[i][2]; tr.appendChild(td2);
         tbl.appendChild(tr);
       }
       card.appendChild(tbl);
@@ -3448,16 +3516,12 @@ initPush();
     }
 
     function addKV(parent, key, val, color) {
-      var k = document.createElement('span');
-      k.className = 'k';
-      k.textContent = key;
-      parent.appendChild(k);
-      var v = document.createElement('span');
-      v.className = 'v';
-      v.textContent = val;
-      if (color) v.style.color = color;
-      parent.appendChild(v);
+      var k = document.createElement('span'); k.className = 'k'; k.textContent = key; parent.appendChild(k);
+      var v = document.createElement('span'); v.className = 'v'; v.textContent = val; if (color) v.style.color = color; parent.appendChild(v);
     }
+
+    // Initialize on overview tab
+    switchTab('overview');
   }
 })();
 </script>
