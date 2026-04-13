@@ -260,7 +260,7 @@ func (s *Server) buildCheckData(snap *node.Snapshot) checkData {
 	}
 	if snap.Status != nil {
 		cd.ValAddress = snap.Status.ValidatorInfo.Address
-		cd.ValPubKey = snap.Status.ValidatorInfo.PubKey.Value
+		cd.ValPubKey = snap.Status.ValidatorInfo.PubKey.Bech32()
 	}
 	return cd
 }

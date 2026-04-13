@@ -2,6 +2,7 @@ package node
 
 import (
 	"encoding/base64"
+	"encoding/json"
 	"time"
 
 	"github.com/gnolang/gno/tm2/pkg/crypto"
@@ -53,6 +54,18 @@ func (pk PubKey) keyType() string {
 		return "secp256k1"
 	}
 	return pk.AminoType
+}
+
+// MarshalJSON includes a computed "bech32" field in the JSON output.
+func (pk PubKey) MarshalJSON() ([]byte, error) {
+	type raw PubKey
+	return json.Marshal(struct {
+		raw
+		Bech32 string `json:"bech32,omitempty"`
+	}{
+		raw:    raw(pk),
+		Bech32: pk.Bech32(),
+	})
 }
 
 // Bech32 returns the bech32-encoded public key (gpub1...).

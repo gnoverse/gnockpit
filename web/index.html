@@ -2068,8 +2068,8 @@ function handleStatus(d) {
         vaEl.textContent = '-';
       }
       vaEl.className = 'v';
-      if (d.validator_info.pub_key && d.validator_info.pub_key.value)
-        setText('d-pubkey', d.validator_info.pub_key.value);
+      if (d.validator_info.pub_key && d.validator_info.pub_key.bech32)
+        setText('d-pubkey', d.validator_info.pub_key.bech32);
     }
     // Re-render network if this is the first status (so "this node" row appears)
     if (!hadStatus && lastPeers) scheduleRenderNetwork();
