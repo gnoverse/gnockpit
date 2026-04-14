@@ -678,6 +678,7 @@ func webCmd() *cobra.Command {
 			if flagPublicURL != "" {
 				pushMgr.SetPublicURL(flagPublicURL)
 			}
+			srv.MissedBlocksPct = flagMissedBlocksPct
 			srv.PushManager = pushMgr
 
 			return srv.Run(ctx)

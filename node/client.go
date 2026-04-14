@@ -208,7 +208,7 @@ func (c *Client) GetBlockAppHash(ctx context.Context, height int) (string, error
 }
 
 // GetSigningStats fetches the last N blocks and computes validator signing stats.
-func (c *Client) GetSigningStats(ctx context.Context, currentHeight int, window int) (*SigningStats, error) {
+func (c *Client) GetSigningStats(ctx context.Context, currentHeight int, window int, missedBlocksPct int) (*SigningStats, error) {
 	if currentHeight < 2 || window < 1 {
 		return nil, fmt.Errorf("need height >= 2 and window >= 1")
 	}
@@ -228,9 +228,10 @@ func (c *Client) GetSigningStats(ctx context.Context, currentHeight int, window 
 	}
 
 	stats := &SigningStats{
-		WindowSize:     window,
-		TotalCount:     len(valAddrs),
-		ValidatorSigns: make(map[string]int),
+		WindowSize:      window,
+		TotalCount:      len(valAddrs),
+		MissedBlocksPct: missedBlocksPct,
+		ValidatorSigns:  make(map[string]int),
 	}
 
 	startHeight := currentHeight - window + 1
@@ -363,12 +364,12 @@ func (c *Client) GetSigningStats(ctx context.Context, currentHeight int, window 
 		perf.Signed = stats.ValidatorSigns[addr]
 	}
 
-	// Count active (signed ALL blocks in window)
-	for range valAddrs {
-		stats.ActiveCount = 0
-	}
+	// Count active (missed fewer than missedBlocksPct% of blocks in window)
 	for addr := range valAddrs {
-		if stats.ValidatorSigns[addr] >= window {
+		signed := stats.ValidatorSigns[addr]
+		missed := window - signed
+		missedPct := missed * 100 / window
+		if missedPct < missedBlocksPct {
 			stats.ActiveCount++
 		}
 	}

@@ -247,8 +247,9 @@ type ValidatorPerf struct {
 // SigningStats summarizes validator signing activity over recent blocks.
 type SigningStats struct {
 	WindowSize     int                       `json:"window_size"`
-	ActiveCount    int                       `json:"active_count"`    // signed all blocks in window
-	TotalCount     int                       `json:"total_count"`     // validators in set
+	ActiveCount     int                       `json:"active_count"`     // validators below missed-blocks threshold
+	TotalCount      int                       `json:"total_count"`     // validators in set
+	MissedBlocksPct int                       `json:"missed_blocks_pct"` // threshold used for active count
 	BFTThreshold   int                       `json:"bft_threshold"`   // minimum needed for consensus
 	Margin         int                       `json:"margin"`          // active - threshold (how many can go down)
 	CanAddOne      bool                      `json:"can_add_one"`     // safe to add a validator?

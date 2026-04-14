@@ -505,6 +505,7 @@ var lastPeers = null;
 var lastStatus = null;
 var lastRecentBlockHeight = 0;
 var lastRecentBlocks = null;
+var lastMissedBlocksPct = 5;
 
 // URL state for checkboxes
 var urlParams = new URLSearchParams(window.location.search);
@@ -914,7 +915,7 @@ function renderNetwork() {
       totalVP += vp;
       if (vi.prevoted) { pvCount++; pvVP += vp; }
       if (vi.precommit) { pcCount++; pcVP += vp; }
-      if (typeof vi.sign_rate === 'number' && vi.sign_rate > 0) activeVP += vp;
+      if (typeof vi.sign_rate === 'number' && (100 - vi.sign_rate) < lastMissedBlocksPct) activeVP += vp;
     }
   }
   var bftVP = Math.floor(totalVP * 2 / 3) + 1;
@@ -2077,6 +2078,7 @@ function handleStatus(d) {
 
 function handleSigning(d) {
     if (!d) return;
+    if (typeof d.missed_blocks_pct === 'number') lastMissedBlocksPct = d.missed_blocks_pct;
     var activeEl = $('ns-active');
     setText('ns-active', d.active_count + '/' + d.total_count);
     activeEl.className = d.active_count >= d.total_count ? 'v ok' : d.active_count > d.total_count * 2 / 3 ? 'v warn' : 'v err';

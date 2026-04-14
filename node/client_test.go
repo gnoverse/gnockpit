@@ -258,7 +258,7 @@ func TestGetSigningStatsMissingValidators(t *testing.T) {
 	c.Names.Register(addr1, "validator-one")
 	c.Names.Register(addr3, "validator-three")
 
-	stats, err := c.GetSigningStats(context.Background(), 2, 1)
+	stats, err := c.GetSigningStats(context.Background(), 2, 1, 5)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -299,6 +299,72 @@ func TestGetSigningStatsMissingValidators(t *testing.T) {
 	}
 	if m2.Address != addr2 {
 		t.Errorf("m2.Address = %q, want %s", m2.Address, addr2)
+	}
+}
+
+func TestActiveCountWithMissedBlocksThreshold(t *testing.T) {
+	const (
+		addrA = "g1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+		addrB = "g1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/validators":
+			fmt.Fprintf(w, `{"jsonrpc":"2.0","result":{"validators":[
+				{"address":%q,"pub_key":{"type":"ed25519","value":"AA"},"voting_power":"1"},
+				{"address":%q,"pub_key":{"type":"ed25519","value":"BB"},"voting_power":"1"}
+			]}}`, addrA, addrB)
+		default:
+			h := r.URL.Query().Get("height")
+			if h == "2" {
+				// Both validators sign
+				fmt.Fprintf(w, `{"jsonrpc":"2.0","result":{"block_meta":{"header":{
+					"height":"2","time":"2026-01-01T00:00:00Z","proposer_address":%q
+				}},"block":{"last_commit":{"precommits":[
+					{"validator_address":%q},
+					{"validator_address":%q}
+				]}}}}`, addrA, addrA, addrB)
+			} else {
+				// Only A signs
+				fmt.Fprintf(w, `{"jsonrpc":"2.0","result":{"block_meta":{"header":{
+					"height":"3","time":"2026-01-01T00:00:01Z","proposer_address":%q
+				}},"block":{"last_commit":{"precommits":[
+					{"validator_address":%q},
+					null
+				]}}}}`, addrA, addrA)
+			}
+		}
+	}))
+	defer srv.Close()
+
+	c := NewClient(srv.URL, 5*time.Second)
+
+	// B signed 1/2 blocks → 50% missed.
+	// With threshold 51%: 50 < 51 → B is active → ActiveCount=2
+	stats, err := c.GetSigningStats(context.Background(), 3, 2, 51)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stats.ActiveCount != 2 {
+		t.Errorf("threshold 51%%: ActiveCount = %d, want 2", stats.ActiveCount)
+	}
+
+	// With threshold 50%: 50 >= 50 → B is inactive → ActiveCount=1
+	stats, err = c.GetSigningStats(context.Background(), 3, 2, 50)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stats.ActiveCount != 1 {
+		t.Errorf("threshold 50%%: ActiveCount = %d, want 1", stats.ActiveCount)
+	}
+
+	// With threshold 100%: even 50% missed < 100% → both active
+	stats, err = c.GetSigningStats(context.Background(), 3, 2, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stats.ActiveCount != 2 {
+		t.Errorf("threshold 100%%: ActiveCount = %d, want 2", stats.ActiveCount)
 	}
 }
 

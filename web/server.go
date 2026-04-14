@@ -77,10 +77,11 @@ type Server struct {
 	chainDataTime  time.Time
 
 	// Configurable paths (set by caller before Run)
-	DataDir     string         // gnoland data directory (for disk stats)
-	GenesisPath string         // path to genesis.json (for hash computation)
-	Backend     RuntimeBackend // log and process metrics backend (nil = unavailable)
-	PushManager *push.Manager  // push notification manager (nil = disabled)
+	DataDir         string         // gnoland data directory (for disk stats)
+	GenesisPath     string         // path to genesis.json (for hash computation)
+	Backend         RuntimeBackend // log and process metrics backend (nil = unavailable)
+	PushManager     *push.Manager  // push notification manager (nil = disabled)
+	MissedBlocksPct int            // missed-block threshold for active validator counting
 
 	// Peer activity from log parsing
 	peerActivity   sync.Map // IP -> time.Time (last seen)
@@ -813,7 +814,7 @@ func (s *Server) fetchSnapshot(ctx context.Context) *node.Snapshot {
 		var h int
 		fmt.Sscanf(snap.Status.SyncInfo.LatestBlockHeight, "%d", &h)
 		if h > 2 {
-			signing, err := s.Client.GetSigningStats(ctx, h, 100)
+			signing, err := s.Client.GetSigningStats(ctx, h, 100, s.MissedBlocksPct)
 			if err == nil {
 				snap.Signing = signing
 			}
