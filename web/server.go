@@ -828,89 +828,87 @@ func (s *Server) fetchSnapshot(ctx context.Context) *node.Snapshot {
 
 	snap.System = s.collectSystemInfo(ctx)
 
-	// === Definitive validator↔peer correlation ===
-	// For validators with unknown names, try to match them to unmatched peers.
-	// Strategy: find validators with no name AND peers with no validator address.
-	// If a peer's moniker looks like a validator (contains "val") and shares an IP
-	// with other known validators, it's likely a validator on that infra.
-	if len(snap.Validators) > 0 && len(snap.Peers) > 0 {
-		// Step 1: direct matches — peer already has ValAddress that's in the validator set
-		matchedAddrs := map[string]bool{}
-		matchedPeers := map[string]bool{}
-		for _, p := range snap.Peers {
-			if p.ValAddress != "" {
-				for _, v := range snap.Validators {
-					if v.Address == p.ValAddress {
-						if p.Moniker != "" {
-							s.Client.Names.Register(v.Address, p.Moniker)
-						}
-						matchedAddrs[v.Address] = true
-						matchedPeers[p.Moniker] = true
-						break
-					}
-				}
-			}
-		}
+	// gnockpit-names.json is the single source of truth for validator names.
+	// QueryAllPeers above already filled gaps with monikers it discovered via
+	// peer /status RPC (Register is non-overwriting). For any validator address
+	// still unnamed, EnsureName assigns "unknown-val-N" and persists it. Then
+	// refresh Name fields in the snapshot so the UI sees the canonical names.
+	s.ensureValidatorNames(snap)
 
-		// Step 2: for remaining unmatched validators, try to correlate with unmatched peers
-		// by querying each unmatched peer's RPC directly and matching the returned node-id
-		for _, p := range snap.Peers {
-			if matchedPeers[p.Moniker] || p.Moniker == "" {
-				continue
-			}
-			// Check if this peer's moniker is already known for a validator
-			if addr, ok := s.Client.Names.AddrByMoniker(p.Moniker); ok {
-				for _, v := range snap.Validators {
-					if v.Address == addr {
-						matchedAddrs[addr] = true
-						matchedPeers[p.Moniker] = true
-						break
-					}
-				}
-			}
-		}
+	return snap
+}
 
-		// Step 3: last resort — for each unknown validator address, find an unmatched
-		// peer on the same IP as a known validator from the same team
-		unmatchedVals := []string{}
-		for _, v := range snap.Validators {
-			if !matchedAddrs[v.Address] && s.Client.Names.Name(v.Address) == v.Address {
-				unmatchedVals = append(unmatchedVals, v.Address)
+// ensureValidatorNames walks every validator address in the snapshot, calls
+// EnsureName so each one is registered (assigning unknown-val-N if no
+// candidate moniker is available), then refreshes Name fields so the UI
+// reads canonical values from gnockpit-names.json.
+func (s *Server) ensureValidatorNames(snap *node.Snapshot) {
+	if snap == nil {
+		return
+	}
+
+	// Collect candidate monikers per address from peers.
+	candidates := map[string]string{}
+	for _, p := range snap.Peers {
+		if p.ValAddress != "" && p.Moniker != "" {
+			if _, ok := candidates[p.ValAddress]; !ok {
+				candidates[p.ValAddress] = p.Moniker
 			}
 		}
-		unmatchedPeers := []node.Peer{}
-		for _, p := range snap.Peers {
-			if !matchedPeers[p.Moniker] && p.Moniker != "" && p.Role == "full" {
-				unmatchedPeers = append(unmatchedPeers, p)
+	}
+
+	// Collect every validator address we've seen.
+	addrs := map[string]struct{}{}
+	for _, v := range snap.Validators {
+		if v.Address != "" {
+			addrs[v.Address] = struct{}{}
+		}
+	}
+	if snap.Consensus != nil {
+		if snap.Consensus.Proposer != "" {
+			addrs[snap.Consensus.Proposer] = struct{}{}
+		}
+		for _, vi := range snap.Consensus.Votes {
+			if vi.Address != "" {
+				addrs[vi.Address] = struct{}{}
 			}
 		}
-		// If there's exactly 1 unmatched validator and 1 unmatched "val-looking" peer, match them
-		if len(unmatchedVals) == 1 && len(unmatchedPeers) >= 1 {
-			for _, p := range unmatchedPeers {
-				if strings.Contains(strings.ToLower(p.Moniker), "val") {
-					s.Client.Names.Register(unmatchedVals[0], p.Moniker)
-					break
-				}
+	}
+	if snap.Signing != nil {
+		for addr := range snap.Signing.ValidatorSigns {
+			if addr != "" {
+				addrs[addr] = struct{}{}
 			}
 		}
-		// Also try: if N unmatched validators and N unmatched val-peers, match by order
-		// (less reliable but better than nothing)
-		if len(unmatchedVals) > 1 {
-			valPeers := []node.Peer{}
-			for _, p := range unmatchedPeers {
-				if strings.Contains(strings.ToLower(p.Moniker), "val") {
-					valPeers = append(valPeers, p)
-				}
-			}
-			if len(valPeers) == len(unmatchedVals) {
-				for i, addr := range unmatchedVals {
-					s.Client.Names.Register(addr, valPeers[i].Moniker)
+		for _, b := range snap.Signing.RecentBlocks {
+			for _, mv := range b.Missing {
+				if mv.Address != "" {
+					addrs[mv.Address] = struct{}{}
 				}
 			}
 		}
 	}
 
-	return snap
+	for addr := range addrs {
+		s.Client.Names.EnsureName(addr, candidates[addr])
+	}
+
+	// Refresh Name fields so the UI sees canonical names from the registry.
+	for i := range snap.Validators {
+		snap.Validators[i].Name = s.Client.Names.NameWithUs(snap.Validators[i].Address)
+	}
+	if snap.Consensus != nil {
+		for i := range snap.Consensus.Votes {
+			snap.Consensus.Votes[i].Name = s.Client.Names.NameWithUs(snap.Consensus.Votes[i].Address)
+		}
+	}
+	if snap.Signing != nil {
+		for i := range snap.Signing.RecentBlocks {
+			for j := range snap.Signing.RecentBlocks[i].Missing {
+				snap.Signing.RecentBlocks[i].Missing[j].Name = s.Client.Names.Name(snap.Signing.RecentBlocks[i].Missing[j].Address)
+			}
+		}
+	}
 }
 
 // --- Publish Loop ---

@@ -2,10 +2,21 @@ package node
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
+	"regexp"
+	"strconv"
 	"sync"
 	"time"
 )
+
+var unknownValPattern = regexp.MustCompile(`^unknown-val-(\d+)$`)
+
+// isUnknownVal reports whether name is an "unknown-val-N" placeholder
+// assigned when no real moniker could be discovered.
+func isUnknownVal(name string) bool {
+	return unknownValPattern.MatchString(name)
+}
 
 // NameRegistry dynamically maps validator addresses to monikers,
 // discovered from /net_info peers and their /status responses.
@@ -114,31 +125,119 @@ func (r *NameRegistry) Reload() {
 	r.load()
 }
 
+// SetOurs records our own validator address and moniker. The address is
+// always tracked so IsOurs / NameWithUs work. Registry writes follow the
+// same rule as Register: a real existing entry is preserved (file is
+// gospel); an unknown-val-N placeholder gets upgraded to the real moniker.
 func (r *NameRegistry) SetOurs(address, moniker string) {
 	r.mu.Lock()
-	defer r.mu.Unlock()
 	r.ourAddress = address
 	r.ourMoniker = moniker
-	if address != "" && moniker != "" {
-		r.addrToName[address] = moniker
-		r.nameToAddr[moniker] = address
+	if address == "" || moniker == "" {
+		r.mu.Unlock()
+		return
 	}
+	existing, existed := r.addrToName[address]
+	if existed && !isUnknownVal(existing) {
+		r.mu.Unlock()
+		return
+	}
+	if existed && existing == moniker {
+		r.mu.Unlock()
+		return
+	}
+	if existed {
+		delete(r.nameToAddr, existing)
+	}
+	r.addrToName[address] = moniker
+	r.nameToAddr[moniker] = address
+	r.mu.Unlock()
+	r.save()
 }
 
-// Register maps a validator address to a moniker.
-// Called when we discover a peer's validator address via their RPC /status.
+// Register maps a validator address to a moniker. gnockpit-names.json is
+// the source of truth: a real existing entry is never overwritten. An
+// "unknown-val-N" placeholder, however, is upgraded to the real moniker.
 func (r *NameRegistry) Register(address, moniker string) {
 	if address == "" || moniker == "" {
 		return
 	}
 	r.mu.Lock()
-	_, existed := r.addrToName[address]
+	existing, existed := r.addrToName[address]
+	if existed && !isUnknownVal(existing) {
+		r.mu.Unlock()
+		return
+	}
+	if existed && existing == moniker {
+		r.mu.Unlock()
+		return
+	}
+	if existed {
+		delete(r.nameToAddr, existing)
+	}
 	r.addrToName[address] = moniker
 	r.nameToAddr[moniker] = address
 	r.mu.Unlock()
-	if !existed {
-		r.save()
+	r.save()
+}
+
+// EnsureName guarantees that address has an entry in the registry.
+// A real existing entry is preserved. An "unknown-val-N" placeholder is
+// upgraded if a non-empty candidate is supplied (otherwise kept as-is to
+// avoid renumbering churn). If no entry exists, the first non-empty
+// candidate is used; otherwise a fresh "unknown-val-N" is assigned.
+func (r *NameRegistry) EnsureName(address string, candidates ...string) {
+	if address == "" {
+		return
 	}
+	r.mu.Lock()
+	existing, existed := r.addrToName[address]
+	if existed && !isUnknownVal(existing) {
+		r.mu.Unlock()
+		return
+	}
+	chosen := ""
+	for _, c := range candidates {
+		if c != "" {
+			chosen = c
+			break
+		}
+	}
+	if chosen == "" {
+		if existed {
+			// Already a placeholder, no candidate — leave it alone.
+			r.mu.Unlock()
+			return
+		}
+		chosen = fmt.Sprintf("unknown-val-%d", r.nextUnknownValNLocked())
+	}
+	if existed && existing == chosen {
+		r.mu.Unlock()
+		return
+	}
+	if existed {
+		delete(r.nameToAddr, existing)
+	}
+	r.addrToName[address] = chosen
+	r.nameToAddr[chosen] = address
+	r.mu.Unlock()
+	r.save()
+}
+
+// nextUnknownValNLocked returns max(N) + 1 across all "unknown-val-N"
+// names currently in the registry. Caller must hold r.mu.
+func (r *NameRegistry) nextUnknownValNLocked() int {
+	max := 0
+	for _, name := range r.addrToName {
+		m := unknownValPattern.FindStringSubmatch(name)
+		if m == nil {
+			continue
+		}
+		if n, err := strconv.Atoi(m[1]); err == nil && n > max {
+			max = n
+		}
+	}
+	return max + 1
 }
 
 // RegisterPubKey stores a validator's base64 pubkey.
@@ -233,10 +332,21 @@ func (r *NameRegistry) SeedFromGenesis(path string) error {
 		r.GenesisTime = genesis.GenesisTime
 	}
 	for _, v := range genesis.Validators {
-		if v.Address != "" && v.Name != "" {
-			r.addrToName[v.Address] = v.Name
-			r.nameToAddr[v.Name] = v.Address
+		if v.Address == "" || v.Name == "" {
+			continue
 		}
+		existing, existed := r.addrToName[v.Address]
+		if existed && !isUnknownVal(existing) {
+			continue
+		}
+		if existed && existing == v.Name {
+			continue
+		}
+		if existed {
+			delete(r.nameToAddr, existing)
+		}
+		r.addrToName[v.Address] = v.Name
+		r.nameToAddr[v.Name] = v.Address
 	}
 	r.mu.Unlock()
 	r.save()
