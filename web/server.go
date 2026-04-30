@@ -18,10 +18,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/gorilla/websocket"
 	"github.com/gnoverse/gnockpit/node"
 	"github.com/gnoverse/gnockpit/web/icon"
 	"github.com/gnoverse/gnockpit/web/push"
+	"github.com/gorilla/websocket"
 )
 
 //go:embed index.html service-worker.js
@@ -71,10 +71,10 @@ type Server struct {
 	diagmu   sync.RWMutex
 	diagData map[string]*DiagReport // keyed by IP
 
-	startTime      time.Time
-	genesisSHA     string // computed from local genesis file at startup
-	chainDataSize  string
-	chainDataTime  time.Time
+	startTime     time.Time
+	genesisSHA    string // computed from local genesis file at startup
+	chainDataSize string
+	chainDataTime time.Time
 
 	// Configurable paths (set by caller before Run)
 	DataDir         string         // gnoland data directory (for disk stats)
@@ -84,16 +84,16 @@ type Server struct {
 	MissedBlocksPct int            // missed-block threshold for active validator counting
 
 	// Peer activity from log parsing
-	peerActivity   sync.Map // IP -> time.Time (last seen)
-	lastLogEvent   time.Time
+	peerActivity sync.Map // IP -> time.Time (last seen)
+	lastLogEvent time.Time
 }
 
 // DiagReport holds a per-node diagnosis report.
 type DiagReport struct {
-	IP        string      `json:"ip"`
-	Moniker   string      `json:"moniker"`
-	Time      string      `json:"time"`
-	Checks    []DiagCheck `json:"checks"`
+	IP      string      `json:"ip"`
+	Moniker string      `json:"moniker"`
+	Time    string      `json:"time"`
+	Checks  []DiagCheck `json:"checks"`
 }
 
 // DiagCheck is a single check in a diagnosis.
@@ -256,8 +256,8 @@ func (s *Server) buildCheckData(snap *node.Snapshot) checkData {
 	cd := checkData{
 		GenesisSHA:  snap.GenesisSHA,
 		AppHashLast: snap.AppHashLast,
-		Uptime:     snap.Uptime,
-		System:     snap.System,
+		Uptime:      snap.Uptime,
+		System:      snap.System,
 	}
 	if snap.Status != nil {
 		cd.ValAddress = snap.Status.ValidatorInfo.Address
@@ -269,11 +269,11 @@ func (s *Server) buildCheckData(snap *node.Snapshot) checkData {
 // buildSnapshotMsg builds a full snapshot message for initial WS connect.
 func (s *Server) buildSnapshotMsg(snap *node.Snapshot) wsMsg {
 	type snapshotData struct {
-		Time   string           `json:"time"`
-		Status *node.Status     `json:"status,omitempty"`
-		Peers  []node.Peer      `json:"peers,omitempty"`
+		Time   string            `json:"time"`
+		Status *node.Status      `json:"status,omitempty"`
+		Peers  []node.Peer       `json:"peers,omitempty"`
 		Votes  *node.VotesReport `json:"votes,omitempty"`
-		Checks checkData        `json:"checks"`
+		Checks checkData         `json:"checks"`
 	}
 	sd := snapshotData{
 		Time:   snap.Timestamp.Format("15:04:05"),
@@ -701,19 +701,24 @@ func (s *Server) collectSystemInfo(ctx context.Context) *node.SystemInfo {
 		}
 	}
 
-	// Seeds from config
+	// Persistent peers from config
 	if dataDir := s.DataDir; dataDir != "" {
 		if data, err := os.ReadFile(dataDir + "/config/config.toml"); err == nil {
 			for _, line := range strings.Split(string(data), "\n") {
 				line = strings.TrimSpace(line)
-				if strings.HasPrefix(line, "seeds") && strings.Contains(line, "=") {
-					val := strings.SplitN(line, "=", 2)[1]
-					val = strings.Trim(strings.TrimSpace(val), "\"")
-					if val != "" {
-						si.Seeds = val
-					}
-					break
+				if !strings.Contains(line, "=") {
+					continue
 				}
+				key := strings.TrimSpace(strings.SplitN(line, "=", 2)[0])
+				if key != "persistent_peers" {
+					continue
+				}
+				val := strings.SplitN(line, "=", 2)[1]
+				val = strings.Trim(strings.TrimSpace(val), "\"")
+				if val != "" {
+					si.PersistentPeers = val
+				}
+				break
 			}
 		}
 	}
@@ -1528,7 +1533,6 @@ func (s *Server) gnoRootDir() string {
 	}
 	return ""
 }
-
 
 func (s *Server) Run(ctx context.Context) error {
 	s.genesisSHA = s.computeGenesisSHA()

@@ -37,9 +37,9 @@ type ValInfo struct {
 }
 
 type PubKey struct {
-	Type     string `json:"type"`
+	Type      string `json:"type"`
 	AminoType string `json:"@type"` // gno RPC uses "@type" with "/tm.PubKeyEd25519" format
-	Value    string `json:"value"`
+	Value     string `json:"value"`
 }
 
 // keyType returns the normalized key type string.
@@ -108,17 +108,17 @@ type Peer struct {
 	Version    string `json:"version,omitempty"`     // software version from net_info
 	P2PAddress string `json:"p2p_address,omitempty"` // nodeID@ip:port
 	// Populated by network/consensus queries
-	CatchingUp     bool   `json:"catching_up,omitempty"`
-	ValAddress     string `json:"val_address,omitempty"` // validator address if known
-	ValPubKey      string `json:"val_pubkey,omitempty"`  // base64 pubkey if known
-	Role           string `json:"role,omitempty"`        // "val", "val?", "full"
-	Height         string `json:"height,omitempty"`
-	Round          string `json:"round,omitempty"`
-	Step           string `json:"step,omitempty"`
-	Error          string `json:"error,omitempty"`
-	FirstSeen      string `json:"first_seen,omitempty"`
-	LastSeen       string `json:"last_seen,omitempty"`
-	NPeers         int    `json:"n_peers,omitempty"`
+	CatchingUp bool   `json:"catching_up,omitempty"`
+	ValAddress string `json:"val_address,omitempty"` // validator address if known
+	ValPubKey  string `json:"val_pubkey,omitempty"`  // base64 pubkey if known
+	Role       string `json:"role,omitempty"`        // "val", "val?", "full"
+	Height     string `json:"height,omitempty"`
+	Round      string `json:"round,omitempty"`
+	Step       string `json:"step,omitempty"`
+	Error      string `json:"error,omitempty"`
+	FirstSeen  string `json:"first_seen,omitempty"`
+	LastSeen   string `json:"last_seen,omitempty"`
+	NPeers     int    `json:"n_peers,omitempty"`
 	// From dump_consensus_state peer data
 	PeerHeight     string `json:"peer_height,omitempty"`
 	PeerRound      string `json:"peer_round,omitempty"`
@@ -138,14 +138,14 @@ type Validator struct {
 
 // ConsensusState represents the current consensus state.
 type ConsensusState struct {
-	Height         string          `json:"height"`
-	Round          string          `json:"round"`
-	Step           string          `json:"step"`
-	Proposer       string          `json:"proposer"`
-	RoundStartTime string          `json:"round_start_time,omitempty"`
+	Height         string           `json:"height"`
+	Round          string           `json:"round"`
+	Step           string           `json:"step"`
+	Proposer       string           `json:"proposer"`
+	RoundStartTime string           `json:"round_start_time,omitempty"`
 	Config         *ConsensusConfig `json:"config,omitempty"`
-	Votes          []VoteInfo      `json:"votes,omitempty"`
-	Peers          []PeerState     `json:"peers,omitempty"`
+	Votes          []VoteInfo       `json:"votes,omitempty"`
+	Peers          []PeerState      `json:"peers,omitempty"`
 }
 
 // ConsensusConfig holds consensus timeout configuration.
@@ -200,23 +200,23 @@ type CheckResult struct {
 
 // SystemInfo holds system resource information.
 type SystemInfo struct {
-	DiskUsed       string `json:"disk_used"`
-	DiskTotal      string `json:"disk_total"`
-	DiskPercent    int    `json:"disk_percent"`
-	LoadAvg        string `json:"load_avg"`
-	NumCPU         int    `json:"num_cpu"`
-	MemUsed        string `json:"mem_used"`
-	MemTotal       string `json:"mem_total"`
-	MemPercent     int    `json:"mem_percent"`
-	GnolandUptime  string `json:"gnoland_uptime"`
-	GnolandMem     string `json:"gnoland_mem"`
-	ChainDataSize  string `json:"chain_data_size"`
-	NodeTime       string `json:"node_time"`
-	GenesisTime    string `json:"genesis_time,omitempty"`
-	GitBranch      string `json:"git_branch,omitempty"`
-	GitSHA         string `json:"git_sha,omitempty"`
-	BinaryHash     string `json:"binary_hash,omitempty"`
-	Seeds          string `json:"seeds,omitempty"`
+	DiskUsed        string `json:"disk_used"`
+	DiskTotal       string `json:"disk_total"`
+	DiskPercent     int    `json:"disk_percent"`
+	LoadAvg         string `json:"load_avg"`
+	NumCPU          int    `json:"num_cpu"`
+	MemUsed         string `json:"mem_used"`
+	MemTotal        string `json:"mem_total"`
+	MemPercent      int    `json:"mem_percent"`
+	GnolandUptime   string `json:"gnoland_uptime"`
+	GnolandMem      string `json:"gnoland_mem"`
+	ChainDataSize   string `json:"chain_data_size"`
+	NodeTime        string `json:"node_time"`
+	GenesisTime     string `json:"genesis_time,omitempty"`
+	GitBranch       string `json:"git_branch,omitempty"`
+	GitSHA          string `json:"git_sha,omitempty"`
+	BinaryHash      string `json:"binary_hash,omitempty"`
+	PersistentPeers string `json:"persistent_peers,omitempty"`
 }
 
 // MissingValidator identifies a validator that did not sign a block.
@@ -232,8 +232,8 @@ type BlockInfo struct {
 	Signers  int                `json:"signers"`
 	Total    int                `json:"total"`
 	Missing  []MissingValidator `json:"missing,omitempty"`
-	Proposer string             `json:"proposer"`          // proposer name
-	BlockMs  int                `json:"block_ms"`          // time since previous block in ms; 0 for oldest block in window
+	Proposer string             `json:"proposer"` // proposer name
+	BlockMs  int                `json:"block_ms"` // time since previous block in ms; 0 for oldest block in window
 	AppHash  string             `json:"app_hash"`
 }
 
@@ -246,33 +246,33 @@ type ValidatorPerf struct {
 
 // SigningStats summarizes validator signing activity over recent blocks.
 type SigningStats struct {
-	WindowSize     int                       `json:"window_size"`
-	ActiveCount     int                       `json:"active_count"`     // validators below missed-blocks threshold
-	TotalCount      int                       `json:"total_count"`     // validators in set
+	WindowSize      int                       `json:"window_size"`
+	ActiveCount     int                       `json:"active_count"`      // validators below missed-blocks threshold
+	TotalCount      int                       `json:"total_count"`       // validators in set
 	MissedBlocksPct int                       `json:"missed_blocks_pct"` // threshold used for active count
-	BFTThreshold   int                       `json:"bft_threshold"`   // minimum needed for consensus
-	Margin         int                       `json:"margin"`          // active - threshold (how many can go down)
-	CanAddOne      bool                      `json:"can_add_one"`     // safe to add a validator?
-	AvgBlockMs     int                       `json:"avg_block_ms"`    // average block time across window
-	RecentBlocks   []BlockInfo               `json:"recent_blocks"`
-	ValidatorSigns map[string]int            `json:"validator_signs"` // addr -> sign count in window
-	ValidatorPerf  map[string]*ValidatorPerf `json:"validator_perf"`  // addr -> perf stats
+	BFTThreshold    int                       `json:"bft_threshold"`     // minimum needed for consensus
+	Margin          int                       `json:"margin"`            // active - threshold (how many can go down)
+	CanAddOne       bool                      `json:"can_add_one"`       // safe to add a validator?
+	AvgBlockMs      int                       `json:"avg_block_ms"`      // average block time across window
+	RecentBlocks    []BlockInfo               `json:"recent_blocks"`
+	ValidatorSigns  map[string]int            `json:"validator_signs"` // addr -> sign count in window
+	ValidatorPerf   map[string]*ValidatorPerf `json:"validator_perf"`  // addr -> perf stats
 }
 
 // Snapshot holds all data fetched in one cycle by the background fetcher.
 type Snapshot struct {
-	Status         *Status          `json:"status,omitempty"`
-	Consensus      *ConsensusState  `json:"consensus,omitempty"`
-	Peers          []Peer           `json:"peers,omitempty"`
-	Validators     []Validator      `json:"validators,omitempty"`
-	GenesisSHA     string           `json:"genesis_sha256"`
-	AppHashLast    string           `json:"apphash_last"`
-	Uptime         string           `json:"uptime,omitempty"`
-	RoundStartTime string           `json:"round_start_time,omitempty"`
-	System         *SystemInfo      `json:"system,omitempty"`
-	Signing        *SigningStats    `json:"signing,omitempty"`
-	Timestamp      time.Time        `json:"timestamp"`
-	Error          string           `json:"error,omitempty"`
+	Status         *Status         `json:"status,omitempty"`
+	Consensus      *ConsensusState `json:"consensus,omitempty"`
+	Peers          []Peer          `json:"peers,omitempty"`
+	Validators     []Validator     `json:"validators,omitempty"`
+	GenesisSHA     string          `json:"genesis_sha256"`
+	AppHashLast    string          `json:"apphash_last"`
+	Uptime         string          `json:"uptime,omitempty"`
+	RoundStartTime string          `json:"round_start_time,omitempty"`
+	System         *SystemInfo     `json:"system,omitempty"`
+	Signing        *SigningStats   `json:"signing,omitempty"`
+	Timestamp      time.Time       `json:"timestamp"`
+	Error          string          `json:"error,omitempty"`
 }
 
 // VotesReport shows the prevote/precommit state.
