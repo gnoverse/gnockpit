@@ -2,7 +2,6 @@ package web
 
 import (
 	"context"
-	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -39,15 +38,6 @@ func (b *DockerBackend) StreamLogs(ctx context.Context) (io.ReadCloser, error) {
 	return &cmdReadCloser{ReadCloser: r, cmd: cmd}, nil
 }
 
-func (b *DockerBackend) FetchLogs(ctx context.Context, n int) ([]string, error) {
-	out, err := exec.CommandContext(ctx, "docker", "logs", b.ContainerName,
-		"--tail", fmt.Sprintf("%d", n)).CombinedOutput()
-	if err != nil {
-		return nil, err
-	}
-	return splitLines(string(out)), nil
-}
-
 func (b *DockerBackend) ServiceUptime(ctx context.Context) (time.Duration, error) {
 	out, err := exec.CommandContext(ctx, "docker", "inspect", b.ContainerName,
 		"--format", "{{.State.StartedAt}}").Output()
@@ -64,22 +54,6 @@ func (b *DockerBackend) ServiceUptime(ctx context.Context) (time.Duration, error
 		}
 	}
 	return time.Since(t), nil
-}
-
-func (b *DockerBackend) binaryHashArgs() []string {
-	return []string{"exec", b.ContainerName, "sha256sum", "/usr/local/bin/gnoland"}
-}
-
-func (b *DockerBackend) BinaryHash(ctx context.Context) (string, error) {
-	out, err := exec.CommandContext(ctx, "docker", b.binaryHashArgs()...).Output()
-	if err != nil {
-		return "", err
-	}
-	parts := strings.Fields(string(out))
-	if len(parts) == 0 {
-		return "", fmt.Errorf("unexpected sha256sum output: %q", out)
-	}
-	return parts[0][:12], nil
 }
 
 func (b *DockerBackend) ProcessMemory(ctx context.Context) (int, error) {

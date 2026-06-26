@@ -47,10 +47,6 @@ func (b *SystemdBackend) streamArgs() []string {
 	return []string{"-u", b.resolvedName(), "-f", "-o", "cat", "--no-pager"}
 }
 
-func (b *SystemdBackend) fetchArgs(n int) []string {
-	return []string{"-u", b.resolvedName(), "-n", fmt.Sprintf("%d", n), "--no-pager", "-o", "cat"}
-}
-
 func (b *SystemdBackend) StreamLogs(ctx context.Context) (io.ReadCloser, error) {
 	cmd := exec.CommandContext(ctx, "journalctl", b.streamArgs()...)
 	stdout, err := cmd.StdoutPipe()
@@ -61,14 +57,6 @@ func (b *SystemdBackend) StreamLogs(ctx context.Context) (io.ReadCloser, error) 
 		return nil, err
 	}
 	return &cmdReadCloser{ReadCloser: stdout, cmd: cmd}, nil
-}
-
-func (b *SystemdBackend) FetchLogs(ctx context.Context, n int) ([]string, error) {
-	out, err := exec.CommandContext(ctx, "journalctl", b.fetchArgs(n)...).Output()
-	if err != nil {
-		return nil, err
-	}
-	return splitLines(string(out)), nil
 }
 
 func (b *SystemdBackend) ServiceUptime(ctx context.Context) (time.Duration, error) {
@@ -83,27 +71,6 @@ func (b *SystemdBackend) ServiceUptime(ctx context.Context) (time.Duration, erro
 		return 0, err
 	}
 	return time.Since(t), nil
-}
-
-func (b *SystemdBackend) BinaryHash(ctx context.Context) (string, error) {
-	bin := ""
-	if _, err := os.Stat("/usr/local/bin/gnoland"); err == nil {
-		bin = "/usr/local/bin/gnoland"
-	} else if out, err := exec.Command("which", "gnoland").Output(); err == nil {
-		bin = strings.TrimSpace(string(out))
-	}
-	if bin == "" {
-		return "", fmt.Errorf("gnoland binary not found")
-	}
-	out, err := exec.CommandContext(ctx, "sha256sum", bin).Output()
-	if err != nil {
-		return "", err
-	}
-	parts := strings.Fields(string(out))
-	if len(parts) == 0 {
-		return "", fmt.Errorf("unexpected sha256sum output: %q", out)
-	}
-	return parts[0][:12], nil
 }
 
 func (b *SystemdBackend) ProcessMemory(ctx context.Context) (int, error) {
@@ -134,15 +101,6 @@ func (c *cmdReadCloser) Close() error {
 	// cancellation) is expected and handled by the caller's retry loop.
 	c.cmd.Wait()
 	return err
-}
-
-// splitLines splits s on newlines, dropping empty trailing lines.
-func splitLines(s string) []string {
-	s = strings.TrimSpace(s)
-	if s == "" {
-		return nil
-	}
-	return strings.Split(s, "\n")
 }
 
 // readProcRSS reads VmRSS from /proc/<pid>/status and returns KB.

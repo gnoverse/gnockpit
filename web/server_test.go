@@ -19,14 +19,10 @@ import (
 
 // mockBackend is a test double for RuntimeBackend.
 type mockBackend struct {
-	streamLines    []string
-	fetchLines     []string
-	uptime         time.Duration
-	memKB          int
-	binaryHash     string
-	streamErr      error
-	fetchErr       error
-	binaryHashErr  error
+	streamLines []string
+	uptime      time.Duration
+	memKB       int
+	streamErr   error
 }
 
 func (m *mockBackend) StreamLogs(ctx context.Context) (io.ReadCloser, error) {
@@ -36,23 +32,12 @@ func (m *mockBackend) StreamLogs(ctx context.Context) (io.ReadCloser, error) {
 	return io.NopCloser(strings.NewReader(strings.Join(m.streamLines, "\n"))), nil
 }
 
-func (m *mockBackend) FetchLogs(ctx context.Context, n int) ([]string, error) {
-	if m.fetchErr != nil {
-		return nil, m.fetchErr
-	}
-	return m.fetchLines, nil
-}
-
 func (m *mockBackend) ServiceUptime(ctx context.Context) (time.Duration, error) {
 	return m.uptime, nil
 }
 
 func (m *mockBackend) ProcessMemory(ctx context.Context) (int, error) {
 	return m.memKB, nil
-}
-
-func (m *mockBackend) BinaryHash(ctx context.Context) (string, error) {
-	return m.binaryHash, m.binaryHashErr
 }
 
 func TestBackendInterfaceSatisfied(t *testing.T) {
@@ -120,29 +105,11 @@ func TestSystemdBackendUsesCat(t *testing.T) {
 	if !hasCat(b.streamArgs()) {
 		t.Errorf("streamArgs() = %v, missing -o cat", b.streamArgs())
 	}
-	if !hasCat(b.fetchArgs(100)) {
-		t.Errorf("fetchArgs(100) = %v, missing -o cat", b.fetchArgs(100))
-	}
 }
 
 func TestDockerBackendInterfaceSatisfied(t *testing.T) {
 	// Compile-time check that DockerBackend implements RuntimeBackend.
 	var _ RuntimeBackend = &DockerBackend{}
-}
-
-
-func TestDockerBackendBinaryHashArgs(t *testing.T) {
-	b := &DockerBackend{ContainerName: "mycontainer"}
-	args := b.binaryHashArgs()
-	want := []string{"exec", "mycontainer", "sha256sum", "/usr/local/bin/gnoland"}
-	if len(args) != len(want) {
-		t.Fatalf("binaryHashArgs() = %v, want %v", args, want)
-	}
-	for i, a := range args {
-		if a != want[i] {
-			t.Errorf("args[%d] = %q, want %q", i, a, want[i])
-		}
-	}
 }
 
 func TestDockerBackendStreamLogsIncludesTail(t *testing.T) {
@@ -159,113 +126,6 @@ func TestDockerBackendStreamLogsIncludesTail(t *testing.T) {
 	}
 	if !hasTail {
 		t.Errorf("streamLogsArgs() = %v, missing --tail flag", args)
-	}
-}
-
-func TestHandleLogsNilBackend(t *testing.T) {
-	c := node.NewClient("http://localhost:1", 1*time.Second)
-	srv := NewServer(c, "127.0.0.1:0", 5*time.Second)
-	// Backend is nil — should return empty array [], not null or 500
-
-	req := httptest.NewRequest("GET", "/api/logs", nil)
-	w := httptest.NewRecorder()
-	srv.handleLogs(w, req)
-
-	if w.Code != 200 {
-		t.Errorf("status = %d, want 200", w.Code)
-	}
-	var respFull map[string]json.RawMessage
-	if err := json.Unmarshal(w.Body.Bytes(), &respFull); err != nil {
-		t.Fatal("invalid JSON:", err)
-	}
-	linesRaw, ok := respFull["lines"]
-	if !ok {
-		t.Fatal("missing 'lines' field")
-	}
-	var lines []json.RawMessage
-	if err := json.Unmarshal(linesRaw, &lines); err != nil {
-		t.Fatalf("'lines' is not a JSON array: %s", linesRaw)
-	}
-	if lines == nil {
-		t.Error("lines must be [] not null")
-	}
-}
-
-func TestHandleLogsSanitizesRootPaths(t *testing.T) {
-	c := node.NewClient("http://localhost:1", 1*time.Second)
-	srv := NewServer(c, "127.0.0.1:0", 5*time.Second)
-	srv.Backend = &mockBackend{
-		fetchLines: []string{
-			`{"level":"info","ts":0,"msg":"loading /root/gnoland-data/config","module":"node"}`,
-			`{"level":"info","ts":0,"msg":"normal log line","module":"node"}`,
-		},
-	}
-
-	req := httptest.NewRequest("GET", "/api/logs", nil)
-	w := httptest.NewRecorder()
-	srv.handleLogs(w, req)
-
-	body := w.Body.String()
-	if strings.Contains(body, "/root/") {
-		t.Error("response should not contain /root/ paths")
-	}
-	if !strings.Contains(body, "~/") {
-		t.Error("response should contain ~/ replacement")
-	}
-}
-
-func TestHandleLogsReturnsLogEntries(t *testing.T) {
-	c := node.NewClient("http://localhost:1", 1*time.Second)
-	srv := NewServer(c, "127.0.0.1:0", 5*time.Second)
-	srv.Backend = &mockBackend{
-		fetchLines: []string{
-			`{"level":"info","ts":0,"msg":"hello","module":"test"}`,
-		},
-	}
-
-	req := httptest.NewRequest("GET", "/api/logs", nil)
-	w := httptest.NewRecorder()
-	srv.handleLogs(w, req)
-
-	var resp struct {
-		Lines []LogEntry `json:"lines"`
-		Count int        `json:"count"`
-	}
-	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
-		t.Fatal("invalid JSON:", err)
-	}
-	if resp.Count != 1 {
-		t.Errorf("count = %d, want 1", resp.Count)
-	}
-	if len(resp.Lines) != 1 {
-		t.Fatalf("len(lines) = %d, want 1", len(resp.Lines))
-	}
-	if resp.Lines[0].Level != "INFO" {
-		t.Errorf("Level = %q, want INFO", resp.Lines[0].Level)
-	}
-	if resp.Lines[0].Module != "test" {
-		t.Errorf("Module = %q, want test", resp.Lines[0].Module)
-	}
-}
-
-func TestParseLogEventPeerExtraction(t *testing.T) {
-	c := node.NewClient("http://localhost:1", 1*time.Second)
-	srv := NewServer(c, "127.0.0.1:0", 5*time.Second)
-
-	entry := LogEntry{
-		Msg:   "dial peer",
-		Level: "INFO",
-		Extra: map[string]interface{}{"peer": "abc123@1.2.3.4:26656"},
-	}
-	srv.parseLogEvent(entry)
-
-	var foundIP string
-	srv.peerActivity.Range(func(k, v interface{}) bool {
-		foundIP = k.(string)
-		return true
-	})
-	if foundIP != "1.2.3.4" {
-		t.Errorf("peerActivity IP = %q, want 1.2.3.4", foundIP)
 	}
 }
 
@@ -380,8 +240,8 @@ func TestAPIHandler(t *testing.T) {
 
 	// With snapshot
 	srv.setSnapshot(&node.Snapshot{
-		GenesisSHA: "abc123",
-		Timestamp:  time.Now(),
+		AppHashLast: "abc123",
+		Timestamp:   time.Now(),
 	})
 	w = httptest.NewRecorder()
 	srv.handleAPI(w, httptest.NewRequest("GET", "/api", nil))
@@ -392,8 +252,8 @@ func TestAPIHandler(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &snap); err != nil {
 		t.Fatal("invalid JSON:", err)
 	}
-	if snap.GenesisSHA != "abc123" {
-		t.Errorf("genesis = %q, want abc123", snap.GenesisSHA)
+	if snap.AppHashLast != "abc123" {
+		t.Errorf("apphash = %q, want abc123", snap.AppHashLast)
 	}
 }
 
@@ -458,42 +318,6 @@ func TestHandleManifest(t *testing.T) {
 	}
 	if m["theme_color"] == nil {
 		t.Error("manifest missing 'theme_color' field")
-	}
-}
-
-func TestSSEHandler(t *testing.T) {
-	c := node.NewClient("http://localhost:1", 1*time.Second)
-	srv := NewServer(c, "127.0.0.1:0", 5*time.Second)
-
-	// Pre-populate snapshot
-	srv.setSnapshot(&node.Snapshot{
-		GenesisSHA: "test",
-		Timestamp:  time.Now(),
-	})
-
-	ts := httptest.NewServer(http.HandlerFunc(srv.handleEvents))
-	defer ts.Close()
-
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-
-	req, _ := http.NewRequestWithContext(ctx, "GET", ts.URL, nil)
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer resp.Body.Close()
-
-	if resp.Header.Get("Content-Type") != "text/event-stream" {
-		t.Errorf("content-type = %q, want text/event-stream", resp.Header.Get("Content-Type"))
-	}
-
-	// Read first few bytes to verify we get SSE data
-	buf := make([]byte, 512)
-	n, _ := resp.Body.Read(buf)
-	data := string(buf[:n])
-	if !strings.Contains(data, "event:") {
-		t.Errorf("expected SSE event data, got %q", data)
 	}
 }
 

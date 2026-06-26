@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"context"
 	"crypto/rand"
-	"crypto/sha256"
 	"embed"
 	"encoding/hex"
 	"encoding/json"
@@ -60,86 +59,27 @@ type Server struct {
 	mu       sync.RWMutex
 	snapshot *node.Snapshot
 
-	// SSE clients (legacy fallback)
-	sseClients map[chan string]struct{}
-
 	// WebSocket clients
 	wsmu      sync.RWMutex
 	wsClients map[*wsClient]struct{}
 
-	// Diagnosis reports
-	diagmu   sync.RWMutex
-	diagData map[string]*DiagReport // keyed by IP
-
-	startTime     time.Time
-	genesisSHA    string // computed from local genesis file at startup
-	chainDataSize string
-	chainDataTime time.Time
-
 	// Configurable paths (set by caller before Run)
-	DataDir         string         // gnoland data directory (for disk stats)
-	GenesisPath     string         // path to genesis.json (for hash computation)
+	DataDir         string         // gnoland data directory (for DB sizes on the node-down panel)
 	Backend         RuntimeBackend // log and process metrics backend (nil = unavailable)
 	PushManager     *push.Manager  // push notification manager (nil = disabled)
 	MissedBlocksPct int            // missed-block threshold for active validator counting
 
-	// Peer activity from log parsing
-	peerActivity sync.Map // IP -> time.Time (last seen)
+	// Rate-limit timestamp for consensus-event snapshot refresh (see parseLogEvent).
 	lastLogEvent time.Time
-}
-
-// DiagReport holds a per-node diagnosis report.
-type DiagReport struct {
-	IP      string      `json:"ip"`
-	Moniker string      `json:"moniker"`
-	Time    string      `json:"time"`
-	Checks  []DiagCheck `json:"checks"`
-}
-
-// DiagCheck is a single check in a diagnosis.
-type DiagCheck struct {
-	Name   string `json:"name"`
-	Status string `json:"status"` // ok, warn, err
-	Detail string `json:"detail"`
 }
 
 // NewServer creates a new web server.
 func NewServer(client *node.Client, addr string, interval time.Duration) *Server {
 	return &Server{
-		Client:     client,
-		Addr:       addr,
-		Interval:   interval,
-		sseClients: make(map[chan string]struct{}),
-		wsClients:  make(map[*wsClient]struct{}),
-		diagData:   make(map[string]*DiagReport),
-		startTime:  time.Now(),
-	}
-}
-
-// --- SSE client management (legacy fallback) ---
-
-func (s *Server) addSSEClient(ch chan string) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.sseClients[ch] = struct{}{}
-}
-
-func (s *Server) removeSSEClient(ch chan string) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	delete(s.sseClients, ch)
-	close(ch)
-}
-
-func (s *Server) broadcastSSE(event, data string) {
-	msg := fmt.Sprintf("event: %s\ndata: %s\n\n", event, data)
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	for ch := range s.sseClients {
-		select {
-		case ch <- msg:
-		default:
-		}
+		Client:    client,
+		Addr:      addr,
+		Interval:  interval,
+		wsClients: make(map[*wsClient]struct{}),
 	}
 }
 
@@ -204,9 +144,7 @@ func (s *Server) chainName() string {
 // --- Snapshot data building ---
 
 type checkData struct {
-	GenesisSHA  string           `json:"genesis_sha256"`
 	AppHashLast string           `json:"apphash_last,omitempty"`
-	Uptime      string           `json:"uptime"`
 	ValAddress  string           `json:"val_address,omitempty"`
 	ValPubKey   string           `json:"val_pubkey,omitempty"`
 	System      *node.SystemInfo `json:"system,omitempty"`
@@ -254,9 +192,7 @@ func (s *Server) buildVotesReport(snap *node.Snapshot) *node.VotesReport {
 
 func (s *Server) buildCheckData(snap *node.Snapshot) checkData {
 	cd := checkData{
-		GenesisSHA:  snap.GenesisSHA,
 		AppHashLast: snap.AppHashLast,
-		Uptime:      snap.Uptime,
 		System:      snap.System,
 	}
 	if snap.Status != nil {
@@ -407,72 +343,6 @@ func (s *Server) handleAPI(w http.ResponseWriter, r *http.Request) {
 	enc.Encode(snap)
 }
 
-func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
-	flusher, ok := w.(http.Flusher)
-	if !ok {
-		http.Error(w, "streaming not supported", 500)
-		return
-	}
-
-	w.Header().Set("Content-Type", "text/event-stream")
-	w.Header().Set("Cache-Control", "no-cache")
-	w.Header().Set("Connection", "keep-alive")
-	w.Header().Set("Access-Control-Allow-Origin", "*")
-
-	ch := make(chan string, 32)
-	s.addSSEClient(ch)
-	defer s.removeSSEClient(ch)
-
-	// Send current snapshot immediately on connect
-	if snap := s.getSnapshot(); snap != nil {
-		s.sendSSESnapshot(snap, ch)
-	}
-	flusher.Flush()
-
-	ctx := r.Context()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case msg, ok := <-ch:
-			if !ok {
-				return
-			}
-			fmt.Fprint(w, msg)
-			flusher.Flush()
-		}
-	}
-}
-
-func (s *Server) sendSSESnapshot(snap *node.Snapshot, ch chan string) {
-	sendEvent := func(event string, data interface{}) {
-		if b, err := json.Marshal(data); err == nil {
-			msg := fmt.Sprintf("event: %s\ndata: %s\n\n", event, string(b))
-			select {
-			case ch <- msg:
-			default:
-			}
-		}
-	}
-
-	msg := fmt.Sprintf("event: time\ndata: %s\n\n", snap.Timestamp.Format("15:04:05"))
-	select {
-	case ch <- msg:
-	default:
-	}
-
-	if snap.Status != nil {
-		sendEvent("status", snap.Status)
-	}
-	if snap.Peers != nil {
-		sendEvent("peers", snap.Peers)
-	}
-	if report := s.buildVotesReport(snap); report != nil {
-		sendEvent("votes", report)
-	}
-	sendEvent("checks", s.buildCheckData(snap))
-}
-
 // --- WebSocket Handler ---
 
 func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
@@ -580,149 +450,18 @@ func (s *Server) handleBootStatus(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(bs)
 }
 
-func (s *Server) handleResetCache(w http.ResponseWriter, r *http.Request) {
-	if r.Method != "POST" {
-		http.Error(w, "POST only", 405)
-		return
-	}
-	// Clear snapshot
-	s.setSnapshot(nil)
-	// Clear peer activity
-	s.peerActivity.Range(func(key, _ interface{}) bool {
-		s.peerActivity.Delete(key)
-		return true
-	})
-	// Clear diagnosis data
-	s.diagmu.Lock()
-	s.diagData = make(map[string]*DiagReport)
-	s.diagmu.Unlock()
-	// Clear chain data cache
-	s.chainDataSize = ""
-	s.chainDataTime = time.Time{}
-	// Clear and reload name registry from persist file
-	if s.Client != nil && s.Client.Names != nil {
-		s.Client.Names.Reload()
-	}
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
-}
-
 // --- System Info ---
 
 func (s *Server) collectSystemInfo(ctx context.Context) *node.SystemInfo {
-	si := &node.SystemInfo{}
-
-	// Disk usage
-	dfPath := s.DataDir
-	if dfPath == "" {
-		dfPath = "/"
+	si := &node.SystemInfo{
+		NodeTime:    time.Now().UTC().Format("2006-01-02T15:04:05Z"),
+		GenesisTime: s.Client.Names.GenesisTime,
 	}
-	if out, err := exec.CommandContext(ctx, "df", "-h", dfPath).Output(); err == nil {
-		lines := strings.Split(strings.TrimSpace(string(out)), "\n")
-		if len(lines) >= 2 {
-			fields := strings.Fields(lines[1])
-			if len(fields) >= 5 {
-				si.DiskTotal = fields[1]
-				si.DiskUsed = fields[2]
-				pct := strings.TrimSuffix(fields[4], "%")
-				fmt.Sscanf(pct, "%d", &si.DiskPercent)
-			}
-		}
-	}
-
-	if data, err := os.ReadFile("/proc/loadavg"); err == nil {
-		fields := strings.Fields(string(data))
-		if len(fields) >= 3 {
-			si.LoadAvg = fields[0] + " " + fields[1] + " " + fields[2]
-		}
-	}
-
-	if data, err := os.ReadFile("/proc/cpuinfo"); err == nil {
-		si.NumCPU = strings.Count(string(data), "processor\t:")
-	}
-
-	if f, err := os.Open("/proc/meminfo"); err == nil {
-		defer f.Close()
-		memInfo := map[string]string{}
-		scanner := bufio.NewScanner(f)
-		for scanner.Scan() {
-			parts := strings.SplitN(scanner.Text(), ":", 2)
-			if len(parts) == 2 {
-				memInfo[strings.TrimSpace(parts[0])] = strings.TrimSpace(parts[1])
-			}
-		}
-		var totalKB, availKB int
-		fmt.Sscanf(memInfo["MemTotal"], "%d", &totalKB)
-		fmt.Sscanf(memInfo["MemAvailable"], "%d", &availKB)
-		if totalKB > 0 {
-			usedKB := totalKB - availKB
-			si.MemUsed = fmt.Sprintf("%.1fG", float64(usedKB)/1024/1024)
-			si.MemTotal = fmt.Sprintf("%.1fG", float64(totalKB)/1024/1024)
-			si.MemPercent = usedKB * 100 / totalKB
-		}
-	}
-
 	if s.Backend != nil {
 		if uptime, err := s.Backend.ServiceUptime(ctx); err == nil {
 			si.GnolandUptime = uptime.Truncate(time.Second).String()
 		}
-		if kb, err := s.Backend.ProcessMemory(ctx); err == nil && kb > 0 {
-			si.GnolandMem = fmt.Sprintf("%.1fG", float64(kb)/1024/1024)
-		}
 	}
-
-	// Chain data size (cached, updated max once per minute)
-	if s.DataDir != "" && time.Since(s.chainDataTime) > time.Minute {
-		if out, err := exec.CommandContext(ctx, "du", "-sh", s.DataDir).Output(); err == nil {
-			parts := strings.Fields(string(out))
-			if len(parts) > 0 {
-				s.chainDataSize = parts[0]
-				s.chainDataTime = time.Now()
-			}
-		}
-	}
-	si.ChainDataSize = s.chainDataSize
-
-	si.NodeTime = time.Now().UTC().Format("2006-01-02T15:04:05Z")
-	si.GenesisTime = s.Client.Names.GenesisTime
-
-	// Git info for gno source
-	if gnoRoot := s.gnoRootDir(); gnoRoot != "" {
-		if out, err := exec.CommandContext(ctx, "git", "-C", gnoRoot, "rev-parse", "--abbrev-ref", "HEAD").Output(); err == nil {
-			si.GitBranch = strings.TrimSpace(string(out))
-		}
-		if out, err := exec.CommandContext(ctx, "git", "-C", gnoRoot, "rev-parse", "--short", "HEAD").Output(); err == nil {
-			si.GitSHA = strings.TrimSpace(string(out))
-		}
-	}
-	if s.Backend != nil {
-		if hash, err := s.Backend.BinaryHash(ctx); err == nil {
-			si.BinaryHash = hash
-		}
-	}
-
-	// Persistent peers from config
-	if dataDir := s.DataDir; dataDir != "" {
-		if data, err := os.ReadFile(dataDir + "/config/config.toml"); err == nil {
-			for _, line := range strings.Split(string(data), "\n") {
-				line = strings.TrimSpace(line)
-				if !strings.Contains(line, "=") {
-					continue
-				}
-				key := strings.TrimSpace(strings.SplitN(line, "=", 2)[0])
-				if key != "persistent_peers" {
-					continue
-				}
-				val := strings.SplitN(line, "=", 2)[1]
-				val = strings.Trim(strings.TrimSpace(val), "\"")
-				if val != "" {
-					si.PersistentPeers = val
-				}
-				break
-			}
-		}
-	}
-
 	return si
 }
 
@@ -730,9 +469,7 @@ func (s *Server) collectSystemInfo(ctx context.Context) *node.SystemInfo {
 
 func (s *Server) fetchSnapshot(ctx context.Context) *node.Snapshot {
 	snap := &node.Snapshot{
-		GenesisSHA: s.genesisSHA,
-		Timestamp:  time.Now(),
-		Uptime:     time.Since(s.startTime).Truncate(time.Second).String(),
+		Timestamp: time.Now(),
 	}
 
 	status, err := s.Client.GetStatus(ctx)
@@ -927,26 +664,6 @@ func (s *Server) publishLoop(ctx context.Context) {
 			s.PushManager.EvaluateAndNotify(snap)
 		}
 
-		timeStr := snap.Timestamp.Format("15:04:05")
-
-		// Broadcast to SSE clients (legacy)
-		s.broadcastSSE("time", timeStr)
-		broadcastSSEJSON := func(event string, data interface{}) {
-			if b, err := json.Marshal(data); err == nil {
-				s.broadcastSSE(event, string(b))
-			}
-		}
-		if snap.Status != nil {
-			broadcastSSEJSON("status", snap.Status)
-		}
-		if snap.Peers != nil {
-			broadcastSSEJSON("peers", snap.Peers)
-		}
-		if report := s.buildVotesReport(snap); report != nil {
-			broadcastSSEJSON("votes", report)
-		}
-		broadcastSSEJSON("checks", s.buildCheckData(snap))
-
 		// Broadcast to WebSocket clients as a single batched message to reduce
 		// JSON.parse calls and WS message overhead on the frontend.
 		s.broadcastWS(s.buildUpdateMsg(snap))
@@ -988,7 +705,6 @@ func (s *Server) logStreamLoop(ctx context.Context) {
 		for scanner.Scan() {
 			entry := parseGnolandLog(scanner.Text())
 			entry.Msg = strings.ReplaceAll(entry.Msg, "/root/", "~/")
-			s.broadcastWS(wsMsg{Type: "log", Data: entry})
 			s.parseLogEvent(entry)
 		}
 
@@ -998,23 +714,12 @@ func (s *Server) logStreamLoop(ctx context.Context) {
 	}
 }
 
-// parseLogEvent extracts structured events from log lines
-// parseLogEvent extracts structured events from a parsed log entry.
+// parseLogEvent triggers an immediate snapshot refresh on consensus events.
 func (s *Server) parseLogEvent(entry LogEntry) {
 	now := time.Now()
 	// Rate limit: don't trigger snapshot refresh more than once per second.
 	if now.Sub(s.lastLogEvent) < time.Second {
 		return
-	}
-
-	// Extract peer IP from the "peer" extra field ("nodeID@IP:port").
-	if peer, ok := entry.Extra["peer"].(string); ok {
-		if at := strings.Index(peer, "@"); at > 0 {
-			hostPort := peer[at+1:]
-			if col := strings.LastIndex(hostPort, ":"); col > 0 {
-				s.peerActivity.Store(hostPort[:col], now)
-			}
-		}
 	}
 
 	// Consensus events: trigger an immediate snapshot refresh.
@@ -1044,288 +749,6 @@ func (s *Server) parseLogEvent(entry LogEntry) {
 			}
 		}()
 	}
-}
-
-// --- Log API ---
-
-func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
-	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
-	defer cancel()
-
-	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("Access-Control-Allow-Origin", "*")
-
-	if s.Backend == nil {
-		json.NewEncoder(w).Encode(map[string]interface{}{"lines": []LogEntry{}, "count": 0})
-		return
-	}
-
-	nInt := 200
-	if n := r.URL.Query().Get("n"); n != "" {
-		fmt.Sscanf(n, "%d", &nInt) // invalid values leave nInt at 200 (intentional)
-	}
-
-	lines, err := s.Backend.FetchLogs(ctx, nInt)
-	if err != nil {
-		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
-		return
-	}
-	entries := make([]LogEntry, len(lines))
-	for i, l := range lines {
-		e := parseGnolandLog(l)
-		e.Msg = strings.ReplaceAll(e.Msg, "/root/", "~/")
-		entries[i] = e
-	}
-	json.NewEncoder(w).Encode(map[string]interface{}{"lines": entries, "count": len(entries)})
-}
-
-// --- Diagnose API ---
-
-func (s *Server) handleDiagnose(w http.ResponseWriter, r *http.Request) {
-	ip := r.URL.Query().Get("ip")
-	moniker := r.URL.Query().Get("moniker")
-	if ip == "" {
-		http.Error(w, "missing ip parameter", 400)
-		return
-	}
-
-	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
-	defer cancel()
-
-	report := &DiagReport{
-		IP:      ip,
-		Moniker: moniker,
-		Time:    time.Now().UTC().Format("2006-01-02T15:04:05Z"),
-	}
-
-	rpcURL := fmt.Sprintf("http://%s:%s", ip, rpcPort)
-	pc := node.NewClient(rpcURL, 5*time.Second)
-
-	// Check 1: RPC reachable
-	status, err := pc.GetStatus(ctx)
-	if err != nil {
-		report.Checks = append(report.Checks, DiagCheck{"rpc", "err", "Not reachable: " + err.Error()})
-		// Check what we know from our P2P side
-		snap := s.getSnapshot()
-		if snap != nil {
-			for _, p := range snap.Peers {
-				if p.RemoteIP == ip && p.PeerHeight != "" {
-					report.Checks = append(report.Checks, DiagCheck{"gossip", "ok", fmt.Sprintf("We see their consensus at h=%s (from our P2P)", p.PeerHeight)})
-					break
-				}
-			}
-		}
-	} else {
-		report.Checks = append(report.Checks, DiagCheck{"rpc", "ok", "Reachable at " + rpcURL})
-
-		// Check 2: Block height
-		h := status.SyncInfo.LatestBlockHeight
-		snap := s.getSnapshot()
-		nh := "?"
-		var nhInt int
-		if snap != nil && snap.Consensus != nil {
-			nh = snap.Consensus.Height
-			fmt.Sscanf(nh, "%d", &nhInt)
-		}
-
-		// Check 2: Block height vs network
-		var hInt int
-		fmt.Sscanf(h, "%d", &hInt)
-		if nhInt > 0 && hInt < nhInt-10 {
-			report.Checks = append(report.Checks, DiagCheck{"height", "warn", fmt.Sprintf("Block %s — behind network (%s)", h, nh)})
-		} else {
-			report.Checks = append(report.Checks, DiagCheck{"height", "ok", fmt.Sprintf("Block %s (network: %s)", h, nh)})
-		}
-
-		// Check 3: Catching up
-		if status.SyncInfo.CatchingUp {
-			report.Checks = append(report.Checks, DiagCheck{"sync", "warn", "Node is catching up"})
-		} else {
-			report.Checks = append(report.Checks, DiagCheck{"sync", "ok", "Synced"})
-		}
-
-		// Check 4: Block time
-		bt := status.SyncInfo.LatestBlockTime
-		if strings.HasPrefix(bt, "1970") {
-			// Check if genesis is in the future — if so, this is expected
-			genTime := s.Client.Names.GenesisTime
-			preGenesis := false
-			if genTime != "" {
-				if gt, err := time.Parse(time.RFC3339, genTime); err == nil && time.Now().Before(gt) {
-					preGenesis = true
-				}
-			}
-			if preGenesis {
-				report.Checks = append(report.Checks, DiagCheck{"block_time", "ok", "Pre-genesis — waiting for genesis time"})
-			} else {
-				report.Checks = append(report.Checks, DiagCheck{"block_time", "warn", "Block time is 1970 — no blocks produced yet"})
-			}
-		} else {
-			report.Checks = append(report.Checks, DiagCheck{"block_time", "ok", bt})
-		}
-
-		// Check 5: Validator info
-		if status.ValidatorInfo.Address != "" {
-			valAddr := status.ValidatorInfo.Address
-			pubKey := s.Client.Names.PubKey(valAddr)
-			valDetail := "Address: " + valAddr
-			if pubKey != "" {
-				valDetail += " | PubKey: " + pubKey
-			}
-			report.Checks = append(report.Checks, DiagCheck{"validator", "ok", valDetail})
-			// Add copyable "addr pubkey # moniker" line
-			valLine := valAddr
-			if pubKey != "" {
-				valLine += " " + pubKey
-			}
-			peerMoniker := status.NodeInfo.Moniker
-			if moniker != "" {
-				peerMoniker = moniker
-			}
-			valLine += " # " + peerMoniker
-			report.Checks = append(report.Checks, DiagCheck{"val_identity", "ok", valLine})
-			if moniker != "" {
-				s.Client.Names.Register(valAddr, moniker)
-			}
-		} else {
-			report.Checks = append(report.Checks, DiagCheck{"validator", "warn", "No validator address — not a validator?"})
-		}
-
-		// Check 6: Moniker
-		if moniker != "" && status.NodeInfo.Moniker != moniker {
-			report.Checks = append(report.Checks, DiagCheck{"moniker", "warn", fmt.Sprintf("Reports as '%s' but we expected '%s'", status.NodeInfo.Moniker, moniker)})
-		} else {
-			report.Checks = append(report.Checks, DiagCheck{"moniker", "ok", "Reports as: " + status.NodeInfo.Moniker})
-		}
-
-		// Check 7: Network/chain
-		ourNet := ""
-		if snap != nil && snap.Status != nil {
-			ourNet = snap.Status.NodeInfo.Network
-		}
-		if ourNet != "" && status.NodeInfo.Network != ourNet {
-			report.Checks = append(report.Checks, DiagCheck{"chain", "err", "Different chain! Theirs: " + status.NodeInfo.Network + ", ours: " + ourNet})
-		} else {
-			report.Checks = append(report.Checks, DiagCheck{"chain", "ok", status.NodeInfo.Network})
-		}
-
-		// Check 8: Version
-		ourVer := ""
-		if snap != nil && snap.Status != nil {
-			ourVer = snap.Status.NodeInfo.Version
-		}
-		if ourVer != "" && status.NodeInfo.Version != ourVer {
-			report.Checks = append(report.Checks, DiagCheck{"version", "warn", fmt.Sprintf("%s (ours: %s)", status.NodeInfo.Version, ourVer)})
-		} else {
-			report.Checks = append(report.Checks, DiagCheck{"version", "ok", status.NodeInfo.Version})
-		}
-
-		// Check 9: Net address
-		report.Checks = append(report.Checks, DiagCheck{"net_address", "ok", status.NodeInfo.NetAddress})
-
-		// Check 10: Their peers
-		theirPeers, peerErr := pc.GetNetInfo(ctx)
-		if peerErr != nil {
-			report.Checks = append(report.Checks, DiagCheck{"their_peers", "warn", "Cannot fetch: " + peerErr.Error()})
-		} else {
-			if len(theirPeers) == 0 {
-				report.Checks = append(report.Checks, DiagCheck{"their_peers", "err", "No peers connected!"})
-			} else if len(theirPeers) < 3 {
-				report.Checks = append(report.Checks, DiagCheck{"their_peers", "warn", fmt.Sprintf("%d peers (low)", len(theirPeers))})
-			} else {
-				report.Checks = append(report.Checks, DiagCheck{"their_peers", "ok", fmt.Sprintf("%d peers", len(theirPeers))})
-			}
-		}
-
-		// Check 11: Their validator set
-		theirVals, valErr := pc.GetValidators(ctx)
-		if valErr != nil {
-			report.Checks = append(report.Checks, DiagCheck{"their_valset", "warn", "Cannot fetch: " + valErr.Error()})
-		} else {
-			ourValCount := 0
-			if snap != nil && snap.Consensus != nil {
-				ourValCount = len(snap.Consensus.Votes)
-			}
-			if ourValCount > 0 && len(theirVals) != ourValCount {
-				report.Checks = append(report.Checks, DiagCheck{"their_valset", "warn", fmt.Sprintf("%d validators (we have %d)", len(theirVals), ourValCount)})
-			} else {
-				report.Checks = append(report.Checks, DiagCheck{"their_valset", "ok", fmt.Sprintf("%d validators", len(theirVals))})
-			}
-		}
-
-		// Check 12: Consensus state + gossip (combined)
-		cs, _, csErr := pc.GetConsensusState(ctx)
-		gossipLag := false
-		if snap != nil {
-			for _, p := range snap.Peers {
-				if p.RemoteIP == ip && p.PeerHeight != "" {
-					var ourView int
-					fmt.Sscanf(p.PeerHeight, "%d", &ourView)
-					if ourView > 0 && nhInt > 0 && ourView < nhInt-10 {
-						gossipLag = true
-						report.Checks = append(report.Checks, DiagCheck{"gossip", "warn", fmt.Sprintf("We see their consensus at h=%d but network is at %s — P2P gossip lag (sentry issue?)", ourView, nh)})
-					} else if ourView > 0 {
-						report.Checks = append(report.Checks, DiagCheck{"gossip", "ok", fmt.Sprintf("We see their consensus at h=%d", ourView)})
-					}
-					break
-				}
-			}
-		}
-
-		if csErr != nil {
-			report.Checks = append(report.Checks, DiagCheck{"consensus", "err", "Cannot fetch: " + csErr.Error()})
-		} else {
-			csInfo := fmt.Sprintf("h=%s r=%s s=%s", cs.Height, cs.Round, cs.Step)
-			var csHInt int
-			fmt.Sscanf(cs.Height, "%d", &csHInt)
-			if nhInt > 0 && csHInt < nhInt-10 {
-				report.Checks = append(report.Checks, DiagCheck{"consensus", "warn", fmt.Sprintf("%s — behind network (%s)", csInfo, nh)})
-			} else if gossipLag {
-				report.Checks = append(report.Checks, DiagCheck{"consensus", "warn", fmt.Sprintf("%s — their RPC ok but our P2P view is stale", csInfo)})
-			} else {
-				report.Checks = append(report.Checks, DiagCheck{"consensus", "ok", csInfo})
-			}
-
-			// Check round age — only warn if THEY are stuck but network is not
-			if cs.RoundStartTime != "" {
-				if t, err := time.Parse(time.RFC3339Nano, cs.RoundStartTime); err == nil {
-					age := time.Since(t).Truncate(time.Second)
-					networkAlsoStuck := false
-					if snap != nil && snap.Consensus != nil && snap.Consensus.RoundStartTime != "" {
-						if nt, err := time.Parse(time.RFC3339Nano, snap.Consensus.RoundStartTime); err == nil {
-							networkAlsoStuck = time.Since(nt) > 30*time.Second
-						}
-					}
-					if age > 30*time.Second && !networkAlsoStuck {
-						report.Checks = append(report.Checks, DiagCheck{"round_age", "warn", fmt.Sprintf("Stuck on round for %s (network is advancing)", age)})
-					} else if age > 30*time.Second {
-						report.Checks = append(report.Checks, DiagCheck{"round_age", "ok", fmt.Sprintf("%s (network also stuck)", age)})
-					} else {
-						report.Checks = append(report.Checks, DiagCheck{"round_age", "ok", age.String()})
-					}
-				}
-			}
-		}
-	}
-
-	// Store and broadcast
-	s.diagmu.Lock()
-	s.diagData[ip] = report
-	s.diagmu.Unlock()
-
-	s.broadcastWS(wsMsg{Type: "diagnose", Data: report})
-
-	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("Access-Control-Allow-Origin", "*")
-	json.NewEncoder(w).Encode(report)
-}
-
-func (s *Server) handleDiagnoseList(w http.ResponseWriter, r *http.Request) {
-	s.diagmu.RLock()
-	defer s.diagmu.RUnlock()
-	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("Access-Control-Allow-Origin", "*")
-	json.NewEncoder(w).Encode(s.diagData)
 }
 
 // generateID generates a random hex string suitable for use as a subscription ID.
@@ -1454,86 +877,8 @@ func (s *Server) handlePushTest(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 }
 
-func (s *Server) handleNotifyChannels(w http.ResponseWriter, r *http.Request) {
-	if s.PushManager == nil {
-		http.Error(w, "notifications not configured", http.StatusServiceUnavailable)
-		return
-	}
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]interface{}{
-		"channels": s.PushManager.NotifyChannels(),
-	})
-}
-
-func (s *Server) handleNotifyTest(w http.ResponseWriter, r *http.Request) {
-	if s.PushManager == nil {
-		http.Error(w, "notifications not configured", http.StatusServiceUnavailable)
-		return
-	}
-	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	var req struct {
-		Channels []int  `json:"channels"`
-		Message  string `json:"message"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "invalid request body", http.StatusBadRequest)
-		return
-	}
-	results := s.PushManager.SendTestNotify(req.Channels, req.Message)
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]interface{}{
-		"results": results,
-	})
-}
-
 // Run starts the web server, publish loop, and log streamer.
-// computeGenesisSHA hashes the local genesis file to avoid hardcoding.
-func (s *Server) computeGenesisSHA() string {
-	candidates := []string{}
-	if s.GenesisPath != "" {
-		candidates = append(candidates, s.GenesisPath)
-	}
-	if s.DataDir != "" {
-		candidates = append(candidates, s.DataDir+"/config/genesis.json")
-	}
-	// Try relative paths
-	entries, _ := os.ReadDir(".")
-	for _, e := range entries {
-		if e.IsDir() {
-			candidates = append(candidates, e.Name()+"/gnoland-data/config/genesis.json")
-		}
-	}
-	for _, p := range candidates {
-		data, err := os.ReadFile(p)
-		if err != nil {
-			continue
-		}
-		h := sha256.Sum256(data)
-		return fmt.Sprintf("%x", h)
-	}
-	return ""
-}
-
-// gnoRootDir tries to find the gno source directory.
-func (s *Server) gnoRootDir() string {
-	// Check GNOROOT env
-	if v := os.Getenv("GNOROOT"); v != "" {
-		return v
-	}
-	// Common locations
-	for _, p := range []string{"/root/gno", "/usr/local/src/gno"} {
-		if fi, err := os.Stat(p); err == nil && fi.IsDir() {
-			return p
-		}
-	}
-	return ""
-}
-
 func (s *Server) Run(ctx context.Context) error {
-	s.genesisSHA = s.computeGenesisSHA()
 	if Version == "" {
 		if out, err := exec.Command("git", "describe", "--tags", "--always", "--dirty").Output(); err == nil {
 			Version = strings.TrimSpace(string(out))
@@ -1550,11 +895,6 @@ func (s *Server) Run(ctx context.Context) error {
 		json.NewEncoder(w).Encode(map[string]string{"version": Version})
 	})
 	mux.HandleFunc("/api/boot", s.handleBootStatus)
-	mux.HandleFunc("/api/reset-cache", s.handleResetCache)
-	mux.HandleFunc("/api/logs", s.handleLogs)
-	mux.HandleFunc("/api/diagnose", s.handleDiagnose)
-	mux.HandleFunc("/api/diagnoses", s.handleDiagnoseList)
-	mux.HandleFunc("/events", s.handleEvents)
 	mux.HandleFunc("/ws", s.handleWS)
 	mux.HandleFunc("/manifest.json", s.handleManifest)
 	mux.HandleFunc("/icon.svg", s.handleIconSVG)
@@ -1567,8 +907,6 @@ func (s *Server) Run(ctx context.Context) error {
 	mux.HandleFunc("/api/push/subscribe", s.handlePushSubscribe)
 	mux.HandleFunc("/api/push/entities", s.handlePushEntities)
 	mux.HandleFunc("/api/push/test", s.handlePushTest)
-	mux.HandleFunc("/api/notify/channels", s.handleNotifyChannels)
-	mux.HandleFunc("/api/notify/test", s.handleNotifyTest)
 
 	srv := &http.Server{
 		Addr:    s.Addr,
@@ -1582,6 +920,6 @@ func (s *Server) Run(ctx context.Context) error {
 		srv.Shutdown(shutdownCtx)
 	}()
 
-	log.Printf("gnockpit web: http://%s", s.Addr)
+	log.Printf("gnockpit listening on http://%s", s.Addr)
 	return srv.ListenAndServe()
 }

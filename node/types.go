@@ -189,34 +189,11 @@ type PeerState struct {
 	Precommits string `json:"precommits"`
 }
 
-// CheckResult represents a verification check.
-type CheckResult struct {
-	Name     string `json:"name"`
-	Status   string `json:"status"` // "ok", "mismatch", "missing", "n/a", "error"
-	Got      string `json:"got,omitempty"`
-	Expected string `json:"expected,omitempty"`
-	Message  string `json:"message,omitempty"`
-}
-
 // SystemInfo holds system resource information.
 type SystemInfo struct {
-	DiskUsed        string `json:"disk_used"`
-	DiskTotal       string `json:"disk_total"`
-	DiskPercent     int    `json:"disk_percent"`
-	LoadAvg         string `json:"load_avg"`
-	NumCPU          int    `json:"num_cpu"`
-	MemUsed         string `json:"mem_used"`
-	MemTotal        string `json:"mem_total"`
-	MemPercent      int    `json:"mem_percent"`
-	GnolandUptime   string `json:"gnoland_uptime"`
-	GnolandMem      string `json:"gnoland_mem"`
-	ChainDataSize   string `json:"chain_data_size"`
-	NodeTime        string `json:"node_time"`
-	GenesisTime     string `json:"genesis_time,omitempty"`
-	GitBranch       string `json:"git_branch,omitempty"`
-	GitSHA          string `json:"git_sha,omitempty"`
-	BinaryHash      string `json:"binary_hash,omitempty"`
-	PersistentPeers string `json:"persistent_peers,omitempty"`
+	GnolandUptime string `json:"gnoland_uptime"`
+	NodeTime      string `json:"node_time"`
+	GenesisTime   string `json:"genesis_time,omitempty"`
 }
 
 // MissingValidator identifies a validator that did not sign a block.
@@ -265,9 +242,7 @@ type Snapshot struct {
 	Consensus      *ConsensusState `json:"consensus,omitempty"`
 	Peers          []Peer          `json:"peers,omitempty"`
 	Validators     []Validator     `json:"validators,omitempty"`
-	GenesisSHA     string          `json:"genesis_sha256"`
 	AppHashLast    string          `json:"apphash_last"`
-	Uptime         string          `json:"uptime,omitempty"`
 	RoundStartTime string          `json:"round_start_time,omitempty"`
 	System         *SystemInfo     `json:"system,omitempty"`
 	Signing        *SigningStats   `json:"signing,omitempty"`

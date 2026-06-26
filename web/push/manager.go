@@ -8,7 +8,6 @@ import (
 	"net/http"
 
 	webpush "github.com/SherClockHolmes/webpush-go"
-	"github.com/containrrr/shoutrrr"
 	"github.com/containrrr/shoutrrr/pkg/router"
 	"github.com/gnoverse/gnockpit/node"
 )
@@ -86,84 +85,6 @@ func (m *Manager) SetNotifyURLs(urls []string) error {
 	m.notifier = r
 	m.notifyURLs = urls
 	return nil
-}
-
-// NotifyChannels returns the list of configured notification channels.
-// Shoutrrr channels are listed first by index, push channel is listed last.
-func (m *Manager) NotifyChannels() []Channel {
-	var channels []Channel
-	for i, u := range m.notifyURLs {
-		channels = append(channels, Channel{
-			ID:   i,
-			Type: URLScheme(u),
-			URL:  MaskURL(u),
-		})
-	}
-	subs, _ := m.db.AllSubscriptions()
-	channels = append(channels, Channel{
-		ID:          len(m.notifyURLs),
-		Type:        "push",
-		Subscribers: len(subs),
-	})
-	return channels
-}
-
-// SendTestNotify sends a test message to the specified channel IDs.
-// If channelIDs is nil or empty, sends to all channels.
-// Push channel sends to all subscribers. Returns one result per channel attempted.
-func (m *Manager) SendTestNotify(channelIDs []int, message string) []TestResult {
-	if message == "" {
-		message = FormatAlert(m.chainName, m.publicURL, Alert{
-			Firing: true,
-			Title:  "Test alert",
-			Body:   "This is a test notification from gnockpit.",
-		})
-	}
-
-	channels := m.NotifyChannels()
-
-	// Resolve which channels to test
-	var targets []Channel
-	if len(channelIDs) == 0 {
-		targets = channels
-	} else {
-		for _, id := range channelIDs {
-			if id >= 0 && id < len(channels) {
-				targets = append(targets, channels[id])
-			}
-		}
-	}
-
-	var results []TestResult
-	for _, ch := range targets {
-		if ch.Type == "push" {
-			results = append(results, m.testPushChannel(ch.ID, message)...)
-			continue
-		}
-		// Shoutrrr channel — send individually
-		if ch.ID < 0 || ch.ID >= len(m.notifyURLs) {
-			continue
-		}
-		err := shoutrrr.Send(m.notifyURLs[ch.ID], message)
-		r := TestResult{ID: ch.ID, Type: ch.Type, OK: err == nil}
-		if err != nil {
-			r.Error = err.Error()
-		}
-		results = append(results, r)
-	}
-	return results
-}
-
-func (m *Manager) testPushChannel(id int, message string) []TestResult {
-	subs, err := m.db.AllSubscriptions()
-	if err != nil || len(subs) == 0 {
-		return nil
-	}
-	a := Alert{Firing: true, Title: "gnockpit test", Body: message}
-	for _, sub := range subs {
-		m.sendPush(sub, a)
-	}
-	return []TestResult{{ID: id, Type: "push", OK: true}}
 }
 
 // EvaluateAndNotify detects alert transitions from snap and delivers push notifications.
