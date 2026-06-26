@@ -2,12 +2,12 @@
 
 ## What is this?
 
-gnockpit is a real-time monitoring dashboard for gno.land validator nodes. It's a single Go binary that connects to a gnoland node's Tendermint RPC and provides both a web UI and CLI tools.
+gnockpit is a real-time monitoring dashboard for a gno.land validator node. It's a single Go binary (`gnockpit [flags]`, no subcommands) that connects to one gnoland node and serves a live web dashboard, with web-push/PWA alerts and external (Shoutrrr) notifications.
 
 ## Architecture
 
 ```
-main.go          — CLI entry point (cobra commands: status, peers, web, etc.)
+main.go          — CLI entry point (single command: starts the web dashboard)
 node/            — RPC client + types (pure data layer, no UI)
   client.go      — HTTP client for Tendermint RPC (/status, /net_info, /validators, etc.)
   types.go       — All data types (Status, Peer, Validator, Snapshot, SigningStats, etc.)
@@ -24,7 +24,7 @@ web/             — Web dashboard
 2. Each cycle calls `fetchSnapshot()` which queries the local RPC for status, validators, consensus, peers, block signing stats
 3. The snapshot is broadcast to all connected WebSocket clients as typed messages: `status`, `peers`, `votes`, `checks`, `signing`
 4. `index.html` receives these messages and updates the DOM in-place
-5. Log lines are streamed from `journalctl` via a separate goroutine
+5. The node's logs are streamed (journalctl/docker) only to trigger an immediate refresh when consensus moves — they are not displayed
 
 ### NameRegistry (validators.go)
 Maps validator addresses to human-readable monikers. This is critical because Tendermint RPC only returns addresses, not names. Discovery happens through:
@@ -42,18 +42,6 @@ Fetches the last N blocks (default 100), extracts:
 - Block timestamps → compute per-proposer average block time
 - Sign rate per validator (signed/total as percentage)
 
-### Doctor (index.html: runDoctor)
-Client-side diagnostic checks that run on every data update:
-- Prevote/precommit threshold not reached
-- Vote gossip fragmentation (peers see different vote counts)
-- Split-height deadlock (validators at different consensus heights)
-- Consensus frozen (stuck for >5min or >1h)
-- Old-chain peers (peer height way higher = different genesis)
-- Validators not voting when network is stuck
-
-### Diagnose (server.go: handleDiagnose)
-Per-node diagnostics triggered by clicking the 💡 button. Queries the target node's RPC and checks: reachability, height, sync, block time, validator status, chain-id match, version, peer count, consensus state, round age.
-
 ## Important Patterns
 
 ### No hardcoded values
@@ -62,13 +50,12 @@ Everything is auto-detected or configurable via flags. The tool works on any gno
 - Service name → from chain ID + `.service`
 - Genesis path → from `--data-dir` + `/config/genesis.json`
 - Validator names → discovered dynamically from peers
-- Gno source path → from `GNOROOT` env
 
 ### Single HTML file
 `web/index.html` is a complete SPA with no build step. Vanilla JS, CSS variables for dark theme, no external dependencies. It's embedded in the binary via `go:embed`.
 
 ### WebSocket protocol
-Messages are JSON with `{type: string, data: any}`. Types: `status`, `peers`, `votes`, `checks`, `signing`, `time`, `log`, `diagnose`.
+Messages are JSON with `{type: string, data: any}`. Types: `snapshot` (full state on connect), `update` (batched periodic), and individual `status`, `peers`, `votes`, `checks`, `signing`, `time`.
 
 ### Scroll preservation
 `renderNetwork()` saves `window.scrollY` before DOM updates and restores it after, preventing the page from jumping during live updates.
@@ -84,12 +71,6 @@ Each card has `<h2 data-section="name">` that toggles `.collapsed` class. State 
 3. Call it in `web/server.go: fetchSnapshot()`
 4. Broadcast it in the publish loop
 5. Handle the WebSocket message in `web/index.html`
-
-### Adding a new doctor check
-Add to the `runDoctor()` function in `index.html`. Push to the `items` array with `{level: 'crit'|'warn'|'ok', title: string, detail: string, action: string}`.
-
-### Adding a new diagnose check
-Add to `handleDiagnose()` in `server.go`. Append to `report.Checks` with `DiagCheck{Name, Status, Detail}`.
 
 ### Adding a new peer table column
 1. Add `<th>` in the header row
@@ -110,7 +91,7 @@ Tests are minimal — focused on JSON parsing and name registry logic. The web U
 Typical systemd service:
 ```ini
 [Service]
-ExecStart=/usr/local/bin/gnockpit web \
+ExecStart=/usr/local/bin/gnockpit \
   --rpc http://127.0.0.1:26657 \
   --data-dir /path/to/gnoland-data \
   --service chainname.service \

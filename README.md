@@ -83,13 +83,12 @@ gnockpit can send browser push notifications for validator monitoring alerts. Th
 
 ## External Notifications
 
-gnockpit can forward alerts to Discord, Telegram, Signal, Slack, and other services via [Shoutrrr](https://github.com/containrrr/shoutrrr) notification URLs. Use the `--notify` flag (repeatable) to add destinations:
+gnockpit can forward alerts to Discord, Telegram, Slack, and other services via [Shoutrrr](https://github.com/containrrr/shoutrrr) notification URLs. Use the `--notify` flag (repeatable) to add destinations:
 
 ```bash
-gnockpit web \
+gnockpit \
   --notify "discord://token@webhookid" \
-  --notify "telegram://token@telegram?chats=@channel" \
-  --notify "generic://signal-api:8080/v2/send?template=json&disabletls=yes&$number=%2B1234567890&$recipient=%2B0987654321"
+  --notify "telegram://token@telegram?chats=@channel"
 ```
 
 Alerts are sent to all configured URLs whenever a state transition occurs (firing or recovery). The same alerts that trigger browser push notifications also trigger external notifications.
@@ -103,11 +102,8 @@ Alerts are sent to all configured URLs whenever a state transition occurs (firin
 | Slack | `slack://token-a/token-b/token-c` |
 | Email | `smtp://user:pass@host:port/?from=X&to=Y` |
 | Generic webhook | `generic+https://example.com/webhook` |
-| Signal (via signal-cli-rest-api) | `generic://signal-api:8080/v2/send?template=json&disabletls=yes&$number=%2Bsender&$recipient=%2Btarget` |
 
 See the [Shoutrrr documentation](https://containrrr.dev/shoutrrr/latest/) for the full list of supported services and URL formats.
-
-**Signal:** Requires a [signal-cli-rest-api](https://github.com/bbernhard/signal-cli-rest-api) sidecar.
 
 ## Features
 
@@ -115,7 +111,7 @@ See the [Shoutrrr documentation](https://containrrr.dev/shoutrrr/latest/) for th
 - Consensus monitoring — height, round, step, prevotes, precommits per validator
 - Peer management — validator detection, health status, RPC reachability
 - Signing stats — per-validator sign rate and proposer speed over last 100 blocks
-- Doctor diagnostics — deadlock detection, split-height alerts, gossip analysis
+- Alerts — browser push (PWA) and external notifications (Discord, Telegram, …) for chain-stuck and missed-blocks
 - Block history — recent blocks with signing visualization
 
 ## License
