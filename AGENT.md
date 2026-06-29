@@ -24,11 +24,10 @@ web/             — Web dashboard
 2. Each cycle calls `fetchSnapshot()` which queries the local RPC for status, validators, consensus, peers, block signing stats
 3. The snapshot is broadcast to all connected WebSocket clients as typed messages: `status`, `peers`, `votes`, `checks`, `signing`
 4. `index.html` receives these messages and updates the DOM in-place
-5. The node's logs are streamed (journalctl/docker) only to trigger an immediate refresh when consensus moves — they are not displayed
 
 ### NameRegistry (validators.go)
 Maps validator addresses to human-readable monikers. This is critical because Tendermint RPC only returns addresses, not names. Discovery happens through:
-- **Genesis file** — validator names from genesis.json at startup
+- **Genesis (RPC)** — validator names and the genesis time are seeded at startup by streaming the node's `/genesis` endpoint, parsing only the head (the large `app_state` is never downloaded)
 - **Peer RPC queries** — when we query a peer's `/status`, we get their validator_info.address + moniker
 - **Node-ID verification** — on shared IPs (multiple nodes same IP), the RPC response's node_info.id is checked against the peer's P2P node-id before trusting the mapping
 - **Correlation** — unmatched validators are matched to unmatched peers heuristically
@@ -47,9 +46,8 @@ Fetches the last N blocks (default 100), extracts:
 ### No hardcoded values
 Everything is auto-detected or configurable via flags. The tool works on any gno.land chain without code changes:
 - Chain ID → from RPC `/status`
-- Service name → from chain ID + `.service`
-- Genesis path → from `--data-dir` + `/config/genesis.json`
-- Validator names → discovered dynamically from peers
+- Genesis time + validator names → streamed from RPC `/genesis` (head only)
+- Validator names → also discovered dynamically from peers
 
 ### Single HTML file
 `web/index.html` is a complete SPA with no build step. Vanilla JS, CSS variables for dark theme, no external dependencies. It's embedded in the binary via `go:embed`.
@@ -93,8 +91,6 @@ Typical systemd service:
 [Service]
 ExecStart=/usr/local/bin/gnockpit \
   --rpc http://127.0.0.1:26657 \
-  --data-dir /path/to/gnoland-data \
-  --service chainname.service \
   --port 8080 --addr 127.0.0.1 --interval 5s
 ```
 

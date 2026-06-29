@@ -17,9 +17,6 @@ gnockpit
 # Full options
 gnockpit \
   -rpc http://127.0.0.1:26657 \
-  -data-dir /path/to/gnoland-data \
-  -genesis /path/to/genesis.json \
-  -service gnoland.service \
   -port 8080 \
   -addr 0.0.0.0 \
   -interval 5s
@@ -30,9 +27,6 @@ gnockpit \
 | Flag | Default | Description |
 |------|---------|-------------|
 | `-rpc` | `http://127.0.0.1:26657` | RPC endpoint URL |
-| `-data-dir` | auto-detect | gnoland data directory |
-| `-genesis` | auto-detect | Path to genesis.json |
-| `-service` | auto-detect | Systemd service name |
 | `-names` | `/tmp/gnockpit-names.json` | Persistent name registry |
 | `-port` | `8080` | Web server port |
 | `-addr` | `0.0.0.0` | Bind address |
@@ -47,7 +41,7 @@ gnockpit \
 
 gnockpit maps validator addresses to human-readable monikers for display in the dashboard. It builds this registry automatically from two sources:
 
-- **Genesis file** — validator names are seeded at startup from `genesis.json`
+- **Genesis (RPC)** — validator names and the genesis time are seeded at startup by streaming the node's `/genesis` endpoint, reading only the head of the document (the large `app_state` is never downloaded)
 - **Peer RPC queries** — when gnockpit queries a peer's `/status` endpoint, it records their address + moniker
 
 Discoveries are persisted to the file specified by `-names` (default: `/tmp/gnockpit-names.json`) and survive restarts.
