@@ -8,6 +8,7 @@ require (
 	github.com/fogleman/gg v1.3.0
 	github.com/gnolang/gno v1.1.0
 	github.com/gorilla/websocket v1.5.3
+	github.com/oschwald/maxminddb-golang v1.13.1
 	golang.org/x/image v0.23.0
 	modernc.org/sqlite v1.47.0
 )

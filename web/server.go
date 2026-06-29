@@ -34,6 +34,10 @@ const (
 	// from the on-chain registry. Identity is near-static and the refresh is
 	// expensive (one query per valoper), so keep it slow.
 	valoperRefreshInterval = 15 * time.Minute
+	// geoIPRefreshInterval governs how often the IP-geolocation database is
+	// checked for a new monthly release. The check is a cheap date comparison;
+	// a download only happens when the month actually changes.
+	geoIPRefreshInterval = 24 * time.Hour
 )
 
 // wsMsg is a WebSocket message envelope.
@@ -68,6 +72,7 @@ type Server struct {
 	// Set by caller before Run.
 	PushManager     *push.Manager // push notification manager (nil = disabled)
 	MissedBlocksPct int           // missed-block threshold for active validator counting
+	GeoIP           *node.GeoIP   // IP geolocation for the network map (nil = disabled)
 }
 
 // NewServer creates a new web server.
@@ -484,6 +489,23 @@ func (s *Server) fetchSnapshot(ctx context.Context) *node.Snapshot {
 		snap.Peers = enriched
 	}
 
+	// Geolocate peers for the network map (best-effort; empty until the
+	// database has been downloaded).
+	if s.GeoIP != nil {
+		for i := range snap.Peers {
+			ip := snap.Peers[i].RemoteIP
+			if ip == "" {
+				ip = snap.Peers[i].ExternalAddress
+			}
+			if lat, lon, city, country, ok := s.GeoIP.Lookup(ip); ok {
+				snap.Peers[i].Lat = lat
+				snap.Peers[i].Lon = lon
+				snap.Peers[i].City = city
+				snap.Peers[i].Country = country
+			}
+		}
+	}
+
 	// App hash for last block
 	if snap.Status != nil {
 		var h int
@@ -653,6 +675,34 @@ func (s *Server) valoperRefreshLoop(ctx context.Context) {
 	}
 }
 
+// geoIPRefreshLoop keeps the IP-geolocation database current: it checks daily
+// and downloads the new month's DB-IP City Lite file when the month rolls over
+// (EnsureFresh is a no-op when the loaded month is already current). The first
+// run downloads the database in the background, so the map fills in once it
+// completes without blocking the dashboard.
+func (s *Server) geoIPRefreshLoop(ctx context.Context) {
+	if s.GeoIP == nil {
+		return
+	}
+	refresh := func() {
+		if err := s.GeoIP.EnsureFresh(ctx, time.Now()); err != nil {
+			log.Printf("geoip refresh failed: %v", err)
+		}
+	}
+	refresh()
+
+	ticker := time.NewTicker(geoIPRefreshInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			refresh()
+		}
+	}
+}
+
 // generateID generates a random hex string suitable for use as a subscription ID.
 func generateID() string {
 	b := make([]byte, 16)
@@ -788,6 +838,7 @@ func (s *Server) Run(ctx context.Context) error {
 	}
 	go s.publishLoop(ctx)
 	go s.valoperRefreshLoop(ctx)
+	go s.geoIPRefreshLoop(ctx)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", s.handleIndex)

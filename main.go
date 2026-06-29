@@ -31,6 +31,7 @@ var (
 	flagNamesPath       string
 	flagNotifyURLs      stringSlice
 	flagPublicURL       string
+	flagGeoIPPath       string
 )
 
 // stringSlice is a flag.Value that accumulates one entry per occurrence,
@@ -70,6 +71,7 @@ func main() {
 	flag.IntVar(&flagMissedBlocksPct, "missed-blocks-pct", 5, "percent of blocks missed in the signing window before the validator-missing-blocks alert fires")
 	flag.Var(&flagNotifyURLs, "notify", "Shoutrrr notification URL, repeatable (e.g. discord://token@id)")
 	flag.StringVar(&flagPublicURL, "public-url", "", "public URL of this gnockpit instance, appended to external notification messages")
+	flag.StringVar(&flagGeoIPPath, "geoip-db", "/tmp/gnockpit-geoip.mmdb", "path for the DB-IP City Lite mmdb powering the network map; auto-downloaded and refreshed monthly. Empty disables the map.")
 
 	flag.Parse()
 	if flag.NArg() > 0 {
@@ -112,6 +114,12 @@ func run() error {
 	}
 	srv.MissedBlocksPct = flagMissedBlocksPct
 	srv.PushManager = pushMgr
+
+	if flagGeoIPPath != "" {
+		srv.GeoIP = node.NewGeoIP(flagGeoIPPath, func(format string, args ...any) {
+			fmt.Fprintf(os.Stderr, format+"\n", args...)
+		})
+	}
 
 	return srv.Run(ctx)
 }

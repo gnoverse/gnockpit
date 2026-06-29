@@ -130,6 +130,11 @@ type Peer struct {
 	HasProposal    bool   `json:"has_proposal,omitempty"`
 	PeerPrevotes   string `json:"peer_prevotes,omitempty"`
 	PeerPrecommits string `json:"peer_precommits,omitempty"`
+	// Geolocation from the IP (DB-IP City Lite), for the network map.
+	Lat     float64 `json:"lat,omitempty"`
+	Lon     float64 `json:"lon,omitempty"`
+	City    string  `json:"city,omitempty"`
+	Country string  `json:"country,omitempty"`
 }
 
 // Validator represents a validator from the validator set.
