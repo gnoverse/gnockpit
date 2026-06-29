@@ -1,7 +1,6 @@
 package web
 
 import (
-	"bufio"
 	"context"
 	"crypto/rand"
 	"embed"
@@ -10,7 +9,6 @@ import (
 	"fmt"
 	"log"
 	"net/http"
-	"os"
 	"os/exec"
 	"sort"
 	"strings"
@@ -32,6 +30,10 @@ var Version = ""
 const (
 	rpcPort     = "26657"
 	peerTimeout = 3 * time.Second
+	// valoperRefreshInterval governs how often validator names are refreshed
+	// from the on-chain registry. Identity is near-static and the refresh is
+	// expensive (one query per valoper), so keep it slow.
+	valoperRefreshInterval = 15 * time.Minute
 )
 
 // wsMsg is a WebSocket message envelope.
@@ -63,14 +65,9 @@ type Server struct {
 	wsmu      sync.RWMutex
 	wsClients map[*wsClient]struct{}
 
-	// Configurable paths (set by caller before Run)
-	DataDir         string         // gnoland data directory (for DB sizes on the node-down panel)
-	Backend         RuntimeBackend // log and process metrics backend (nil = unavailable)
-	PushManager     *push.Manager  // push notification manager (nil = disabled)
-	MissedBlocksPct int            // missed-block threshold for active validator counting
-
-	// Rate-limit timestamp for consensus-event snapshot refresh (see parseLogEvent).
-	lastLogEvent time.Time
+	// Set by caller before Run.
+	PushManager     *push.Manager // push notification manager (nil = disabled)
+	MissedBlocksPct int           // missed-block threshold for active validator counting
 }
 
 // NewServer creates a new web server.
@@ -124,11 +121,6 @@ func (s *Server) setSnapshot(snap *node.Snapshot) {
 	s.mu.Lock()
 	s.snapshot = snap
 	s.mu.Unlock()
-}
-
-// GetSnapshot returns the most recent data snapshot. Used by main to construct backends.
-func (s *Server) GetSnapshot() *node.Snapshot {
-	return s.getSnapshot()
 }
 
 // chainName returns the connected chain's network ID from the latest snapshot.
@@ -396,17 +388,8 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 // --- Boot Status (visible even when RPC is down) ---
 
 func (s *Server) handleBootStatus(w http.ResponseWriter, r *http.Request) {
-	type dbInfo struct {
-		Name string `json:"name"`
-		Size string `json:"size"`
-	}
 	type bootStatus struct {
-		RPC     bool     `json:"rpc"`
-		DBs     []dbInfo `json:"dbs"`
-		Process bool     `json:"process"`
-		CPU     string   `json:"cpu,omitempty"`
-		Mem     string   `json:"mem,omitempty"`
-		Uptime  string   `json:"uptime,omitempty"`
+		RPC bool `json:"rpc"`
 	}
 
 	bs := bootStatus{}
@@ -418,51 +401,17 @@ func (s *Server) handleBootStatus(w http.ResponseWriter, r *http.Request) {
 		bs.RPC = err == nil
 	}
 
-	// DB sizes
-	if s.DataDir != "" {
-		dbDir := s.DataDir + "/db"
-		entries, _ := os.ReadDir(dbDir)
-		for _, e := range entries {
-			if !e.IsDir() || !strings.HasSuffix(e.Name(), ".db") {
-				continue
-			}
-			if out, err := exec.CommandContext(ctx, "du", "-sh", dbDir+"/"+e.Name()).Output(); err == nil {
-				fields := strings.Fields(string(out))
-				if len(fields) >= 1 {
-					bs.DBs = append(bs.DBs, dbInfo{Name: e.Name(), Size: fields[0]})
-				}
-			}
-		}
-	}
-
-	// Process info via backend
-	if s.Backend != nil {
-		if d, err := s.Backend.ServiceUptime(ctx); err == nil {
-			bs.Process = true
-			bs.Uptime = d.Truncate(time.Second).String()
-		}
-		if kb, err := s.Backend.ProcessMemory(ctx); err == nil && kb > 0 {
-			bs.Mem = fmt.Sprintf("%.0f MB", float64(kb)/1024)
-		}
-	}
-
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(bs)
 }
 
 // --- System Info ---
 
-func (s *Server) collectSystemInfo(ctx context.Context) *node.SystemInfo {
-	si := &node.SystemInfo{
+func (s *Server) collectSystemInfo() *node.SystemInfo {
+	return &node.SystemInfo{
 		NodeTime:    time.Now().UTC().Format("2006-01-02T15:04:05Z"),
 		GenesisTime: s.Client.Names.GenesisTime,
 	}
-	if s.Backend != nil {
-		if uptime, err := s.Backend.ServiceUptime(ctx); err == nil {
-			si.GnolandUptime = uptime.Truncate(time.Second).String()
-		}
-	}
-	return si
 }
 
 // --- Data Fetching ---
@@ -519,12 +468,7 @@ func (s *Server) fetchSnapshot(ctx context.Context) *node.Snapshot {
 			if enriched[i].FirstSeen == "" {
 				enriched[i].FirstSeen = now
 			}
-			var dp *node.DumpPeer
-			if d, ok := dumpByIP[enriched[i].RemoteIP]; ok {
-				dp = d
-			} else if d, ok := dumpByNodeID[enriched[i].NodeID]; ok {
-				dp = d
-			}
+			dp := node.MatchDumpPeer(enriched[i].NodeID, enriched[i].RemoteIP, dumpByNodeID, dumpByIP)
 			if dp != nil {
 				enriched[i].PeerHeight = dp.Height
 				enriched[i].PeerRound = dp.Round
@@ -563,7 +507,7 @@ func (s *Server) fetchSnapshot(ctx context.Context) *node.Snapshot {
 		}
 	}
 
-	snap.System = s.collectSystemInfo(ctx)
+	snap.System = s.collectSystemInfo()
 
 	// gnockpit-names.json is the single source of truth for validator names.
 	// QueryAllPeers above already filled gaps with monikers it discovered via
@@ -681,73 +625,31 @@ func (s *Server) publishLoop(ctx context.Context) {
 	}
 }
 
-// --- Log Streaming ---
-
-func (s *Server) logStreamLoop(ctx context.Context) {
-	if s.Backend == nil {
-		return
+// valoperRefreshLoop refreshes validator names from the on-chain
+// r/gnops/valopers registry: once at startup, then on a slow timer. The
+// registry enumeration is one RPC per valoper, so it must never run in the
+// snapshot loop. Names land in the registry (non-overwriting / upgrading
+// unknown-val-N) and the next snapshot's ensureValidatorNames picks them up.
+func (s *Server) valoperRefreshLoop(ctx context.Context) {
+	refresh := func() {
+		names, err := s.Client.FetchValoperNames(ctx)
+		if err != nil {
+			log.Printf("valoper name refresh failed: %v", err)
+			return
+		}
+		s.Client.Names.SeedFromValopers(names)
 	}
+	refresh()
+
+	ticker := time.NewTicker(valoperRefreshInterval)
+	defer ticker.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		default:
+		case <-ticker.C:
+			refresh()
 		}
-
-		rc, err := s.Backend.StreamLogs(ctx)
-		if err != nil {
-			log.Printf("log stream error: %v", err)
-			time.Sleep(2 * time.Second)
-			continue
-		}
-
-		scanner := bufio.NewScanner(rc)
-		for scanner.Scan() {
-			entry := parseGnolandLog(scanner.Text())
-			entry.Msg = strings.ReplaceAll(entry.Msg, "/root/", "~/")
-			s.parseLogEvent(entry)
-		}
-
-		rc.Close()
-		log.Printf("log stream ended, restarting in 2s")
-		time.Sleep(2 * time.Second)
-	}
-}
-
-// parseLogEvent triggers an immediate snapshot refresh on consensus events.
-func (s *Server) parseLogEvent(entry LogEntry) {
-	now := time.Now()
-	// Rate limit: don't trigger snapshot refresh more than once per second.
-	if now.Sub(s.lastLogEvent) < time.Second {
-		return
-	}
-
-	// Consensus events: trigger an immediate snapshot refresh.
-	if strings.Contains(entry.Msg, "enterNewRound") || strings.Contains(entry.Msg, "enterPrevote") ||
-		strings.Contains(entry.Msg, "enterPrecommit") || strings.Contains(entry.Msg, "finalizing commit") ||
-		strings.Contains(entry.Msg, "executed block") {
-		s.lastLogEvent = now
-		go func() {
-			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			defer cancel()
-			snap := s.fetchSnapshot(ctx)
-			s.setSnapshot(snap)
-			timeStr := snap.Timestamp.Format("15:04:05")
-			s.broadcastWS(wsMsg{Type: "time", Data: timeStr})
-			if snap.Status != nil {
-				s.broadcastWS(wsMsg{Type: "status", Data: snap.Status})
-			}
-			if snap.Peers != nil {
-				s.broadcastWS(wsMsg{Type: "peers", Data: snap.Peers})
-			}
-			if report := s.buildVotesReport(snap); report != nil {
-				s.broadcastWS(wsMsg{Type: "votes", Data: report})
-			}
-			s.broadcastWS(wsMsg{Type: "checks", Data: s.buildCheckData(snap)})
-			if snap.Signing != nil {
-				s.broadcastWS(wsMsg{Type: "signing", Data: snap.Signing})
-			}
-		}()
 	}
 }
 
@@ -885,15 +787,11 @@ func (s *Server) Run(ctx context.Context) error {
 		}
 	}
 	go s.publishLoop(ctx)
-	go s.logStreamLoop(ctx)
+	go s.valoperRefreshLoop(ctx)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", s.handleIndex)
 	mux.HandleFunc("/api", s.handleAPI)
-	mux.HandleFunc("/api/version", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]string{"version": Version})
-	})
 	mux.HandleFunc("/api/boot", s.handleBootStatus)
 	mux.HandleFunc("/ws", s.handleWS)
 	mux.HandleFunc("/manifest.json", s.handleManifest)

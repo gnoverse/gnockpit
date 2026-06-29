@@ -2,10 +2,13 @@ package node
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
+	"strings"
 	"testing"
 	"time"
 )
@@ -64,6 +67,39 @@ func TestGetNetInfo(t *testing.T) {
 	}
 	if peers[1].RemoteIP != "5.6.7.8" {
 		t.Errorf("peer[1].RemoteIP = %q", peers[1].RemoteIP)
+	}
+	// When node_info.id is present, it is used as the NodeID.
+	if peers[0].NodeID != "id1" {
+		t.Errorf("peer[0].NodeID = %q, want id1", peers[0].NodeID)
+	}
+}
+
+func TestGetNetInfoNodeIDFromNetAddress(t *testing.T) {
+	// gno's /net_info leaves node_info.id empty; the node ID is present only
+	// embedded in net_address ("nodeID@host:port").
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `{"jsonrpc":"2.0","result":{
+			"n_peers":"1",
+			"peers":[
+				{"node_info":{"moniker":"peer-a","net_address":"g1abcdef@1.2.3.4:26656"},"remote_ip":"1.2.3.4"}
+			]
+		}}`)
+	}))
+	defer srv.Close()
+
+	c := NewClient(srv.URL, 5*time.Second)
+	peers, err := c.GetNetInfo(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(peers) != 1 {
+		t.Fatalf("got %d peers, want 1", len(peers))
+	}
+	if peers[0].NodeID != "g1abcdef" {
+		t.Errorf("peer[0].NodeID = %q, want g1abcdef (extracted from net_address)", peers[0].NodeID)
+	}
+	if peers[0].ExternalAddress != "1.2.3.4" {
+		t.Errorf("peer[0].ExternalAddress = %q, want 1.2.3.4", peers[0].ExternalAddress)
 	}
 }
 
@@ -228,10 +264,42 @@ func TestGetBlockAppHash(t *testing.T) {
 	}
 }
 
+func TestGetCommit(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `{"jsonrpc":"2.0","result":{"signed_header":{
+			"header":{"height":"100","time":"2026-01-01T00:00:00Z","proposer_address":"g1prop","app_hash":"DEADBEEF","num_txs":"6"},
+			"commit":{"precommits":[{"validator_address":"g1a"},null,{"validator_address":"g1c"}]}
+		},"canonical":true}}`)
+	}))
+	defer srv.Close()
+
+	c := NewClient(srv.URL, 5*time.Second)
+	ci, err := c.GetCommit(context.Background(), 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ci.Height != "100" || ci.ProposerAddress != "g1prop" || ci.AppHash != "DEADBEEF" {
+		t.Errorf("header parse: %+v", ci)
+	}
+	if ci.NumTxs != 6 {
+		t.Errorf("num_txs = %d, want 6", ci.NumTxs)
+	}
+	if ci.Time != "2026-01-01T00:00:00Z" {
+		t.Errorf("time = %q", ci.Time)
+	}
+	if len(ci.Precommits) != 3 {
+		t.Fatalf("precommits = %d, want 3", len(ci.Precommits))
+	}
+	// The middle slot is null — an absent signer.
+	if string(ci.Precommits[1]) != "null" {
+		t.Errorf("precommits[1] = %s, want null", ci.Precommits[1])
+	}
+}
+
 func TestGetSigningStatsMissingValidators(t *testing.T) {
 	const (
-		addr1 = "g1uhv7wr7nku89se3t7v8fpquc7n5sf8rfkywxpc" // known name
-		addr2 = "g1vta7dwp4guuhkfzksenfcheky4xf9hue8mgne4" // unknown
+		addr1 = "g1uhv7wr7nku89se3t7v8fpquc7n5sf8rfkywxpc"  // known name
+		addr2 = "g1vta7dwp4guuhkfzksenfcheky4xf9hue8mgne4"  // unknown
 		addr3 = "g1manfred0000000000000000000000000000000a" // known name, will sign
 	)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -242,14 +310,15 @@ func TestGetSigningStatsMissingValidators(t *testing.T) {
 				{"address":%q,"pub_key":{"type":"ed25519","value":"BB"},"voting_power":"1"},
 				{"address":%q,"pub_key":{"type":"ed25519","value":"CC"},"voting_power":"1"}
 			]}}`, addr1, addr2, addr3)
-		default: // /block?height=2
-			fmt.Fprintf(w, `{"jsonrpc":"2.0","result":{"block_meta":{"header":{
-				"height":"2","time":"2026-03-20T14:32:01.123456789Z","proposer_address":%q
-			}},"block":{"last_commit":{"precommits":[
-				{"validator_address":%q},
-				null,
-				null
-			]}}}}`, addr3, addr3)
+		default: // /commit?height=2
+			fmt.Fprintf(w, `{"jsonrpc":"2.0","result":{"signed_header":{
+				"header":{"height":"2","time":"2026-03-20T14:32:01.123456789Z","proposer_address":%q},
+				"commit":{"precommits":[
+					{"validator_address":%q},
+					null,
+					null
+				]}
+			}}}`, addr3, addr3)
 		}
 	}))
 	defer srv.Close()
@@ -318,20 +387,22 @@ func TestActiveCountWithMissedBlocksThreshold(t *testing.T) {
 			h := r.URL.Query().Get("height")
 			if h == "2" {
 				// Both validators sign
-				fmt.Fprintf(w, `{"jsonrpc":"2.0","result":{"block_meta":{"header":{
-					"height":"2","time":"2026-01-01T00:00:00Z","proposer_address":%q
-				}},"block":{"last_commit":{"precommits":[
-					{"validator_address":%q},
-					{"validator_address":%q}
-				]}}}}`, addrA, addrA, addrB)
+				fmt.Fprintf(w, `{"jsonrpc":"2.0","result":{"signed_header":{
+					"header":{"height":"2","time":"2026-01-01T00:00:00Z","proposer_address":%q},
+					"commit":{"precommits":[
+						{"validator_address":%q},
+						{"validator_address":%q}
+					]}
+				}}}`, addrA, addrA, addrB)
 			} else {
 				// Only A signs
-				fmt.Fprintf(w, `{"jsonrpc":"2.0","result":{"block_meta":{"header":{
-					"height":"3","time":"2026-01-01T00:00:01Z","proposer_address":%q
-				}},"block":{"last_commit":{"precommits":[
-					{"validator_address":%q},
-					null
-				]}}}}`, addrA, addrA)
+				fmt.Fprintf(w, `{"jsonrpc":"2.0","result":{"signed_header":{
+					"header":{"height":"3","time":"2026-01-01T00:00:01Z","proposer_address":%q},
+					"commit":{"precommits":[
+						{"validator_address":%q},
+						null
+					]}
+				}}}`, addrA, addrA)
 			}
 		}
 	}))
@@ -414,6 +485,124 @@ func TestGetNPeers(t *testing.T) {
 	}
 	if n != 5 {
 		t.Errorf("got %d peers, want 5", n)
+	}
+}
+
+func TestSeedNamesFromGenesis(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/genesis" {
+			http.NotFound(w, r)
+			return
+		}
+		// genesis_time and validators precede app_state. The app_state here is
+		// deliberately invalid JSON standing in for the real multi-hundred-MB
+		// blob: the fetch must stream the head, take what it needs, and abort
+		// before ever reading this far.
+		fmt.Fprint(w, `{"jsonrpc":"2.0","id":-1,"result":{"genesis":{`+
+			`"genesis_time":"2026-03-16T09:00:00Z",`+
+			`"chain_id":"test-13",`+
+			`"validators":[`+
+			`{"address":"g1abc","name":"alice"},`+
+			`{"address":"g1def","name":"bob"}`+
+			`],`+
+			`"app_hash":"",`+
+			`"app_state": @@@ deliberately invalid, stands in for hundreds of MB @@@ }}}`)
+	}))
+	defer srv.Close()
+
+	c := NewClient(srv.URL, 5*time.Second)
+	if err := c.SeedNamesFromGenesis(context.Background()); err != nil {
+		t.Fatalf("SeedNamesFromGenesis: %v", err)
+	}
+
+	if c.Names.GenesisTime != "2026-03-16T09:00:00Z" {
+		t.Errorf("GenesisTime = %q, want 2026-03-16T09:00:00Z", c.Names.GenesisTime)
+	}
+	if got := c.Names.Name("g1abc"); got != "alice" {
+		t.Errorf("Name(g1abc) = %q, want alice", got)
+	}
+	if got := c.Names.Name("g1def"); got != "bob" {
+		t.Errorf("Name(g1def) = %q, want bob", got)
+	}
+}
+
+func TestRPCCandidates(t *testing.T) {
+	got := rpcCandidates("1.2.3.4", "host.example", "26657")
+	want := []string{
+		"http://1.2.3.4:26657",
+		"http://host.example:26657",
+		"https://host.example:443",
+		"https://1.2.3.4:443",
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("distinct host:\n got %v\nwant %v", got, want)
+	}
+
+	got = rpcCandidates("5.6.7.8", "", "26657")
+	want = []string{"http://5.6.7.8:26657", "https://5.6.7.8:443"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("no external host:\n got %v\nwant %v", got, want)
+	}
+
+	got = rpcCandidates("1.2.3.4", "1.2.3.4", "26657")
+	want = []string{"http://1.2.3.4:26657", "https://1.2.3.4:443"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("external == observed (deduped):\n got %v\nwant %v", got, want)
+	}
+}
+
+func TestFetchValoperNames(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// abci_query data is base64("gno.land/r/gnops/valopers:<renderPath>").
+		raw, _ := base64.StdEncoding.DecodeString(strings.Trim(r.URL.Query().Get("data"), `"`))
+		arg := string(raw)
+		var md string
+		switch {
+		case strings.HasSuffix(arg, "valopers:"): // home page 1
+			md = "Welcome\n" +
+				" * [Alice](/r/gnops/valopers:g1opa) - [profile](/r/demo/profile:u/g1opa)\n" +
+				" * [Bob](/r/gnops/valopers:g1opb) - [profile](/r/demo/profile:u/g1opb)\n" +
+				"**1** | [2](?page=2)"
+		case strings.HasSuffix(arg, "?page=2"): // beyond the end
+			md = "no valopers"
+		case strings.HasSuffix(arg, ":g1opa"):
+			md = "## Alice\n- Operator Address: g1opa\n- Signing Address: g1signa\n"
+		case strings.HasSuffix(arg, ":g1opb"):
+			md = "## Bob\n- Operator Address: g1opb\n- Signing Address: g1signb\n"
+		}
+		enc := base64.StdEncoding.EncodeToString([]byte(md))
+		fmt.Fprintf(w, `{"jsonrpc":"2.0","result":{"response":{"ResponseBase":{"Error":null,"Data":%q}}}}`, enc)
+	}))
+	defer srv.Close()
+
+	c := NewClient(srv.URL, 5*time.Second)
+	got, err := c.FetchValoperNames(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]string{"g1signa": "Alice", "g1signb": "Bob"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("FetchValoperNames = %v, want %v", got, want)
+	}
+}
+
+func TestMatchDumpPeer(t *testing.T) {
+	dpA := &DumpPeer{NodeID: "idA", RemoteIP: "1.1.1.1"}
+	dpB := &DumpPeer{NodeID: "idB", RemoteIP: "1.1.1.1"} // shares the IP with A
+	byNodeID := map[string]*DumpPeer{"idA": dpA, "idB": dpB}
+	byIP := map[string]*DumpPeer{"1.1.1.1": dpB} // IP map keeps only the last writer
+
+	// On a shared IP the node ID must win, so peer A resolves to A, not B.
+	if got := MatchDumpPeer("idA", "1.1.1.1", byNodeID, byIP); got != dpA {
+		t.Errorf("shared IP: got %v, want dpA (node id must win over IP)", got)
+	}
+	// Fall back to IP only when the node ID is unknown.
+	if got := MatchDumpPeer("idX", "1.1.1.1", byNodeID, byIP); got != dpB {
+		t.Errorf("ip fallback: got %v, want dpB", got)
+	}
+	// No match either way.
+	if got := MatchDumpPeer("idX", "9.9.9.9", byNodeID, byIP); got != nil {
+		t.Errorf("no match: got %v, want nil", got)
 	}
 }
 

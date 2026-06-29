@@ -3,6 +3,7 @@ package node
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"regexp"
 	"strconv"
@@ -30,7 +31,7 @@ type NameRegistry struct {
 	ourMoniker   string
 	persistPath  string
 	lastModTime  time.Time
-	GenesisTime  string // from genesis.json
+	GenesisTime  string // from the node's /genesis RPC
 }
 
 // NewNameRegistry creates a registry, optionally loading from a persist file.
@@ -94,7 +95,12 @@ func (r *NameRegistry) save() {
 	if r.persistPath == "" {
 		return
 	}
+	// Marshal under the read lock: callers release the write lock before calling
+	// save(), and concurrent Register() calls (e.g. from QueryAllPeers goroutines)
+	// would otherwise race the map read. The file write itself stays off-lock.
+	r.mu.RLock()
 	data, err := json.MarshalIndent(r.addrToName, "", "  ")
+	r.mu.RUnlock()
 	if err != nil {
 		return
 	}
@@ -126,7 +132,7 @@ func (r *NameRegistry) Reload() {
 }
 
 // SetOurs records our own validator address and moniker. The address is
-// always tracked so IsOurs / NameWithUs work. Registry writes follow the
+// always tracked so NameWithUs works. Registry writes follow the
 // same rule as Register: a real existing entry is preserved (file is
 // gospel); an unknown-val-N placeholder gets upgraded to the real moniker.
 func (r *NameRegistry) SetOurs(address, moniker string) {
@@ -279,13 +285,6 @@ func (r *NameRegistry) NameWithUs(addr string) string {
 	return name
 }
 
-// IsOurs returns true if the address is our validator.
-func (r *NameRegistry) IsOurs(addr string) bool {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-	return addr != "" && addr == r.ourAddress
-}
-
 // AddrByMoniker returns the validator address for a moniker, if known.
 func (r *NameRegistry) AddrByMoniker(moniker string) (string, bool) {
 	r.mu.RLock()
@@ -294,44 +293,116 @@ func (r *NameRegistry) AddrByMoniker(moniker string) (string, bool) {
 	return addr, ok
 }
 
-// IsKnownMoniker returns true if we've seen this moniker as a validator.
-func (r *NameRegistry) IsKnownMoniker(moniker string) bool {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-	_, ok := r.nameToAddr[moniker]
-	return ok
+// SeedFromValopers applies validator monikers discovered from the on-chain
+// valoper registry, keyed by signing (consensus) address. Same precedence as
+// the persistent registry: a real existing name is never overwritten, but an
+// "unknown-val-N" placeholder is upgraded.
+func (r *NameRegistry) SeedFromValopers(byAddr map[string]string) {
+	if len(byAddr) == 0 {
+		return
+	}
+	r.mu.Lock()
+	changed := false
+	for addr, moniker := range byAddr {
+		if addr == "" || moniker == "" {
+			continue
+		}
+		existing, existed := r.addrToName[addr]
+		if existed && !isUnknownVal(existing) {
+			continue
+		}
+		if existed && existing == moniker {
+			continue
+		}
+		if existed {
+			delete(r.nameToAddr, existing)
+		}
+		r.addrToName[addr] = moniker
+		r.nameToAddr[moniker] = addr
+		changed = true
+	}
+	r.mu.Unlock()
+	if changed {
+		r.save()
+	}
 }
 
-// OurAddress returns our validator address.
-func (r *NameRegistry) OurAddress() string {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-	return r.ourAddress
-}
-
-// SeedFromGenesis reads validator names from a genesis.json file.
-// The genesis contains validators with "address" and "name" fields.
-func (r *NameRegistry) SeedFromGenesis(path string) error {
-	data, err := os.ReadFile(path)
+// SeedFromGenesisStream reads the genesis time and validator names from a
+// streamed /genesis RPC response, parsing only the head of the document.
+// genesis_time and the validators array precede the multi-hundred-MB app_state,
+// so the caller can abort the download immediately after this returns. The same
+// precedence rules as the persistent registry apply: a real existing name is
+// never overwritten, but an "unknown-val-N" placeholder is upgraded.
+func (r *NameRegistry) SeedFromGenesisStream(rd io.Reader) error {
+	dec := json.NewDecoder(rd)
+	if err := enterObjectKey(dec, "result"); err != nil {
+		return err
+	}
+	if err := enterObjectKey(dec, "genesis"); err != nil {
+		return err
+	}
+	t, err := dec.Token()
 	if err != nil {
 		return err
 	}
-	// Parse just the validators array — genesis is huge, only unmarshal what we need
-	var genesis struct {
-		GenesisTime string `json:"genesis_time"`
-		Validators  []struct {
-			Address string `json:"address"`
-			Name    string `json:"name"`
-		} `json:"validators"`
+	if d, ok := t.(json.Delim); !ok || d != '{' {
+		return fmt.Errorf("expected genesis object, got %v", t)
 	}
-	if err := json.Unmarshal(data, &genesis); err != nil {
-		return err
+
+	type genesisValidator struct {
+		Address string `json:"address"`
+		Name    string `json:"name"`
 	}
+	var genesisTime string
+	var validators []genesisValidator
+
+readFields:
+	for dec.More() {
+		kt, err := dec.Token()
+		if err != nil {
+			return err
+		}
+		switch key, _ := kt.(string); key {
+		case "genesis_time":
+			vt, err := dec.Token()
+			if err != nil {
+				return err
+			}
+			// genesis_time is cosmetic (drives the UI countdown); a non-string
+			// value is intentionally ignored rather than failing name seeding.
+			genesisTime, _ = vt.(string)
+		case "validators":
+			at, err := dec.Token()
+			if err != nil {
+				return err
+			}
+			if d, ok := at.(json.Delim); !ok || d != '[' {
+				return fmt.Errorf("expected validators array, got %v", at)
+			}
+			for dec.More() {
+				var v genesisValidator
+				if err := dec.Decode(&v); err != nil {
+					return err
+				}
+				validators = append(validators, v)
+			}
+			// validators holds everything we need; stop before app_state.
+			break readFields
+		case "app_state":
+			// Defensive: never consume the multi-hundred-MB app_state.
+			break readFields
+		default:
+			if err := skipValue(dec); err != nil {
+				return err
+			}
+		}
+	}
+
 	r.mu.Lock()
-	if genesis.GenesisTime != "" {
-		r.GenesisTime = genesis.GenesisTime
+	if genesisTime != "" {
+		r.GenesisTime = genesisTime
 	}
-	for _, v := range genesis.Validators {
+	for _, v := range validators {
 		if v.Address == "" || v.Name == "" {
 			continue
 		}
@@ -350,5 +421,61 @@ func (r *NameRegistry) SeedFromGenesis(path string) error {
 	}
 	r.mu.Unlock()
 	r.save()
+	return nil
+}
+
+// enterObjectKey reads an opening '{' and advances the decoder to the value of
+// the given key, skipping any preceding keys. After it returns nil, the next
+// decoder read consumes that key's value.
+func enterObjectKey(dec *json.Decoder, key string) error {
+	t, err := dec.Token()
+	if err != nil {
+		return err
+	}
+	if d, ok := t.(json.Delim); !ok || d != '{' {
+		return fmt.Errorf("expected '{', got %v", t)
+	}
+	for dec.More() {
+		kt, err := dec.Token()
+		if err != nil {
+			return err
+		}
+		if k, _ := kt.(string); k == key {
+			return nil
+		}
+		if err := skipValue(dec); err != nil {
+			return err
+		}
+	}
+	return fmt.Errorf("key %q not found", key)
+}
+
+// skipValue consumes exactly one complete JSON value (scalar, object, or array)
+// from the decoder, stepping over fields not needed on the way to validators.
+func skipValue(dec *json.Decoder) error {
+	t, err := dec.Token()
+	if err != nil {
+		return err
+	}
+	d, ok := t.(json.Delim)
+	if !ok {
+		return nil // a scalar — already consumed
+	}
+	if d != '{' && d != '[' {
+		return fmt.Errorf("unexpected delimiter %q", d)
+	}
+	for depth := 1; depth > 0; {
+		t, err := dec.Token()
+		if err != nil {
+			return err
+		}
+		if d, ok := t.(json.Delim); ok {
+			if d == '{' || d == '[' {
+				depth++
+			} else {
+				depth--
+			}
+		}
+	}
 	return nil
 }

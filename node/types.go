@@ -107,6 +107,10 @@ type Peer struct {
 	NodeID     string `json:"node_id"`
 	Version    string `json:"version,omitempty"`     // software version from net_info
 	P2PAddress string `json:"p2p_address,omitempty"` // nodeID@ip:port
+	// From net_info node_info (advertised identity / connection direction).
+	IsOutbound      bool   `json:"is_outbound,omitempty"`      // true if we dialed this peer
+	ExternalAddress string `json:"external_address,omitempty"` // advertised host from node_info.net_address
+	RPCURL          string `json:"rpc_url,omitempty"`          // peer RPC endpoint that answered, if any
 	// Populated by network/consensus queries
 	CatchingUp bool   `json:"catching_up,omitempty"`
 	ValAddress string `json:"val_address,omitempty"` // validator address if known
@@ -191,9 +195,8 @@ type PeerState struct {
 
 // SystemInfo holds system resource information.
 type SystemInfo struct {
-	GnolandUptime string `json:"gnoland_uptime"`
-	NodeTime      string `json:"node_time"`
-	GenesisTime   string `json:"genesis_time,omitempty"`
+	NodeTime    string `json:"node_time"`
+	GenesisTime string `json:"genesis_time,omitempty"`
 }
 
 // MissingValidator identifies a validator that did not sign a block.
@@ -212,6 +215,7 @@ type BlockInfo struct {
 	Proposer string             `json:"proposer"` // proposer name
 	BlockMs  int                `json:"block_ms"` // time since previous block in ms; 0 for oldest block in window
 	AppHash  string             `json:"app_hash"`
+	NumTxs   int                `json:"num_txs"` // transactions in this block
 }
 
 // ValidatorPerf tracks per-validator performance metrics.

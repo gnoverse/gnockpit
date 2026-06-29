@@ -28,11 +28,7 @@ var (
 	flagDBPath          string
 	flagChainStuckSecs  int
 	flagMissedBlocksPct int
-	flagDataDir         string
-	flagGenesisPath     string
 	flagNamesPath       string
-	flagService         string
-	flagContainer       string
 	flagNotifyURLs      stringSlice
 	flagPublicURL       string
 )
@@ -51,17 +47,6 @@ func (s *stringSlice) Set(v string) error {
 func usage() {
 	fmt.Fprint(flag.CommandLine.Output(), `gnockpit — live web dashboard for a single gno.land validator node.
 
-It reads from one node through several sources:
-  -rpc        the node's Tendermint RPC (required): block height, sync state,
-              validator set, consensus votes, peers, and signing stats. This is
-              most of the dashboard.
-  -genesis    genesis.json (auto-detected): validator names and genesis time.
-  -data-dir   the node's data directory (auto-detected): on-disk DB sizes, shown
-              on the "node down" panel.
-  -service /  how to reach the node's process — a systemd unit or a docker
-  -container  container. Streams its logs to refresh the dashboard the instant
-              consensus moves, and reads node uptime and memory. Optional.
-
 Usage:
   gnockpit [flags]
 
@@ -77,11 +62,7 @@ func main() {
 	flag.BoolVar(&flagVerbose, "verbose", false, "log HTTP requests to the node")
 	flag.BoolVar(&flagVerbose, "v", false, "log HTTP requests to the node (shorthand)")
 	flag.DurationVar(&flagInterval, "interval", defaultInterval, "dashboard refresh interval")
-	flag.StringVar(&flagGenesisPath, "genesis", "", "path to genesis.json (auto-detected); provides validator names and genesis time")
-	flag.StringVar(&flagDataDir, "data-dir", "", "gnoland data directory (auto-detected); used for on-disk DB sizes on the node-down panel")
 	flag.StringVar(&flagNamesPath, "names", "/tmp/gnockpit-names.json", "path to the persistent validator-name registry")
-	flag.StringVar(&flagService, "service", "", "systemd service name (auto-detected from chain-id); streams logs for live refresh and reads node uptime/memory")
-	flag.StringVar(&flagContainer, "container", "", "docker container name (mutually exclusive with -service); streams logs for live refresh and reads node uptime/memory")
 	flag.StringVar(&flagWebAddr, "addr", "0.0.0.0", "web server bind address")
 	flag.IntVar(&flagWebPort, "port", 8080, "web server port")
 	flag.StringVar(&flagDBPath, "db-path", "/tmp/gnockpit.db", "SQLite path for web-push subscriptions and VAPID keys; use a persistent path so keys survive reboots")
@@ -107,15 +88,9 @@ func run() error {
 	ctx, cancel := newContext()
 	defer cancel()
 
-	c := newClient()
+	c := newClient(ctx)
 	addr := fmt.Sprintf("%s:%d", flagWebAddr, flagWebPort)
 	srv := web.NewServer(c, addr, flagInterval)
-	srv.DataDir = findDataDir()
-
-	if flagService != "" && flagContainer != "" {
-		return fmt.Errorf("-service and -container are mutually exclusive")
-	}
-	srv.Backend = buildBackend(flagService, flagContainer, srv)
 
 	db, err := push.OpenDB(flagDBPath)
 	if err != nil {
@@ -141,84 +116,9 @@ func run() error {
 	return srv.Run(ctx)
 }
 
-// buildBackend constructs the appropriate RuntimeBackend based on CLI flags.
-// If neither flag is set, a SystemdBackend with lazy auto-detection from the chain-id is used.
-func buildBackend(service, container string, srv *web.Server) web.RuntimeBackend {
-	if container != "" {
-		return &web.DockerBackend{ContainerName: container}
-	}
-	// SystemdBackend: static name if -service given, lazy from chain-id otherwise.
-	var nameFn func() string
-	if service == "" {
-		nameFn = func() string {
-			snap := srv.GetSnapshot()
-			if snap != nil && snap.Status != nil && snap.Status.NodeInfo.Network != "" {
-				return snap.Status.NodeInfo.Network + ".service"
-			}
-			return ""
-		}
-	}
-	return web.NewSystemdBackend(service, nameFn)
-}
-
-// findGenesis tries common genesis.json locations relative to data-dir or cwd.
-func findGenesis() string {
-	if flagGenesisPath != "" {
-		return flagGenesisPath
-	}
-	candidates := []string{}
-	if flagDataDir != "" {
-		candidates = append(candidates, flagDataDir+"/config/genesis.json")
-	}
-	// Relative to cwd
-	candidates = append(candidates,
-		"gnoland-data/config/genesis.json",
-		"../gnoland-data/config/genesis.json",
-	)
-	// Walk up looking for */gnoland-data/config/genesis.json
-	entries, _ := os.ReadDir(".")
-	for _, e := range entries {
-		if e.IsDir() {
-			candidates = append(candidates, e.Name()+"/gnoland-data/config/genesis.json")
-		}
-	}
-	for _, p := range candidates {
-		if _, err := os.Stat(p); err == nil {
-			return p
-		}
-	}
-	return ""
-}
-
-// findDataDir returns the data directory, auto-detecting if needed.
-func findDataDir() string {
-	if flagDataDir != "" {
-		return flagDataDir
-	}
-	// Try to find from genesis path
-	g := findGenesis()
-	if g != "" {
-		// genesis is at <datadir>/config/genesis.json
-		for i := len(g) - 1; i >= 0; i-- {
-			if g[i] == '/' {
-				dir := g[:i] // .../config
-				for j := len(dir) - 1; j >= 0; j-- {
-					if dir[j] == '/' {
-						return dir[:j] // .../gnoland-data
-					}
-				}
-			}
-		}
-	}
-	return ""
-}
-
-func newClient() *node.Client {
+func newClient(ctx context.Context) *node.Client {
 	c := node.NewClient(flagRPC, 10*time.Second)
 	c.Names = node.NewNameRegistryWithPersist(flagNamesPath)
-	if g := findGenesis(); g != "" {
-		c.Names.SeedFromGenesis(g)
-	}
 	if flagVerbose {
 		c.LogFn = func(method, url string, status int, dur time.Duration, err error) {
 			if err != nil {
@@ -227,6 +127,12 @@ func newClient() *node.Client {
 				fmt.Fprintf(os.Stderr, "%s %s -> %d (%dms)\n", method, url, status, dur.Milliseconds())
 			}
 		}
+	}
+	// Validator names and the genesis time come from the node's /genesis
+	// endpoint, streamed and parsed only up to the validators array. Failure is
+	// non-fatal: persisted names and live peer discovery still apply.
+	if err := c.SeedNamesFromGenesis(ctx); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: could not seed validator names from genesis RPC: %v\n", err)
 	}
 	return c
 }

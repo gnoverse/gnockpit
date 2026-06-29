@@ -2,10 +2,8 @@ package web
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"image/png"
-	"io"
 	"net/http"
 	"net/http/httptest"
 	"os/exec"
@@ -16,118 +14,6 @@ import (
 	"github.com/gnoverse/gnockpit/node"
 	"github.com/gnoverse/gnockpit/web/push"
 )
-
-// mockBackend is a test double for RuntimeBackend.
-type mockBackend struct {
-	streamLines []string
-	uptime      time.Duration
-	memKB       int
-	streamErr   error
-}
-
-func (m *mockBackend) StreamLogs(ctx context.Context) (io.ReadCloser, error) {
-	if m.streamErr != nil {
-		return nil, m.streamErr
-	}
-	return io.NopCloser(strings.NewReader(strings.Join(m.streamLines, "\n"))), nil
-}
-
-func (m *mockBackend) ServiceUptime(ctx context.Context) (time.Duration, error) {
-	return m.uptime, nil
-}
-
-func (m *mockBackend) ProcessMemory(ctx context.Context) (int, error) {
-	return m.memKB, nil
-}
-
-func TestBackendInterfaceSatisfied(t *testing.T) {
-	var _ RuntimeBackend = &mockBackend{}
-}
-
-func TestSystemdBackendNameCachesOnSuccess(t *testing.T) {
-	calls := 0
-	b := NewSystemdBackend("", func() string {
-		calls++
-		if calls == 1 {
-			return "" // not yet known
-		}
-		return "mychain.service"
-	})
-
-	// First call: nameFn returns "", falls back to "gnoland.service" without caching
-	name := b.resolvedName()
-	if name != "gnoland.service" {
-		t.Errorf("want gnoland.service fallback, got %q", name)
-	}
-
-	// Second call: nameFn returns a value, should cache it
-	name = b.resolvedName()
-	if name != "mychain.service" {
-		t.Errorf("want mychain.service, got %q", name)
-	}
-
-	// Third call: should use cached value without calling nameFn again
-	name = b.resolvedName()
-	if name != "mychain.service" {
-		t.Errorf("want mychain.service cached, got %q", name)
-	}
-	if calls != 2 {
-		t.Errorf("nameFn called %d times, want 2 (not called after cache hit)", calls)
-	}
-}
-
-func TestSystemdBackendStaticName(t *testing.T) {
-	b := NewSystemdBackend("explicit.service", nil)
-	if b.resolvedName() != "explicit.service" {
-		t.Errorf("want explicit.service, got %q", b.resolvedName())
-	}
-}
-
-func TestSystemdBackendNoNameFn(t *testing.T) {
-	// nil nameFn with no static name always falls back to gnoland.service
-	b := NewSystemdBackend("", nil)
-	if b.resolvedName() != "gnoland.service" {
-		t.Errorf("want gnoland.service, got %q", b.resolvedName())
-	}
-}
-
-func TestSystemdBackendUsesCat(t *testing.T) {
-	b := NewSystemdBackend("test.service", nil)
-
-	hasCat := func(args []string) bool {
-		for i, a := range args {
-			if a == "-o" && i+1 < len(args) && args[i+1] == "cat" {
-				return true
-			}
-		}
-		return false
-	}
-	if !hasCat(b.streamArgs()) {
-		t.Errorf("streamArgs() = %v, missing -o cat", b.streamArgs())
-	}
-}
-
-func TestDockerBackendInterfaceSatisfied(t *testing.T) {
-	// Compile-time check that DockerBackend implements RuntimeBackend.
-	var _ RuntimeBackend = &DockerBackend{}
-}
-
-func TestDockerBackendStreamLogsIncludesTail(t *testing.T) {
-	b := &DockerBackend{ContainerName: "mycontainer"}
-	args := b.streamLogsArgs()
-	hasTail := false
-	for i, a := range args {
-		if a == "--tail" && i+1 < len(args) {
-			hasTail = true
-			if args[i+1] != "300" {
-				t.Errorf("--tail value = %q, want %q", args[i+1], "300")
-			}
-		}
-	}
-	if !hasTail {
-		t.Errorf("streamLogsArgs() = %v, missing --tail flag", args)
-	}
-}
 
 func TestHTMLEmbedded(t *testing.T) {
 	data, err := content.ReadFile("index.html")
@@ -173,12 +59,13 @@ func TestNetworkStateVPFields(t *testing.T) {
 	if !strings.Contains(html, "function formatVP(") {
 		t.Error("missing formatVP utility function")
 	}
-	// Peers column in validator table (peers moved from Network State)
+	// Network State has no peers field; peer counts live in the peers table.
 	if strings.Contains(html, `id="ns-peers"`) {
 		t.Error("ns-peers should be removed from Network State (moved to peers table)")
 	}
-	if !strings.Contains(html, `data-sort="peers"`) {
-		t.Error("missing sortable Peers column in validator table")
+	// The validators table has no Peers column; peer counts belong to the peers table.
+	if strings.Contains(html, `data-sort="peers"`) {
+		t.Error("validators table should not have a sortable Peers column")
 	}
 }
 
