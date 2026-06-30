@@ -897,12 +897,13 @@
                     <div class="table-wrap">
                         <table>
                             <colgroup>
-                                <col style="width: 19%" />
-                                <col style="width: 22%" />
-                                <col style="width: 21%" />
-                                <col style="width: 13%" />
+                                <col style="width: 17%" />
+                                <col style="width: 25%" />
+                                <col style="width: 15%" />
                                 <col style="width: 11%" />
-                                <col style="width: 14%" />
+                                <col style="width: 9%" />
+                                <col style="width: 11%" />
+                                <col style="width: 12%" />
                             </colgroup>
                             <thead>
                                 <tr>
@@ -932,6 +933,14 @@
                                         VP
                                     </th>
                                     <th
+                                        data-sort="spof"
+                                        style="cursor: pointer"
+                                        class="info-btn"
+                                        data-popover="Single point of failure: holds ≥1/3 of total voting power, so losing it drops the rest below the 2/3+1 quorum and would halt consensus"
+                                    >
+                                        SPOF
+                                    </th>
+                                    <th
                                         data-sort="sign"
                                         style="cursor: pointer"
                                         class="info-btn"
@@ -951,7 +960,7 @@
                             </thead>
                             <tbody id="validators-body">
                                 <tr>
-                                    <td colspan="6">loading...</td>
+                                    <td colspan="7">loading...</td>
                                 </tr>
                             </tbody>
                         </table>
@@ -979,9 +988,9 @@
                     <div class="table-wrap">
                         <table>
                             <colgroup>
-                                <col style="width: 27%" />
                                 <col style="width: 25%" />
-                                <col style="width: 22%" />
+                                <col style="width: 29%" />
+                                <col style="width: 20%" />
                                 <col style="width: 13%" />
                                 <col style="width: 13%" />
                             </colgroup>
@@ -1245,9 +1254,16 @@
                             )
                     }
                     if (cellDef.popover) {
-                        var btn = mkEl('span', ' \u24d8', 'info-btn')
-                        btn.setAttribute('data-popover', cellDef.popover)
-                        td.appendChild(btn)
+                        if (cellDef.popoverSelf) {
+                            // Popover on the cell itself (no trailing icon), so a
+                            // full-width value can ellipsis cleanly while staying
+                            // hoverable for the full text.
+                            td.setAttribute('data-popover', cellDef.popover)
+                        } else {
+                            var btn = mkEl('span', ' \u24d8', 'info-btn')
+                            btn.setAttribute('data-popover', cellDef.popover)
+                            td.appendChild(btn)
+                        }
                     }
                 } else {
                     td.textContent = cellDef
@@ -1287,7 +1303,7 @@
                 'mouseenter',
                 function (e) {
                     if (!hasHover || !(e.target instanceof Element)) return
-                    var btn = e.target.closest('.info-btn')
+                    var btn = e.target.closest('.info-btn, [data-popover]')
                     if (btn) showPopover(btn)
                 },
                 true
@@ -1296,7 +1312,7 @@
                 'mouseleave',
                 function (e) {
                     if (!hasHover || !(e.target instanceof Element)) return
-                    var btn = e.target.closest('.info-btn')
+                    var btn = e.target.closest('.info-btn, [data-popover]')
                     if (btn) hidePopover()
                 },
                 true
@@ -1712,6 +1728,25 @@
                             vb = b.voting_power
                                 ? parseInt(b.voting_power, 10)
                                 : 0
+                        } else if (peerSortKey === 'spof') {
+                            va =
+                                totalVP > 0 &&
+                                totalVP -
+                                    (a.voting_power
+                                        ? parseInt(a.voting_power, 10)
+                                        : 0) <
+                                    bftVP
+                                    ? 1
+                                    : 0
+                            vb =
+                                totalVP > 0 &&
+                                totalVP -
+                                    (b.voting_power
+                                        ? parseInt(b.voting_power, 10)
+                                        : 0) <
+                                    bftVP
+                                    ? 1
+                                    : 0
                         } else if (peerSortKey === 'peers') {
                             var ma =
                                 peerByName[
@@ -1778,11 +1813,12 @@
                             : v.address
                         tr.appendChild(
                             createCell({
-                                text: shortAddr(v.address),
+                                text: v.address,
                                 style: 'font-size:11px;color:var(--fg2)',
                                 popover:
                                     v.address +
                                     (v.pub_key ? '\npubkey: ' + v.pub_key : ''),
+                                popoverSelf: true,
                                 highlight: cleanName,
                                 copy: addrCopy,
                             })
@@ -1877,6 +1913,21 @@
                             vpTd.setAttribute('data-sort-val', '0')
                         }
                         tr.appendChild(vpTd)
+
+                        // SPOF: losing this validator would drop the remaining
+                        // power below the 2/3+1 quorum, halting consensus.
+                        var spofTd = document.createElement('td')
+                        var spofVp = vp ? parseInt(vp, 10) : 0
+                        if (totalVP > 0 && totalVP - spofVp < bftVP) {
+                            spofTd.textContent = 'yes'
+                            spofTd.className = 'err'
+                            spofTd.setAttribute('data-sort-val', '1')
+                        } else {
+                            spofTd.textContent = 'no'
+                            spofTd.style.color = 'var(--fg2)'
+                            spofTd.setAttribute('data-sort-val', '0')
+                        }
+                        tr.appendChild(spofTd)
 
                         // Sign rate
                         var signTd = document.createElement('td')
@@ -1986,9 +2037,10 @@
                         nodeIdFromNetAddr(lastStatus.node_info.net_address)
                     thisTr.appendChild(
                         createCell({
-                            text: thisNodeID ? shortAddr(thisNodeID) : '-',
+                            text: thisNodeID || '-',
                             style: 'font-size:11px;color:var(--fg2)',
                             popover: thisNodeID || undefined,
+                            popoverSelf: true,
                             copy: thisNodeID,
                         })
                     )
@@ -2054,9 +2106,10 @@
                         )
                         tr2.appendChild(
                             createCell({
-                                text: pNodeID ? shortAddr(pNodeID) : '-',
+                                text: pNodeID || '-',
                                 style: 'font-size:11px;color:var(--fg2)',
                                 popover: pNodeID || undefined,
+                                popoverSelf: true,
                                 highlight: hlKey,
                                 copy: pNodeID,
                             })
@@ -2086,6 +2139,7 @@
                     valBody.appendChild(
                         createRow([
                             { text: 'no validators', className: 'full-role' },
+                            '',
                             '',
                             '',
                             '',
@@ -2179,6 +2233,13 @@
                                       { text: data.speed, cls: data.speedCls },
                                   ],
                                   ['vp', data.vp || '-'],
+                                  [
+                                      'spof',
+                                      {
+                                          text: data.spof ? 'yes' : 'no',
+                                          cls: data.spof ? 'err' : '',
+                                      },
+                                  ],
                               ]
                         for (var fi = 0; fi < fields.length; fi++) {
                             var fk = document.createElement('span')
@@ -2362,6 +2423,13 @@
                                               : 0) +
                                           '%)'
                                         : '-',
+                                    spof:
+                                        totalVP > 0 &&
+                                        totalVP -
+                                            (v.voting_power
+                                                ? parseInt(v.voting_power, 10)
+                                                : 0) <
+                                            bftVP,
                                 })
                             )
                         }
