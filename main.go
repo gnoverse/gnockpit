@@ -32,6 +32,8 @@ var (
 	flagNotifyURLs      stringSlice
 	flagPublicURL       string
 	flagGeoIPPath       string
+	flagLinks           stringSlice
+	flagStatusLinks     stringSlice
 )
 
 // stringSlice is a flag.Value that accumulates one entry per occurrence,
@@ -72,6 +74,8 @@ func main() {
 	flag.Var(&flagNotifyURLs, "notify", "Shoutrrr notification URL, repeatable (e.g. discord://token@id)")
 	flag.StringVar(&flagPublicURL, "public-url", "", "public URL of this gnockpit instance, appended to external notification messages")
 	flag.StringVar(&flagGeoIPPath, "geoip-db", "/tmp/gnockpit-geoip.mmdb", "path for the DB-IP City Lite mmdb powering the network map; auto-downloaded and refreshed monthly. Empty disables the map.")
+	flag.Var(&flagLinks, "link", `extra header link button, "Title|URL", repeatable`)
+	flag.Var(&flagStatusLinks, "status-link", `header link with a live status dot, "Title|URL" (BetterStack status pages only for now — the dot reflects <URL>/index.json), repeatable`)
 
 	flag.Parse()
 	if flag.NArg() > 0 {
@@ -113,7 +117,23 @@ func run() error {
 		pushMgr.SetPublicURL(flagPublicURL)
 	}
 	srv.MissedBlocksPct = flagMissedBlocksPct
+	srv.ChainStuckSecs = flagChainStuckSecs
 	srv.PushManager = pushMgr
+
+	for _, spec := range flagLinks {
+		l, err := web.ParseLink(spec)
+		if err != nil {
+			return err
+		}
+		srv.Links = append(srv.Links, l)
+	}
+	for _, spec := range flagStatusLinks {
+		l, err := web.ParseLink(spec)
+		if err != nil {
+			return err
+		}
+		srv.StatusLinks = append(srv.StatusLinks, web.NewStatusLink(l))
+	}
 
 	// Opt-in, token-gated notify-test API. Sourced from the environment so the
 	// secret doesn't show up in `ps`. Empty = feature disabled.

@@ -491,6 +491,40 @@
             .map-footer a:hover {
                 text-decoration: underline;
             }
+            /* ---- Header link buttons (left of Alerts) */
+            .header-actions {
+                display: flex;
+                align-items: center;
+                gap: 8px;
+            }
+            .header-links {
+                display: flex;
+                align-items: center;
+                gap: 8px;
+            }
+            .header-link {
+                display: inline-flex;
+                align-items: center;
+                gap: 5px;
+                background: var(--bg);
+                border: 1px solid var(--border);
+                color: var(--fg);
+                padding: 6px 8px;
+                border-radius: 4px;
+                font-size: 11px;
+                text-decoration: none;
+                white-space: nowrap;
+            }
+            .header-link:hover {
+                border-color: var(--fg2);
+            }
+            .header-link .dot {
+                width: 7px;
+                height: 7px;
+                border-radius: 50%;
+                display: inline-block;
+                flex-shrink: 0;
+            }
             @media (max-width: 768px) {
                 .node-cards {
                     display: grid;
@@ -659,7 +693,9 @@
             "
         >
             <h1 id="page-title" style="margin-bottom: 0">🛩️ gnockpit</h1>
-            <button
+            <div class="header-actions">
+                <span id="header-links" class="header-links"></span>
+                <button
                 id="push-btn"
                 style="
                     display: none;
@@ -690,6 +726,7 @@
                     <path d="M13.73 21a2 2 0 0 1-3.46 0" /></svg
                 >Alerts
             </button>
+            </div>
         </div>
         <div id="error-banner"></div>
         <div
@@ -2907,6 +2944,55 @@
             }
             pollBoot()
             bootInterval = setInterval(pollBoot, 5000)
+
+            // Header link buttons (left of Alerts), configured via --link /
+            // --status-link. Status links show a dot polled from BetterStack.
+            function headerLinkDotColor(state) {
+                return state === 'operational'
+                    ? 'var(--green)'
+                    : state === 'downtime'
+                      ? 'var(--red)'
+                      : state === 'degraded' || state === 'maintenance'
+                        ? 'var(--yellow)'
+                        : 'var(--fg2)'
+            }
+            function renderHeaderLinks(d) {
+                var box = $('header-links')
+                if (!box) return
+                clearChildren(box)
+                function mkLinkBtn(l) {
+                    var a = document.createElement('a')
+                    a.className = 'header-link'
+                    a.href = l.url
+                    a.target = '_blank'
+                    a.rel = 'noopener'
+                    return a
+                }
+                ;(d.links || []).forEach(function (l) {
+                    var a = mkLinkBtn(l)
+                    a.textContent = l.title
+                    box.appendChild(a)
+                })
+                ;(d.statusLinks || []).forEach(function (l) {
+                    var a = mkLinkBtn(l)
+                    var dot = mkEl('span', '', 'dot')
+                    dot.style.background = headerLinkDotColor(l.state)
+                    dot.title = l.state
+                    a.appendChild(dot)
+                    a.appendChild(document.createTextNode(l.title))
+                    box.appendChild(a)
+                })
+            }
+            function loadHeaderLinks() {
+                fetch('/api/links')
+                    .then(function (r) {
+                        return r.json()
+                    })
+                    .then(renderHeaderLinks)
+                    .catch(function () {})
+            }
+            loadHeaderLinks()
+            setInterval(loadHeaderLinks, 30000)
 
             function connect() {
                 var proto = location.protocol === 'https:' ? 'wss:' : 'ws:'

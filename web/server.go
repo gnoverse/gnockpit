@@ -75,6 +75,9 @@ type Server struct {
 	MissedBlocksPct int           // missed-block threshold for active validator counting
 	GeoIP           *node.GeoIP   // IP geolocation for the network map (nil = disabled)
 	NotifyTestToken string        // bearer token for the notify-test API (empty = disabled)
+	ChainStuckSecs  int           // seconds without a new block before status is "down"
+	Links           []Link        // static header link buttons
+	StatusLinks     []*StatusLink // header links with a live BetterStack status dot
 }
 
 // NewServer creates a new web server.
@@ -924,6 +927,7 @@ func (s *Server) Run(ctx context.Context) error {
 	go s.publishLoop(ctx)
 	go s.valoperRefreshLoop(ctx)
 	go s.geoIPRefreshLoop(ctx)
+	go s.statusLinkRefreshLoop(ctx)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", s.handleIndex)
@@ -943,6 +947,9 @@ func (s *Server) Run(ctx context.Context) error {
 	mux.HandleFunc("/api/push/test", s.handlePushTest)
 	mux.HandleFunc("/api/notify/targets", s.handleNotifyTargets)
 	mux.HandleFunc("/api/notify/test", s.handleNotifyTest)
+	mux.HandleFunc("/api/links", s.handleLinks)
+	mux.HandleFunc("/api/status", s.handleStatus)
+	mux.HandleFunc("/badge.svg", s.handleBadge)
 
 	srv := &http.Server{
 		Addr:    s.Addr,
