@@ -115,6 +115,10 @@ func run() error {
 	srv.MissedBlocksPct = flagMissedBlocksPct
 	srv.PushManager = pushMgr
 
+	// Opt-in, token-gated notify-test API. Sourced from the environment so the
+	// secret doesn't show up in `ps`. Empty = feature disabled.
+	srv.NotifyTestToken = os.Getenv("GNOCKPIT_NOTIFY_TEST_TOKEN")
+
 	if flagGeoIPPath != "" {
 		srv.GeoIP = node.NewGeoIP(flagGeoIPPath, func(format string, args ...any) {
 			fmt.Fprintf(os.Stderr, format+"\n", args...)

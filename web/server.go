@@ -3,6 +3,7 @@ package web
 import (
 	"context"
 	"crypto/rand"
+	"crypto/subtle"
 	"embed"
 	"encoding/hex"
 	"encoding/json"
@@ -73,6 +74,7 @@ type Server struct {
 	PushManager     *push.Manager // push notification manager (nil = disabled)
 	MissedBlocksPct int           // missed-block threshold for active validator counting
 	GeoIP           *node.GeoIP   // IP geolocation for the network map (nil = disabled)
+	NotifyTestToken string        // bearer token for the notify-test API (empty = disabled)
 }
 
 // NewServer creates a new web server.
@@ -829,6 +831,89 @@ func (s *Server) handlePushTest(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 }
 
+// --- Notify-test API (opt-in, token-gated) ---
+
+// authorizeNotifyTest gates the notify-test endpoints. The feature is disabled
+// (404) unless NotifyTestToken is set; when it is, requests must carry a
+// matching bearer token. Returns the HTTP status to send on failure.
+func (s *Server) authorizeNotifyTest(r *http.Request) (int, bool) {
+	if s.NotifyTestToken == "" {
+		return http.StatusNotFound, false
+	}
+	const prefix = "Bearer "
+	h := r.Header.Get("Authorization")
+	if !strings.HasPrefix(h, prefix) {
+		return http.StatusUnauthorized, false
+	}
+	tok := strings.TrimPrefix(h, prefix)
+	if subtle.ConstantTimeCompare([]byte(tok), []byte(s.NotifyTestToken)) != 1 {
+		return http.StatusUnauthorized, false
+	}
+	return http.StatusOK, true
+}
+
+// handleNotifyTargets lists the configured Shoutrrr notification URLs as
+// redacted metadata (never the raw URLs, which hold secrets).
+func (s *Server) handleNotifyTargets(w http.ResponseWriter, r *http.Request) {
+	if code, ok := s.authorizeNotifyTest(r); !ok {
+		http.Error(w, http.StatusText(code), code)
+		return
+	}
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if s.PushManager == nil {
+		http.Error(w, "notifications not configured", http.StatusServiceUnavailable)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]any{"targets": s.PushManager.NotifyTargets()})
+}
+
+// handleNotifyTest sends a custom message to one configured Shoutrrr URL,
+// selected by index. The caller can never supply an arbitrary URL.
+func (s *Server) handleNotifyTest(w http.ResponseWriter, r *http.Request) {
+	if code, ok := s.authorizeNotifyTest(r); !ok {
+		http.Error(w, http.StatusText(code), code)
+		return
+	}
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if s.PushManager == nil {
+		http.Error(w, "notifications not configured", http.StatusServiceUnavailable)
+		return
+	}
+	var req struct {
+		Index   int    `json:"index"`
+		Message string `json:"message"`
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 64<<10)
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+	if req.Index < 0 || req.Index >= s.PushManager.NotifyTargetCount() {
+		http.Error(w, "notify target index out of range", http.StatusBadRequest)
+		return
+	}
+	msg := req.Message
+	if msg == "" {
+		msg = "gnockpit test notification"
+	}
+	if err := s.PushManager.SendTestNotify(req.Index, msg); err != nil {
+		// The send error embeds the raw notification URL (with its secret), so
+		// it must never reach the client — log it server-side and return a
+		// generic message.
+		log.Printf("notify-test: send to target %d failed: %v", req.Index, err)
+		http.Error(w, "notification delivery failed", http.StatusBadGateway)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
 // Run starts the web server, publish loop, and log streamer.
 func (s *Server) Run(ctx context.Context) error {
 	if Version == "" {
@@ -856,6 +941,8 @@ func (s *Server) Run(ctx context.Context) error {
 	mux.HandleFunc("/api/push/subscribe", s.handlePushSubscribe)
 	mux.HandleFunc("/api/push/entities", s.handlePushEntities)
 	mux.HandleFunc("/api/push/test", s.handlePushTest)
+	mux.HandleFunc("/api/notify/targets", s.handleNotifyTargets)
+	mux.HandleFunc("/api/notify/test", s.handleNotifyTest)
 
 	srv := &http.Server{
 		Addr:    s.Addr,
