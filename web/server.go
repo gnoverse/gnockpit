@@ -78,6 +78,7 @@ type Server struct {
 	ChainStuckSecs  int           // seconds without a new block before status is "down"
 	Links           []Link        // static header link buttons
 	StatusLinks     []*StatusLink // header links with a live BetterStack status dot
+	HideHost        bool          // hide the monitored node's own "(this host)" entry from the peers list
 }
 
 // NewServer creates a new web server.
@@ -150,6 +151,7 @@ type checkData struct {
 	ValAddress  string           `json:"val_address,omitempty"`
 	ValPubKey   string           `json:"val_pubkey,omitempty"`
 	System      *node.SystemInfo `json:"system,omitempty"`
+	HideHost    bool             `json:"hide_host,omitempty"`
 }
 
 func (s *Server) buildVotesReport(snap *node.Snapshot) *node.VotesReport {
@@ -196,6 +198,7 @@ func (s *Server) buildCheckData(snap *node.Snapshot) checkData {
 	cd := checkData{
 		AppHashLast: snap.AppHashLast,
 		System:      snap.System,
+		HideHost:    s.HideHost,
 	}
 	if snap.Status != nil {
 		cd.ValAddress = snap.Status.ValidatorInfo.Address

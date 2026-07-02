@@ -34,6 +34,7 @@ var (
 	flagGeoIPPath       string
 	flagLinks           stringSlice
 	flagStatusLinks     stringSlice
+	flagHideHost        bool
 )
 
 // stringSlice is a flag.Value that accumulates one entry per occurrence,
@@ -76,6 +77,7 @@ func main() {
 	flag.StringVar(&flagGeoIPPath, "geoip-db", "/tmp/gnockpit-geoip.mmdb", "path for the DB-IP City Lite mmdb powering the network map; auto-downloaded and refreshed monthly. Empty disables the map.")
 	flag.Var(&flagLinks, "link", `extra header link button, "Title|URL", repeatable`)
 	flag.Var(&flagStatusLinks, "status-link", `header link with a live status dot, "Title|URL" (BetterStack status pages only for now — the dot reflects <URL>/index.json), repeatable`)
+	flag.BoolVar(&flagHideHost, "hide-host", false, `hide the monitored node's own "(this host)" entry from the peers list`)
 
 	flag.Parse()
 	if flag.NArg() > 0 {
@@ -118,6 +120,7 @@ func run() error {
 	}
 	srv.MissedBlocksPct = flagMissedBlocksPct
 	srv.ChainStuckSecs = flagChainStuckSecs
+	srv.HideHost = flagHideHost
 	srv.PushManager = pushMgr
 
 	for _, spec := range flagLinks {

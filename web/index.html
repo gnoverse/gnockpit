@@ -1152,6 +1152,7 @@
             var lastVotes = null
             var lastPeers = null
             var lastStatus = null
+            var hideHost = false // set from the server's --hide-host flag
             var lastRecentBlockHeight = 0
             var lastRecentBlocks = null
             var lastMissedBlocksPct = 5
@@ -2057,7 +2058,7 @@
 
                 // The host itself: when it isn't a validator, list it under Peers.
                 tbody = peerBody
-                if (!weAreInValset && lastStatus && lastStatus.node_info) {
+                if (!hideHost && !weAreInValset && lastStatus && lastStatus.node_info) {
                     var thisTr = document.createElement('tr')
                     var thisName = mkEl('td', null, null)
                     thisName.appendChild(
@@ -2113,7 +2114,9 @@
                     }
                 }
                 var hostIsPeer =
-                    !weAreInValset && lastStatus && lastStatus.node_info ? 1 : 0
+                    !hideHost && !weAreInValset && lastStatus && lastStatus.node_info
+                        ? 1
+                        : 0
                 $('validators-header').textContent =
                     'Validators (' + valCount + ')'
                 $('peers-header').textContent =
@@ -2347,7 +2350,7 @@
                     }
 
                     // The host itself, when it's a full node (listed under Peers)
-                    if (!weAreInValset && lastStatus && lastStatus.node_info) {
+                    if (!hideHost && !weAreInValset && lastStatus && lastStatus.node_info) {
                         peerContainer.appendChild(
                             makeCard({
                                 name: lastStatus.node_info.moniker || 'unknown',
@@ -2797,6 +2800,7 @@
             }
 
             function handleChecks(d) {
+                hideHost = !!d.hide_host
                 if (d.apphash_last && lastStatus && lastStatus.sync_info) {
                     var h = lastStatus.sync_info.latest_block_height
                     setHashWithHeight('d-apphash-last', d.apphash_last, h)
