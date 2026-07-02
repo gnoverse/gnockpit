@@ -498,8 +498,13 @@
             .map-footer a:hover {
                 text-decoration: underline;
             }
-            .map-country-list {
+            .map-list-col {
                 flex: 0 0 190px;
+                position: relative;
+            }
+            .map-country-list {
+                position: absolute;
+                inset: 0;
                 overflow-y: auto;
                 border: 1px solid var(--border);
                 border-radius: 6px;
@@ -545,8 +550,11 @@
                 .map-layout {
                     flex-direction: column;
                 }
-                .map-country-list {
+                .map-list-col {
                     flex-basis: auto;
+                }
+                .map-country-list {
+                    position: static;
                     max-height: 200px;
                 }
             }
@@ -935,11 +943,13 @@
                             <g id="map-points"></g>
                         </svg>
                         </div>
-                        <div
-                            id="map-country-list"
-                            class="map-country-list"
-                            aria-label="Peers by country"
-                        ></div>
+                        <div class="map-list-col">
+                            <div
+                                id="map-country-list"
+                                class="map-country-list"
+                                aria-label="Peers by country"
+                            ></div>
+                        </div>
                     </div>
                     <div class="map-footer">
                         <a
