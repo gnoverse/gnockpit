@@ -4,7 +4,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"html"
+	"log"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/gnoverse/gnockpit/node"
@@ -54,14 +56,145 @@ func deriveStatus(snap *node.Snapshot, chainStuckSecs int, now time.Time) Status
 	return si
 }
 
-// handleStatus serves gnockpit's own health as JSON. CORS-open so third parties
+// NetworkState is the live consensus state in the public status payload.
+type NetworkState struct {
+	Round      string `json:"round,omitempty"`
+	Step       string `json:"step,omitempty"`
+	Proposer   string `json:"proposer,omitempty"`
+	CatchingUp bool   `json:"catching_up"`
+}
+
+// StatusPeer is a peer's column data in the public status payload.
+type StatusPeer struct {
+	Name      string `json:"name,omitempty"`
+	NodeID    string `json:"node_id,omitempty"`
+	Country   string `json:"country,omitempty"`
+	Provider  string `json:"provider,omitempty"`
+	NPeers    int    `json:"n_peers,omitempty"`
+	Reachable bool   `json:"reachable"`
+}
+
+// StatusValidator is a validator's column data in the public status payload.
+type StatusValidator struct {
+	Name        string `json:"name,omitempty"`
+	Address     string `json:"address"`
+	Country     string `json:"country,omitempty"`
+	Provider    string `json:"provider,omitempty"`
+	VotingPower string `json:"voting_power,omitempty"`
+	SPOF        bool   `json:"spof"`
+	SignRate    int    `json:"sign_rate"`
+	Missed24h   int    `json:"missed_24h"`
+	AvgBlockMs  int    `json:"avg_block_ms"`
+}
+
+// StatusReport is the public /api/status payload: the retrocompat health summary
+// (embedded, so status/chain/height/reason/time stay top-level) plus curated
+// network state, the recent-block window, and per-node column data.
+type StatusReport struct {
+	StatusInfo
+	Network      *NetworkState     `json:"network,omitempty"`
+	RecentBlocks []node.BlockInfo  `json:"recent_blocks,omitempty"`
+	Peers        []StatusPeer      `json:"peers,omitempty"`
+	Validators   []StatusValidator `json:"validators,omitempty"`
+}
+
+// isSPOF reports whether a validator holding vp of totalVP is a single point of
+// failure: losing it drops the remaining power below the 2/3+1 quorum.
+func isSPOF(vp, totalVP int) bool {
+	if totalVP <= 0 {
+		return false
+	}
+	bft := (totalVP*2)/3 + 1
+	return totalVP-vp < bft
+}
+
+// peersByValAddr indexes peers by the validator address they've been correlated
+// to, for looking up a validator's country/provider.
+func peersByValAddr(peers []node.Peer) map[string]node.Peer {
+	m := make(map[string]node.Peer)
+	for _, p := range peers {
+		if p.ValAddress != "" {
+			m[p.ValAddress] = p
+		}
+	}
+	return m
+}
+
+// buildStatusReport assembles the public /api/status payload from the latest
+// snapshot, reusing buildVotesReport for the per-validator signing/perf figures.
+func (s *Server) buildStatusReport(snap *node.Snapshot, now time.Time) StatusReport {
+	rep := StatusReport{StatusInfo: deriveStatus(snap, s.ChainStuckSecs, now)}
+	if snap == nil {
+		return rep
+	}
+	if snap.Signing != nil {
+		rep.RecentBlocks = snap.Signing.RecentBlocks
+	}
+	rep.Peers = make([]StatusPeer, 0, len(snap.Peers))
+	for _, p := range snap.Peers {
+		rep.Peers = append(rep.Peers, StatusPeer{
+			Name:      p.Moniker,
+			NodeID:    p.NodeID,
+			Country:   p.Country,
+			Provider:  p.Provider,
+			NPeers:    p.NPeers,
+			Reachable: p.RPCURL != "",
+		})
+	}
+	votes := s.buildVotesReport(snap)
+	if votes != nil {
+		rep.Network = &NetworkState{Round: votes.Round, Step: votes.Step, Proposer: votes.Proposer}
+		if snap.Status != nil {
+			rep.Network.CatchingUp = snap.Status.SyncInfo.CatchingUp
+		}
+		byAddr := peersByValAddr(snap.Peers)
+		// Voting power from the authoritative validator set (as
+		// nakamotoCoefficient uses), parsed once per validator.
+		vpByAddr := make(map[string]int, len(snap.Validators))
+		totalVP := 0
+		for _, v := range snap.Validators {
+			if vp, err := strconv.Atoi(v.VotingPower); err == nil {
+				vpByAddr[v.Address] = vp
+				totalVP += vp
+			}
+		}
+		rep.Validators = make([]StatusValidator, 0, len(votes.Validators))
+		for _, vi := range votes.Validators {
+			sv := StatusValidator{
+				Name:        vi.Name,
+				Address:     vi.Address,
+				VotingPower: vi.VotingPower,
+				SignRate:    vi.SignRate,
+				Missed24h:   vi.Missed24h,
+				AvgBlockMs:  vi.AvgBlockMs,
+				SPOF:        isSPOF(vpByAddr[vi.Address], totalVP),
+			}
+			if p, ok := byAddr[vi.Address]; ok {
+				sv.Country = p.Country
+				sv.Provider = p.Provider
+			}
+			rep.Validators = append(rep.Validators, sv)
+		}
+	}
+	return rep
+}
+
+// handleStatus serves gnockpit's own health plus curated network state, recent
+// blocks, and per-node column data as JSON. The top-level status/chain/height/
+// reason/time fields are retained for retrocompat. CORS-open so third parties
 // can build their own badges/dashboards from it.
 func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
-	si := deriveStatus(s.getSnapshot(), s.ChainStuckSecs, time.Now())
+	rep := s.buildStatusReport(s.getSnapshot(), time.Now())
+	body, err := json.MarshalIndent(rep, "", "  ")
+	if err != nil {
+		log.Printf("status: encode: %v", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Access-Control-Allow-Origin", "*")
 	w.Header().Set("Cache-Control", "no-cache")
-	json.NewEncoder(w).Encode(si)
+	w.Write(body)
 }
 
 // handleBadge serves a gnockpit-styled SVG status badge.

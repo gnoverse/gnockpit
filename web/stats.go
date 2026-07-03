@@ -190,12 +190,7 @@ func buildStats(ctx context.Context, snap *node.Snapshot, hist *history.Store, n
 
 	// Provider / country aggregates: peer counts are complete; validator counts
 	// cover only validators this node is peered with (matched via ValAddress).
-	peerByValAddr := make(map[string]node.Peer)
-	for _, p := range snap.Peers {
-		if p.ValAddress != "" {
-			peerByValAddr[p.ValAddress] = p
-		}
-	}
+	peerByValAddr := peersByValAddr(snap.Peers)
 	provAgg := make(map[string]*ProviderStat)
 	ctryAgg := make(map[string]*CountryStat)
 	reachable := 0
