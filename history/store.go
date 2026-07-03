@@ -125,6 +125,38 @@ func (s *Store) MissedInWindow(ctx context.Context, window time.Duration, now ti
 	return wc, nil
 }
 
+// WindowReport holds missed-block data across several time windows. Blocks[i]
+// and Missed[addr][i] correspond to Windows[i].
+type WindowReport struct {
+	Windows []time.Duration
+	Blocks  []int
+	Missed  map[string][]int
+}
+
+// MissedByWindows returns, for each window, the total blocks recorded and the
+// per-validator missed count. A window of zero or less means all history.
+func (s *Store) MissedByWindows(ctx context.Context, windows []time.Duration, now time.Time) (WindowReport, error) {
+	rep := WindowReport{
+		Windows: windows,
+		Blocks:  make([]int, len(windows)),
+		Missed:  make(map[string][]int),
+	}
+	for i, w := range windows {
+		wc, err := s.MissedInWindow(ctx, w, now)
+		if err != nil {
+			return rep, err
+		}
+		rep.Blocks[i] = wc.Blocks
+		for addr, n := range wc.Missed {
+			if rep.Missed[addr] == nil {
+				rep.Missed[addr] = make([]int, len(windows))
+			}
+			rep.Missed[addr][i] = n
+		}
+	}
+	return rep, nil
+}
+
 // EarliestRecorded returns the time of the oldest block still retained, or the
 // zero time if no blocks have been recorded. After pruning this advances, so it
 // marks how far back the counts reach — not when recording first began.

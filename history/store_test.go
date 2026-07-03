@@ -160,6 +160,46 @@ func TestPrune(t *testing.T) {
 	}
 }
 
+func TestMissedByWindows(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	now := time.Date(2026, 7, 3, 12, 0, 0, 0, time.UTC)
+	if err := s.RecordBlocks(ctx, []Block{
+		blk(500, now.Add(-30*time.Minute), "valA"),
+		blk(501, now.Add(-3*time.Hour), "valA", "valB"),
+		blk(502, now.Add(-40*time.Hour), "valB"),
+	}); err != nil {
+		t.Fatalf("RecordBlocks: %v", err)
+	}
+	rep, err := s.MissedByWindows(ctx, []time.Duration{time.Hour, 24 * time.Hour, 0}, now)
+	if err != nil {
+		t.Fatalf("MissedByWindows: %v", err)
+	}
+	// Blocks per window: 1h -> 1 (block 500), 24h -> 2 (500,501), all -> 3.
+	if want := []int{1, 2, 3}; !equalInts(rep.Blocks, want) {
+		t.Errorf("Blocks = %v, want %v", rep.Blocks, want)
+	}
+	// valA: 1h -> 1, 24h -> 2, all -> 2. valB: 1h -> 0, 24h -> 1, all -> 2.
+	if want := []int{1, 2, 2}; !equalInts(rep.Missed["valA"], want) {
+		t.Errorf("Missed[valA] = %v, want %v", rep.Missed["valA"], want)
+	}
+	if want := []int{0, 1, 2}; !equalInts(rep.Missed["valB"], want) {
+		t.Errorf("Missed[valB] = %v, want %v", rep.Missed["valB"], want)
+	}
+}
+
+func equalInts(a, b []int) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
 func TestRecordBlocksEmpty(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
