@@ -1040,13 +1040,14 @@
                     <div class="table-wrap">
                         <table>
                             <colgroup>
-                                <col style="width: 17%" />
-                                <col style="width: 25%" />
-                                <col style="width: 15%" />
-                                <col style="width: 11%" />
-                                <col style="width: 9%" />
-                                <col style="width: 11%" />
-                                <col style="width: 12%" />
+                                <col style="width: 16%" />
+                                <col style="width: 22%" />
+                                <col style="width: 14%" />
+                                <col style="width: 10%" />
+                                <col style="width: 8%" />
+                                <col style="width: 10%" />
+                                <col style="width: 10%" />
+                                <col style="width: 10%" />
                             </colgroup>
                             <thead>
                                 <tr>
@@ -1092,6 +1093,15 @@
                                         Sign%
                                     </th>
                                     <th
+                                        id="missed24h-th"
+                                        data-sort="missed24h"
+                                        style="cursor: pointer"
+                                        class="info-btn"
+                                        data-popover="Blocks this validator missed in the last 24h (forward-only recording; may be partial early on)"
+                                    >
+                                        Missed 24h
+                                    </th>
+                                    <th
                                         data-sort="speed"
                                         style="cursor: pointer"
                                         class="info-btn"
@@ -1103,7 +1113,7 @@
                             </thead>
                             <tbody id="validators-body">
                                 <tr>
-                                    <td colspan="7">loading...</td>
+                                    <td colspan="8">loading...</td>
                                 </tr>
                             </tbody>
                         </table>
@@ -1703,6 +1713,8 @@
 
                 var votes = lastVotes
                 var peers = lastPeers
+                var votesMissedSince =
+                    votes && votes.missed_since ? votes.missed_since : ''
 
                 // Build consensus meta (VP-based for BFT quorum)
                 var valsetSize =
@@ -1892,6 +1904,15 @@
                                 b.avg_block_ms > 0
                                     ? b.avg_block_ms
                                     : 99999
+                        } else if (peerSortKey === 'missed24h') {
+                            va =
+                                typeof a.missed_24h === 'number'
+                                    ? a.missed_24h
+                                    : -1
+                            vb =
+                                typeof b.missed_24h === 'number'
+                                    ? b.missed_24h
+                                    : -1
                         } else if (peerSortKey === 'vp') {
                             va = a.voting_power
                                 ? parseInt(a.voting_power, 10)
@@ -2121,6 +2142,31 @@
                         }
                         tr.appendChild(signTd)
 
+                        // Missed 24h (from signing history; 0 until history accrues)
+                        var missedTd = document.createElement('td')
+                        var missed24h = v.missed_24h
+                        if (typeof missed24h === 'number') {
+                            missedTd.textContent = String(missed24h)
+                            missedTd.className =
+                                missed24h === 0
+                                    ? 'ok'
+                                    : missed24h <= 5
+                                      ? 'warn'
+                                      : 'err'
+                            missedTd.setAttribute(
+                                'data-sort-val',
+                                String(missed24h)
+                            )
+                        } else {
+                            missedTd.textContent = '-'
+                            missedTd.setAttribute('data-sort-val', '-1')
+                        }
+                        if (votesMissedSince)
+                            missedTd.title =
+                                'missed in last 24h · history since ' +
+                                votesMissedSince
+                        tr.appendChild(missedTd)
+
                         // Speed (avg block time when proposing) — ranked with emojis
                         var speedTd = document.createElement('td')
                         var avgMs = v.avg_block_ms
@@ -2320,6 +2366,7 @@
                             '',
                             '',
                             '',
+                            '',
                         ])
                     )
                 if (!peerBody.rows.length)
@@ -2404,6 +2451,13 @@
                                   [
                                       'sign%',
                                       { text: data.signRate, cls: data.signCls },
+                                  ],
+                                  [
+                                      'missed 24h',
+                                      {
+                                          text: data.missed24h,
+                                          cls: data.missedCls,
+                                      },
                                   ],
                                   [
                                       'speed',
@@ -2579,6 +2633,18 @@
                                             ? signRate >= 100
                                                 ? 'ok'
                                                 : signRate >= 80
+                                                  ? 'warn'
+                                                  : 'err'
+                                            : '',
+                                    missed24h:
+                                        typeof v.missed_24h === 'number'
+                                            ? String(v.missed_24h)
+                                            : '-',
+                                    missedCls:
+                                        typeof v.missed_24h === 'number'
+                                            ? v.missed_24h === 0
+                                                ? 'ok'
+                                                : v.missed_24h <= 5
                                                   ? 'warn'
                                                   : 'err'
                                             : '',
