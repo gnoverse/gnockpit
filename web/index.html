@@ -300,6 +300,16 @@
                 opacity: 1;
                 color: var(--blue);
             }
+            th[data-sort] {
+                cursor: pointer;
+            }
+            th.sorted-col {
+                color: var(--blue);
+                opacity: 1;
+            }
+            .sort-arrow {
+                font-size: 9px;
+            }
             .node-ref {
                 border-bottom: 1px dashed var(--fg2);
                 cursor: pointer;
@@ -1167,18 +1177,21 @@
                                         Name
                                     </th>
                                     <th
+                                        data-sort="address"
                                         class="info-btn"
                                         data-popover="Validator's consensus (signing) address, derived from its consensus public key"
                                     >
                                         Signing address
                                     </th>
                                     <th
+                                        data-sort="country"
                                         class="info-btn"
                                         data-popover="Country of the validator's IP, via its connected peer (DB-IP geolocation). Hover to cross-highlight the network map."
                                     >
                                         Country
                                     </th>
                                     <th
+                                        data-sort="provider"
                                         class="info-btn"
                                         data-popover="Cloud provider guessed from the validator's IP, via its connected peer (DB-IP ASN). Hover the ⓘ on a row to see the IP."
                                     >
@@ -1266,32 +1279,37 @@
                             </colgroup>
                             <thead>
                                 <tr>
-                                    <th>Name</th>
+                                    <th data-sort="name">Name</th>
                                     <th
+                                        data-sort="nodeid"
                                         class="info-btn"
                                         data-popover="The peer's P2P node ID (bech32). Hover or click to copy the full ID."
                                     >
                                         Node ID
                                     </th>
                                     <th
+                                        data-sort="country"
                                         class="info-btn"
                                         data-popover="Country of the peer's IP (DB-IP geolocation). Hover to cross-highlight the network map."
                                     >
                                         Country
                                     </th>
                                     <th
+                                        data-sort="provider"
                                         class="info-btn"
                                         data-popover="Cloud provider guessed from the peer's IP (DB-IP ASN). Hover the ⓘ on a row to see the IP."
                                     >
                                         Provider
                                     </th>
                                     <th
+                                        data-sort="peers"
                                         class="info-btn"
                                         data-popover="Number of P2P peers connected to this node (from their /net_info)"
                                     >
                                         Peers
                                     </th>
                                     <th
+                                        data-sort="rpc"
                                         class="info-btn"
                                         data-popover="Whether this peer's RPC answered; hover a reachable peer for details"
                                     >
@@ -1347,17 +1365,30 @@
                 }
             })()
 
-            // Sortable table columns
+            // Sortable table columns — the validators and peers tables each keep
+            // their own sort key + direction (their columns differ).
+            var valSortKey = 'name'
+            var valSortAsc = true
             var peerSortKey = 'name'
             var peerSortAsc = true
             document.addEventListener('click', function (e) {
                 var th = e.target.closest('th[data-sort]')
                 if (!th) return
                 var key = th.getAttribute('data-sort')
-                if (peerSortKey === key) peerSortAsc = !peerSortAsc
-                else {
-                    peerSortKey = key
-                    peerSortAsc = true
+                var table = th.closest('table')
+                var isPeer = !!(table && table.querySelector('#peers-body'))
+                if (isPeer) {
+                    if (peerSortKey === key) peerSortAsc = !peerSortAsc
+                    else {
+                        peerSortKey = key
+                        peerSortAsc = true
+                    }
+                } else {
+                    if (valSortKey === key) valSortAsc = !valSortAsc
+                    else {
+                        valSortKey = key
+                        valSortAsc = true
+                    }
                 }
                 _lastNetworkFingerprint = '' // Invalidate to force rebuild on sort change
                 renderNetwork()
@@ -1568,6 +1599,14 @@
                 inner.appendChild(mkEl('span', code, 'cc-code'))
                 td.appendChild(inner)
                 return td
+            }
+
+            // countryShowsCode reports whether a table body's country cells are
+            // currently collapsed to the ISO code (container query on a narrow
+            // column) rather than the full name, so sorting can match the display.
+            function countryShowsCode(body) {
+                var el = body.querySelector('.cc-name')
+                return !!(el && getComputedStyle(el).display === 'none')
             }
 
             // providerCell builds a cell showing the guessed cloud provider with
@@ -1876,6 +1915,11 @@
                 var scrollY = window.scrollY
                 var valBody = $('validators-body')
                 var peerBody = $('peers-body')
+                // Country cells collapse to the ISO code when the column is narrow
+                // (CSS container query); sort by whatever is shown. Measure the
+                // current cells before they're cleared below.
+                var valCountryShowsCode = countryShowsCode(valBody)
+                var peerCountryShowsCode = countryShowsCode(peerBody)
                 clearChildren(valBody)
                 clearChildren(peerBody)
                 var tbody = valBody
@@ -2053,7 +2097,7 @@
                     var sortedVals = votes.validators.slice()
                     sortedVals.sort(function (a, b) {
                         var va, vb
-                        if (peerSortKey === 'sign') {
+                        if (valSortKey === 'sign') {
                             va =
                                 typeof a.sign_rate === 'number'
                                     ? a.sign_rate
@@ -2062,7 +2106,7 @@
                                 typeof b.sign_rate === 'number'
                                     ? b.sign_rate
                                     : -1
-                        } else if (peerSortKey === 'speed') {
+                        } else if (valSortKey === 'speed') {
                             va =
                                 typeof a.avg_block_ms === 'number' &&
                                 a.avg_block_ms > 0
@@ -2073,7 +2117,7 @@
                                 b.avg_block_ms > 0
                                     ? b.avg_block_ms
                                     : 99999
-                        } else if (peerSortKey === 'missed24h') {
+                        } else if (valSortKey === 'missed24h') {
                             va =
                                 typeof a.missed_24h === 'number'
                                     ? a.missed_24h
@@ -2082,14 +2126,14 @@
                                 typeof b.missed_24h === 'number'
                                     ? b.missed_24h
                                     : -1
-                        } else if (peerSortKey === 'vp') {
+                        } else if (valSortKey === 'vp') {
                             va = a.voting_power
                                 ? parseInt(a.voting_power, 10)
                                 : 0
                             vb = b.voting_power
                                 ? parseInt(b.voting_power, 10)
                                 : 0
-                        } else if (peerSortKey === 'spof') {
+                        } else if (valSortKey === 'spof') {
                             va =
                                 totalVP > 0 &&
                                 totalVP -
@@ -2108,7 +2152,7 @@
                                     bftVP
                                     ? 1
                                     : 0
-                        } else if (peerSortKey === 'peers') {
+                        } else if (valSortKey === 'peers') {
                             var ma =
                                 peerByName[
                                     (a.name || '').replace(' (us)', '')
@@ -2119,12 +2163,35 @@
                                 ] || peerByAddr[b.address]
                             va = ma && ma.n_peers ? ma.n_peers : -1
                             vb = mb && mb.n_peers ? mb.n_peers : -1
+                        } else if (valSortKey === 'address') {
+                            va = a.address || ''
+                            vb = b.address || ''
+                        } else if (
+                            valSortKey === 'country' ||
+                            valSortKey === 'provider'
+                        ) {
+                            var mca =
+                                peerByName[
+                                    (a.name || '').replace(' (us)', '')
+                                ] || peerByAddr[a.address]
+                            var mcb =
+                                peerByName[
+                                    (b.name || '').replace(' (us)', '')
+                                ] || peerByAddr[b.address]
+                            va = mca ? mca[valSortKey] || '' : ''
+                            vb = mcb ? mcb[valSortKey] || '' : ''
+                            // Match the display: sort by full name unless the
+                            // column is collapsed to the ISO code.
+                            if (valSortKey === 'country' && !valCountryShowsCode) {
+                                va = countryName(va)
+                                vb = countryName(vb)
+                            }
                         } else {
                             va = (a.name || '').replace(' (us)', '')
                             vb = (b.name || '').replace(' (us)', '')
                         }
-                        if (va < vb) return peerSortAsc ? -1 : 1
-                        if (va > vb) return peerSortAsc ? 1 : -1
+                        if (va < vb) return valSortAsc ? -1 : 1
+                        if (va > vb) return valSortAsc ? 1 : -1
                         return 0
                     })
 
@@ -2358,6 +2425,37 @@
                         otherPeers.push(peers[i])
                     }
                 }
+                otherPeers.sort(function (a, b) {
+                    var va, vb
+                    if (peerSortKey === 'peers') {
+                        va = typeof a.n_peers === 'number' ? a.n_peers : -1
+                        vb = typeof b.n_peers === 'number' ? b.n_peers : -1
+                    } else if (peerSortKey === 'rpc') {
+                        va = a.rpc_url ? 1 : 0
+                        vb = b.rpc_url ? 1 : 0
+                    } else if (peerSortKey === 'nodeid') {
+                        va = a.node_id || ''
+                        vb = b.node_id || ''
+                    } else if (
+                        peerSortKey === 'country' ||
+                        peerSortKey === 'provider'
+                    ) {
+                        va = a[peerSortKey] || ''
+                        vb = b[peerSortKey] || ''
+                        // Match the display: sort by full name unless the column
+                        // is collapsed to the ISO code.
+                        if (peerSortKey === 'country' && !peerCountryShowsCode) {
+                            va = countryName(va)
+                            vb = countryName(vb)
+                        }
+                    } else {
+                        va = a.moniker || ''
+                        vb = b.moniker || ''
+                    }
+                    if (va < vb) return peerSortAsc ? -1 : 1
+                    if (va > vb) return peerSortAsc ? 1 : -1
+                    return 0
+                })
                 $('validators-header').textContent =
                     'Validators (' + valCount + ')'
                 $('peers-header').textContent =
@@ -2764,8 +2862,34 @@
                     )
                 }
                 buildPeersCards()
+                updateSortHeaders()
             }
 
+            // Mark the active sort column on each table: blue label + a ▲/▼ arrow
+            // for ascending/descending. Headers are static, so this runs per render.
+            function updateSortHeaders() {
+                var ths = document.querySelectorAll('th[data-sort]')
+                for (var i = 0; i < ths.length; i++) {
+                    var th = ths[i]
+                    var table = th.closest('table')
+                    var isPeer = !!(table && table.querySelector('#peers-body'))
+                    var key = isPeer ? peerSortKey : valSortKey
+                    var asc = isPeer ? peerSortAsc : valSortAsc
+                    var active = th.getAttribute('data-sort') === key
+                    th.classList.toggle('sorted-col', active)
+                    var arrow = th.querySelector('.sort-arrow')
+                    if (active) {
+                        if (!arrow) {
+                            arrow = document.createElement('span')
+                            arrow.className = 'sort-arrow'
+                            th.appendChild(arrow)
+                        }
+                        arrow.textContent = asc ? ' ▲' : ' ▼'
+                    } else if (arrow) {
+                        arrow.remove()
+                    }
+                }
+            }
 
             function renderRecentBlocks(blocks) {
                 var container = $('recent-blocks')
