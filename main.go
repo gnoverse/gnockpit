@@ -33,6 +33,7 @@ var (
 	flagNotifyURLs      stringSlice
 	flagPublicURL       string
 	flagGeoIPPath       string
+	flagASNPath         string
 	flagLinks           stringSlice
 	flagStatusLinks     stringSlice
 	flagHideHost        bool
@@ -76,6 +77,7 @@ func main() {
 	flag.Var(&flagNotifyURLs, "notify", "Shoutrrr notification URL, repeatable (e.g. discord://token@id)")
 	flag.StringVar(&flagPublicURL, "public-url", "", "public URL of this gnockpit instance, appended to external notification messages")
 	flag.StringVar(&flagGeoIPPath, "geoip-db", "/tmp/gnockpit-geoip.mmdb", "path for the DB-IP City Lite mmdb powering the network map; auto-downloaded and refreshed monthly. Empty disables the map.")
+	flag.StringVar(&flagASNPath, "asn-db", "/tmp/gnockpit-asn.mmdb", "path for the DB-IP ASN Lite mmdb powering cloud-provider detection; auto-downloaded and refreshed monthly. Empty disables it.")
 	flag.Var(&flagLinks, "link", `extra header link button, "Title|URL", repeatable`)
 	flag.Var(&flagStatusLinks, "status-link", `header link with a live status dot, "Title|URL" (BetterStack status pages only for now — the dot reflects <URL>/index.json), repeatable`)
 	flag.BoolVar(&flagHideHost, "hide-host", false, `hide the monitored node's own "(this host)" entry from the peers list`)
@@ -152,6 +154,11 @@ func run() error {
 
 	if flagGeoIPPath != "" {
 		srv.GeoIP = node.NewGeoIP(flagGeoIPPath, func(format string, args ...any) {
+			fmt.Fprintf(os.Stderr, format+"\n", args...)
+		})
+	}
+	if flagASNPath != "" {
+		srv.ASN = node.NewASN(flagASNPath, func(format string, args ...any) {
 			fmt.Fprintf(os.Stderr, format+"\n", args...)
 		})
 	}

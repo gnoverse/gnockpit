@@ -135,6 +135,10 @@ type Peer struct {
 	Lon     float64 `json:"lon,omitempty"`
 	City    string  `json:"city,omitempty"`
 	Country string  `json:"country,omitempty"`
+	// Cloud provider from the IP's ASN (DB-IP ASN Lite).
+	ASN      uint   `json:"asn,omitempty"`
+	ASOrg    string `json:"as_org,omitempty"`
+	Provider string `json:"provider,omitempty"`
 }
 
 // Validator represents a validator from the validator set.

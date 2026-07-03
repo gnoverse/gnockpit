@@ -82,6 +82,7 @@ type Server struct {
 	PushManager     *push.Manager  // push notification manager (nil = disabled)
 	MissedBlocksPct int            // missed-block threshold for active validator counting
 	GeoIP           *node.GeoIP    // IP geolocation for the network map (nil = disabled)
+	ASN             *node.ASN      // IP-to-ASN/cloud-provider resolution (nil = disabled)
 	History         *history.Store // block-signing history for missed-block windows (nil = disabled)
 	NotifyTestToken string         // bearer token for the notify-test API (empty = disabled)
 	ChainStuckSecs  int            // seconds without a new block before status is "down"
@@ -451,6 +452,15 @@ func (s *Server) collectSystemInfo() *node.SystemInfo {
 
 // --- Data Fetching ---
 
+// peerLookupIP returns the address to resolve a peer by: its observed remote
+// IP, falling back to its advertised external address.
+func peerLookupIP(p node.Peer) string {
+	if p.RemoteIP != "" {
+		return p.RemoteIP
+	}
+	return p.ExternalAddress
+}
+
 func (s *Server) fetchSnapshot(ctx context.Context) *node.Snapshot {
 	snap := &node.Snapshot{
 		Timestamp: time.Now(),
@@ -523,15 +533,25 @@ func (s *Server) fetchSnapshot(ctx context.Context) *node.Snapshot {
 	// database has been downloaded).
 	if s.GeoIP != nil {
 		for i := range snap.Peers {
-			ip := snap.Peers[i].RemoteIP
-			if ip == "" {
-				ip = snap.Peers[i].ExternalAddress
-			}
+			ip := peerLookupIP(snap.Peers[i])
 			if lat, lon, city, country, ok := s.GeoIP.Lookup(ip); ok {
 				snap.Peers[i].Lat = lat
 				snap.Peers[i].Lon = lon
 				snap.Peers[i].City = city
 				snap.Peers[i].Country = country
+			}
+		}
+	}
+
+	// Resolve each peer's cloud provider from its IP (best-effort; empty until
+	// the ASN database has been downloaded).
+	if s.ASN != nil {
+		for i := range snap.Peers {
+			ip := peerLookupIP(snap.Peers[i])
+			if asn, org, ok := s.ASN.Lookup(ip); ok {
+				snap.Peers[i].ASN = asn
+				snap.Peers[i].ASOrg = org
+				snap.Peers[i].Provider = node.Provider(org)
 			}
 		}
 	}
@@ -803,6 +823,31 @@ func (s *Server) geoIPRefreshLoop(ctx context.Context) {
 	}
 }
 
+// asnRefreshLoop keeps the IP-to-ASN database current, checking daily and
+// downloading only when the month rolls over, mirroring geoIPRefreshLoop.
+func (s *Server) asnRefreshLoop(ctx context.Context) {
+	if s.ASN == nil {
+		return
+	}
+	refresh := func() {
+		if err := s.ASN.EnsureFresh(ctx, time.Now()); err != nil {
+			log.Printf("asn refresh failed: %v", err)
+		}
+	}
+	refresh()
+
+	ticker := time.NewTicker(geoIPRefreshInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			refresh()
+		}
+	}
+}
+
 // generateID generates a random hex string suitable for use as a subscription ID.
 func generateID() string {
 	b := make([]byte, 16)
@@ -1022,6 +1067,7 @@ func (s *Server) Run(ctx context.Context) error {
 	go s.publishLoop(ctx)
 	go s.valoperRefreshLoop(ctx)
 	go s.geoIPRefreshLoop(ctx)
+	go s.asnRefreshLoop(ctx)
 	go s.statusLinkRefreshLoop(ctx)
 	go s.historyPruneLoop(ctx)
 
