@@ -536,15 +536,45 @@
                 color: var(--fg);
                 font-variant-numeric: tabular-nums;
             }
-            .map-dot.hl {
+            .map-dot.cc-hl {
                 fill: var(--blue);
                 stroke: #fff;
                 stroke-width: 0.6;
             }
-            .map-dot.hl-source {
-                fill: var(--blue);
-                stroke: #fff;
-                stroke-width: 0.8;
+            .country-row.cc-hl,
+            .country-cell.cc-hl {
+                background: rgba(88, 166, 255, 0.25) !important;
+            }
+            /* Peers-table country cell: flag + full name, collapsing to the ISO
+               code when the column narrows (container query on .cc-inner). */
+            .cc-inner {
+                container-type: inline-size;
+                display: flex;
+                align-items: center;
+                gap: 4px;
+                min-width: 0;
+            }
+            .cc-flag {
+                flex: 0 0 auto;
+            }
+            .cc-name {
+                flex: 1 1 auto;
+                min-width: 0;
+                overflow: hidden;
+                text-overflow: ellipsis;
+                white-space: nowrap;
+            }
+            .cc-code {
+                flex: 0 0 auto;
+                display: none;
+            }
+            @container (max-width: 100px) {
+                .cc-name {
+                    display: none;
+                }
+                .cc-code {
+                    display: inline;
+                }
             }
             @media (max-width: 720px) {
                 .map-layout {
@@ -1101,11 +1131,12 @@
                     <div class="table-wrap">
                         <table>
                             <colgroup>
+                                <col style="width: 22%" />
                                 <col style="width: 25%" />
-                                <col style="width: 29%" />
-                                <col style="width: 20%" />
-                                <col style="width: 13%" />
-                                <col style="width: 13%" />
+                                <col style="width: 18%" />
+                                <col style="width: 15%" />
+                                <col style="width: 10%" />
+                                <col style="width: 10%" />
                             </colgroup>
                             <thead>
                                 <tr>
@@ -1124,6 +1155,12 @@
                                     </th>
                                     <th
                                         class="info-btn"
+                                        data-popover="Country of the peer's IP (DB-IP geolocation). Hover to cross-highlight the network map."
+                                    >
+                                        Country
+                                    </th>
+                                    <th
+                                        class="info-btn"
                                         data-popover="Number of P2P peers connected to this node (from their /net_info)"
                                     >
                                         Peers
@@ -1138,7 +1175,7 @@
                             </thead>
                             <tbody id="peers-body">
                                 <tr>
-                                    <td colspan="5">loading...</td>
+                                    <td colspan="6">loading...</td>
                                 </tr>
                             </tbody>
                         </table>
@@ -1382,6 +1419,26 @@
                 } else {
                     td.textContent = cellDef
                 }
+                return td
+            }
+
+            // countryCell builds a peers-table cell showing the peer's country:
+            // flag + full name, collapsing to the ISO code as the column narrows
+            // (CSS container query). data-cc cross-links it to the network map.
+            function countryCell(code) {
+                var td = document.createElement('td')
+                td.className = 'country-cell'
+                if (!code) {
+                    td.textContent = '—'
+                    return td
+                }
+                td.setAttribute('data-cc', code)
+                td.title = countryName(code)
+                var inner = mkEl('span', null, 'cc-inner')
+                inner.appendChild(mkEl('span', countryFlag(code), 'cc-flag'))
+                inner.appendChild(mkEl('span', countryName(code), 'cc-name'))
+                inner.appendChild(mkEl('span', code, 'cc-code'))
+                td.appendChild(inner)
                 return td
             }
 
@@ -2164,6 +2221,7 @@
                             style: 'font-size:11px;color:var(--fg2)',
                         })
                     )
+                    thisTr.appendChild(countryCell('')) // Country (host: unknown)
                     thisTr.appendChild(createCell({ text: String(peerCount) })) // Peers
                     // RPC — the monitored node is reachable by definition (it's us)
                     var thisRPC = document.createElement('td')
@@ -2239,6 +2297,7 @@
                                 copy: pIP,
                             })
                         )
+                        tr2.appendChild(countryCell(p.country || '')) // Country
                         var pNPeers = p.n_peers ? String(p.n_peers) : '-'
                         tr2.appendChild(
                             createCell({
@@ -2267,6 +2326,7 @@
                     peerBody.appendChild(
                         createRow([
                             { text: 'no peers', className: 'full-role' },
+                            '',
                             '',
                             '',
                             '',
@@ -2335,6 +2395,7 @@
                                       data.nodeId ? shortAddr(data.nodeId) : '-',
                                   ],
                                   ['ip', data.ip],
+                                  ['country', data.country || '-'],
                                   ['peers', data.peers || '-'],
                               ]
                             : [
@@ -2441,6 +2502,7 @@
                                         lastStatus.node_info.net_address
                                     ),
                                 ip: '-',
+                                country: '-',
                                 peers: String(peerCount),
                                 rpcUrl: '',
                                 rpcText: 'local',
@@ -2570,6 +2632,11 @@
                                     healthCls: reachable ? 'ok' : '',
                                     nodeId: p.node_id || '',
                                     ip: p.external_address || p.remote_ip || '-',
+                                    country: p.country
+                                        ? countryFlag(p.country) +
+                                          ' ' +
+                                          countryName(p.country)
+                                        : '-',
                                     fullAddress: p.val_address || '',
                                     pubKey: p.val_pubkey || '',
                                     peers: p.n_peers ? String(p.n_peers) : '-',
@@ -2991,7 +3058,7 @@
                     c.setAttribute('cy', grp.cy.toFixed(2))
                     c.setAttribute('r', r.toFixed(2))
                     c.setAttribute('class', 'map-dot')
-                    c.setAttribute('data-highlight', grp.country)
+                    c.setAttribute('data-cc', grp.country)
                     c.setAttribute('data-popover', popoverText(grp.country))
                     g.appendChild(c)
                     if (grp.n > 1) {
@@ -3053,7 +3120,7 @@
                 codes.forEach(function (code) {
                     var row = document.createElement('div')
                     row.className = 'country-row'
-                    row.setAttribute('data-highlight', code)
+                    row.setAttribute('data-cc', code)
 
                     var flag = document.createElement('span')
                     flag.className = 'country-flag'
@@ -3074,26 +3141,52 @@
                 })
             }
 
-            // Hovering a map dot scrolls its country's row into view; the shared
-            // highlight system (data-highlight) lights up the row and sibling
-            // dots.
+            // Country cross-highlight: hovering any element tagged data-cc — a map
+            // dot, a country-list row, or a peers-table country cell — highlights
+            // every element of that country and scrolls the country-list row into
+            // view. Kept separate from the generic data-highlight system so it
+            // never bleeds into validator/address row highlighting.
+            function clearCountryHighlight() {
+                var hl = document.querySelectorAll('.cc-hl')
+                for (var i = 0; i < hl.length; i++)
+                    hl[i].classList.remove('cc-hl')
+            }
             document.addEventListener(
                 'mouseenter',
                 function (e) {
                     if (!(e.target instanceof Element)) return
-                    var dot = e.target.closest('.map-dot')
-                    if (!dot) return
-                    var code = dot.getAttribute('data-highlight')
-                    var list = $('map-country-list')
-                    if (!code || !list) return
-                    var row = list.querySelector(
-                        '[data-highlight="' + CSS.escape(code) + '"]'
+                    var el = e.target.closest('[data-cc]')
+                    if (!el) return
+                    var code = el.getAttribute('data-cc')
+                    if (!code) return
+                    var sel = '[data-cc="' + CSS.escape(code) + '"]'
+                    var matches = document.querySelectorAll(sel)
+                    for (var i = 0; i < matches.length; i++)
+                        matches[i].classList.add('cc-hl')
+                    // Scroll the country list to the hovered country only when the
+                    // hover starts on the map itself. Doing it for a peers-table
+                    // hover would jerk the page up to the map — highlight only.
+                    if (el.classList.contains('map-dot')) {
+                        var row = document.querySelector(
+                            '#map-country-list ' + sel
+                        )
+                        if (row)
+                            row.scrollIntoView({
+                                block: 'nearest',
+                                behavior: 'smooth',
+                            })
+                    }
+                },
+                true
+            )
+            document.addEventListener(
+                'mouseleave',
+                function (e) {
+                    if (
+                        e.target instanceof Element &&
+                        e.target.closest('[data-cc]')
                     )
-                    if (row)
-                        row.scrollIntoView({
-                            block: 'nearest',
-                            behavior: 'smooth',
-                        })
+                        clearCountryHighlight()
                 },
                 true
             )
