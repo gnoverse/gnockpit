@@ -281,6 +281,7 @@
                 color: var(--fg);
                 max-width: 350px;
                 white-space: pre-wrap;
+                overflow-wrap: anywhere;
                 z-index: 100;
                 box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
             }
@@ -538,9 +539,36 @@
                 flex: 0 0 190px;
                 position: relative;
             }
-            .map-country-list {
+            .map-list-inner {
                 position: absolute;
                 inset: 0;
+                display: flex;
+                flex-direction: column;
+                gap: 4px;
+            }
+            .map-list-toggle {
+                flex: 0 0 auto;
+                display: flex;
+                gap: 4px;
+            }
+            .map-list-toggle button {
+                flex: 1 1 0;
+                background: var(--bg);
+                border: 1px solid var(--border);
+                color: var(--fg2);
+                font-size: 11px;
+                padding: 3px 4px;
+                border-radius: 4px;
+                cursor: pointer;
+            }
+            .map-list-toggle button.active {
+                background: var(--bg2);
+                color: var(--fg);
+                border-color: var(--blue);
+            }
+            .map-country-list {
+                flex: 1 1 auto;
+                min-height: 0;
                 overflow-y: auto;
                 border: 1px solid var(--border);
                 border-radius: 6px;
@@ -577,7 +605,8 @@
                 stroke-width: 1.3;
             }
             .country-row.cc-hl,
-            .country-cell.cc-hl {
+            .country-cell.cc-hl,
+            [data-prov].cc-hl {
                 background: rgba(88, 166, 255, 0.25) !important;
             }
             /* Peers-table country cell: flag + full name, collapsing to the ISO
@@ -618,8 +647,10 @@
                 .map-list-col {
                     flex-basis: auto;
                 }
-                .map-country-list {
+                .map-list-inner {
                     position: static;
+                }
+                .map-country-list {
                     max-height: 200px;
                 }
             }
@@ -1023,11 +1054,25 @@
                             </div>
                         </div>
                         <div class="map-list-col">
-                            <div
-                                id="map-country-list"
-                                class="map-country-list"
-                                aria-label="Peers by country"
-                            ></div>
+                            <div class="map-list-inner">
+                                <div class="map-list-toggle" id="map-list-toggle">
+                                    <button
+                                        type="button"
+                                        data-mode="country"
+                                        class="active"
+                                    >
+                                        Country
+                                    </button>
+                                    <button type="button" data-mode="provider">
+                                        Provider
+                                    </button>
+                                </div>
+                                <div
+                                    id="map-country-list"
+                                    class="map-country-list"
+                                    aria-label="Peers by country or provider"
+                                ></div>
+                            </div>
                         </div>
                     </div>
                     <div class="map-footer">
@@ -1089,16 +1134,15 @@
                     <div class="table-wrap">
                         <table>
                             <colgroup>
-                                <col style="width: 13%" />
-                                <col style="width: 16%" />
+                                <col style="width: 14%" />
+                                <col style="width: 18%" />
+                                <col style="width: 10%" />
+                                <col style="width: 14%" />
                                 <col style="width: 9%" />
-                                <col style="width: 12%" />
-                                <col style="width: 12%" />
-                                <col style="width: 8%" />
-                                <col style="width: 6%" />
-                                <col style="width: 9%" />
-                                <col style="width: 8%" />
                                 <col style="width: 7%" />
+                                <col style="width: 10%" />
+                                <col style="width: 9%" />
+                                <col style="width: 9%" />
                             </colgroup>
                             <thead>
                                 <tr>
@@ -1122,14 +1166,6 @@
                                         data-popover="Cloud provider guessed from the validator's IP, via its connected peer (DB-IP ASN). Hover the ⓘ on a row to see the IP."
                                     >
                                         Provider
-                                    </th>
-                                    <th
-                                        data-sort="consensus"
-                                        style="cursor: pointer"
-                                        class="info-btn"
-                                        data-popover="H=height / R=round / S=step / PV=prevoted / PC=precommitted / P=proposer"
-                                    >
-                                        Consensus
                                     </th>
                                     <th
                                         data-sort="vp"
@@ -1176,7 +1212,7 @@
                             </thead>
                             <tbody id="validators-body">
                                 <tr>
-                                    <td colspan="10">loading...</td>
+                                    <td colspan="9">loading...</td>
                                 </tr>
                             </tbody>
                         </table>
@@ -1506,6 +1542,7 @@
                     return td
                 }
                 td.setAttribute('data-cc', code)
+                td.setAttribute('data-copy', countryName(code))
                 td.title = countryName(code)
                 var inner = mkEl('span', null, 'cc-inner')
                 inner.appendChild(mkEl('span', countryFlag(code), 'cc-flag'))
@@ -1523,11 +1560,14 @@
                     empty.textContent = '—'
                     return empty
                 }
-                return createCell({
+                var td = createCell({
                     text: provider || 'unknown',
                     style: 'font-size:11px;color:var(--fg2)',
                     popover: ip ? 'Guessed from IP: ' + ip : undefined,
+                    copy: provider || ip,
                 })
+                if (provider) td.setAttribute('data-prov', provider)
+                return td
             }
 
             function createRow(cells) {
@@ -2028,10 +2068,6 @@
                                 ] || peerByAddr[b.address]
                             va = ma && ma.n_peers ? ma.n_peers : -1
                             vb = mb && mb.n_peers ? mb.n_peers : -1
-                        } else if (peerSortKey === 'consensus') {
-                            // Sort by peer height (need to look up from peers)
-                            va = a.name || ''
-                            vb = b.name || ''
                         } else {
                             va = (a.name || '').replace(' (us)', '')
                             vb = (b.name || '').replace(' (us)', '')
@@ -2083,9 +2119,10 @@
                             : v.address
                         tr.appendChild(
                             createCell({
-                                text: v.address,
+                                text: shortAddr(v.address),
                                 style: 'font-size:11px;color:var(--fg2)',
                                 popover:
+                                    'address: ' +
                                     v.address +
                                     (v.pub_key ? '\npubkey: ' + v.pub_key : ''),
                                 popoverSelf: true,
@@ -2102,71 +2139,6 @@
                                 mp ? mp.remote_ip || mp.external_address || '' : ''
                             )
                         )
-
-                        // Consensus (merged: h/r/s + pv/pc/p)
-                        var consTd = document.createElement('td')
-                        consTd.style.fontSize = '12px'
-                        var peerH = mp
-                            ? mp.peer_height
-                            : isUs && votes
-                              ? votes.height
-                              : ''
-                        var peerR = mp
-                            ? mp.peer_round
-                            : isUs && votes
-                              ? votes.round
-                              : ''
-                        var peerS = mp
-                            ? mp.peer_step
-                            : isUs && votes
-                              ? votes.step
-                              : ''
-                        if (peerH) {
-                            var netH = votes ? parseInt(votes.height, 10) : 0
-                            var ph = parseInt(peerH, 10)
-                            var hClass =
-                                ph >= netH
-                                    ? 'ok'
-                                    : ph >= netH - 1
-                                      ? 'warn'
-                                      : 'err'
-                            consTd.appendChild(mkEl('span', peerH, hClass))
-                            consTd.appendChild(
-                                document.createTextNode(
-                                    '/' + peerR + '/' + peerS + ' '
-                                )
-                            )
-                            consTd.appendChild(
-                                mkEl(
-                                    'span',
-                                    'PV',
-                                    v.prevoted ? 'voted' : 'not-voted'
-                                )
-                            )
-                            consTd.appendChild(document.createTextNode('/'))
-                            consTd.appendChild(
-                                mkEl(
-                                    'span',
-                                    'PC',
-                                    v.precommit ? 'voted' : 'not-voted'
-                                )
-                            )
-                            if (isProposer) {
-                                consTd.appendChild(document.createTextNode('/'))
-                                consTd.appendChild(
-                                    mkEl('span', 'P', 'proposer')
-                                )
-                            }
-                        } else {
-                            consTd.textContent = '-'
-                        }
-                        consTd.setAttribute('data-sort-val', peerH || '0')
-                        if (peerH)
-                            consTd.setAttribute(
-                                'data-copy',
-                                peerH + '/' + peerR + '/' + peerS
-                            )
-                        tr.appendChild(consTd)
 
                         // Voting Power
                         var vpTd = document.createElement('td')
@@ -2234,6 +2206,7 @@
                         var missed24h = v.missed_24h
                         if (typeof missed24h === 'number') {
                             missedTd.textContent = String(missed24h)
+                            missedTd.setAttribute('data-copy', String(missed24h))
                             missedTd.className =
                                 missed24h === 0
                                     ? 'ok'
@@ -2341,9 +2314,11 @@
                         nodeIdFromNetAddr(lastStatus.node_info.net_address)
                     thisTr.appendChild(
                         createCell({
-                            text: thisNodeID || '-',
+                            text: thisNodeID ? shortAddr(thisNodeID) : '-',
                             style: 'font-size:11px;color:var(--fg2)',
-                            popover: thisNodeID || undefined,
+                            popover: thisNodeID
+                                ? 'node id: ' + thisNodeID
+                                : undefined,
                             popoverSelf: true,
                             copy: thisNodeID,
                         })
@@ -2397,6 +2372,16 @@
                         var pIP = p.external_address || p.remote_ip || ''
                         var pIPPop = p.remote_ip || pIP
                         var pNodeID = p.node_id || ''
+                        var pNodeIDPop = pNodeID
+                            ? 'node id: ' +
+                              pNodeID +
+                              (p.val_address
+                                  ? '\naddress: ' + p.val_address
+                                  : '') +
+                              (p.val_pubkey
+                                  ? '\npubkey: ' + p.val_pubkey
+                                  : '')
+                            : undefined
 
                         var tr2 = document.createElement('tr')
                         tr2.appendChild(
@@ -2408,9 +2393,9 @@
                         )
                         tr2.appendChild(
                             createCell({
-                                text: pNodeID || '-',
+                                text: pNodeID ? shortAddr(pNodeID) : '-',
                                 style: 'font-size:11px;color:var(--fg2)',
-                                popover: pNodeID || undefined,
+                                popover: pNodeIDPop,
                                 popoverSelf: true,
                                 highlight: hlKey,
                                 copy: pNodeID,
@@ -2434,7 +2419,6 @@
                     valBody.appendChild(
                         createRow([
                             { text: 'no validators', className: 'full-role' },
-                            '',
                             '',
                             '',
                             '',
@@ -2525,7 +2509,6 @@
                                   ['signing', data.address],
                                   ['country', data.country || '-'],
                                   ['provider', data.provider || '-'],
-                                  ['consensus', data.consensus],
                                   [
                                       'sign (last 100)',
                                       { text: data.signRate, cls: data.signCls },
@@ -2666,19 +2649,6 @@
                                     ? v.sign_rate
                                     : null
 
-                            var peerH = mp
-                                ? mp.peer_height
-                                : isUs && votes
-                                  ? votes.height
-                                  : ''
-                            var consStr = peerH
-                                ? peerH +
-                                  '/' +
-                                  (mp ? mp.peer_round : votes.round) +
-                                  '/' +
-                                  (mp ? mp.peer_step : votes.step)
-                                : '-'
-
                             var speedText = '-',
                                 speedCls = ''
                             if (
@@ -2709,7 +2679,6 @@
                                               countryName(mp.country)
                                             : '-',
                                     provider: mp ? mp.provider || '-' : '-',
-                                    consensus: consStr,
                                     signRate:
                                         signRate !== null
                                             ? signRate + '%'
@@ -3165,9 +3134,12 @@
                 // Per-country totals drive the side list and the coarse dot
                 // tooltip (country total only — never per-node or per-city).
                 var byCountry = {}
+                var byProvider = {}
                 located.forEach(function (p) {
                     var code = p.country || 'Unknown'
                     byCountry[code] = (byCountry[code] || 0) + 1
+                    var prov = p.provider || 'Unknown'
+                    byProvider[prov] = (byProvider[prov] || 0) + 1
                 })
                 function popoverText(code) {
                     var n = byCountry[code] || 0
@@ -3228,7 +3200,9 @@
                     }
                 })
 
-                if (list) renderCountryList(list, byCountry)
+                lastByCountry = byCountry
+                lastByProvider = byProvider
+                if (list) renderSideList()
             }
 
             // Country name from an ISO 3166-1 alpha-2 code, via the browser's
@@ -3260,6 +3234,66 @@
                     base + (cc.charCodeAt(0) - 65),
                     base + (cc.charCodeAt(1) - 65)
                 )
+            }
+
+            // Side list mode: "country" (default) or "provider", toggled by the
+            // buttons above the list. Both aggregations are cached from the last
+            // renderMap so switching re-renders without refetching.
+            var mapListMode = 'country'
+            var lastByCountry = {}
+            var lastByProvider = {}
+
+            function renderSideList() {
+                var list = $('map-country-list')
+                if (!list) return
+                clearChildren(list)
+                if (mapListMode === 'provider')
+                    renderProviderList(list, lastByProvider)
+                else renderCountryList(list, lastByCountry)
+            }
+
+            // renderProviderList builds one row per cloud provider, count desc,
+            // ties by name, Unknown last. Rows carry data-prov so hovering them
+            // cross-highlights the Provider columns in the peer/validator tables.
+            function renderProviderList(list, byProvider) {
+                var provs = Object.keys(byProvider)
+                provs.sort(function (a, b) {
+                    if (a === 'Unknown') return 1
+                    if (b === 'Unknown') return -1
+                    var d = byProvider[b] - byProvider[a]
+                    if (d !== 0) return d
+                    return a < b ? -1 : a > b ? 1 : 0
+                })
+                provs.forEach(function (prov) {
+                    var row = document.createElement('div')
+                    row.className = 'country-row'
+                    if (prov !== 'Unknown') row.setAttribute('data-prov', prov)
+                    var name = document.createElement('span')
+                    name.className = 'country-name'
+                    name.textContent = prov
+                    var count = document.createElement('span')
+                    count.className = 'country-count'
+                    count.textContent = String(byProvider[prov])
+                    row.appendChild(name)
+                    row.appendChild(count)
+                    list.appendChild(row)
+                })
+            }
+
+            var mapListToggle = $('map-list-toggle')
+            if (mapListToggle) {
+                mapListToggle.addEventListener('click', function (e) {
+                    var btn =
+                        e.target instanceof Element
+                            ? e.target.closest('button[data-mode]')
+                            : null
+                    if (!btn) return
+                    mapListMode = btn.getAttribute('data-mode')
+                    var btns = mapListToggle.querySelectorAll('button')
+                    for (var i = 0; i < btns.length; i++)
+                        btns[i].classList.toggle('active', btns[i] === btn)
+                    renderSideList()
+                })
             }
 
             // renderCountryList builds one row per country, count descending,
@@ -3311,16 +3345,19 @@
                 'mouseenter',
                 function (e) {
                     if (!(e.target instanceof Element)) return
-                    var el = e.target.closest('[data-cc]')
+                    var el = e.target.closest('[data-cc],[data-prov]')
                     if (!el) return
-                    var code = el.getAttribute('data-cc')
-                    if (!code) return
-                    var sel = '[data-cc="' + CSS.escape(code) + '"]'
+                    var attr = el.hasAttribute('data-cc')
+                        ? 'data-cc'
+                        : 'data-prov'
+                    var val = el.getAttribute(attr)
+                    if (!val) return
+                    var sel = '[' + attr + '="' + CSS.escape(val) + '"]'
                     var matches = document.querySelectorAll(sel)
                     for (var i = 0; i < matches.length; i++)
                         matches[i].classList.add('cc-hl')
-                    // Scroll the country list to the hovered country only when the
-                    // hover starts on the map itself. Doing it for a peers-table
+                    // Scroll the side list to the hovered value only when the
+                    // hover starts on the map itself. Doing it for a table-cell
                     // hover would jerk the page up to the map — highlight only.
                     if (el.classList.contains('map-dot')) {
                         var row = document.querySelector(
@@ -3340,7 +3377,7 @@
                 function (e) {
                     if (
                         e.target instanceof Element &&
-                        e.target.closest('[data-cc]')
+                        e.target.closest('[data-cc],[data-prov]')
                     )
                         clearCountryHighlight()
                 },
