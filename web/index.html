@@ -265,7 +265,7 @@
                 margin-left: 2px;
                 opacity: 0.6;
             }
-            .this-host {
+            .source-tag {
                 color: var(--blue);
                 font-weight: bold;
                 font-size: 11px;
@@ -1391,7 +1391,7 @@
             var lastVotes = null
             var lastPeers = null
             var lastStatus = null
-            var hideHost = false // set from the server's --hide-host flag
+            var hideSources = false // set from the server's --hide-sources flag
             var lastRecentBlockHeight = 0
             var lastRecentBlocks = null
             var lastMissedBlocksPct = 5
@@ -1843,9 +1843,6 @@
                         (p.height || '?') +
                         (p.catching_up ? ' (syncing)' : ' (synced)'),
                     p.version ? 'version: ' + p.version : '',
-                    p.is_outbound
-                        ? 'outbound (we dialed)'
-                        : 'inbound (they dialed)',
                 ].filter(Boolean)
                 var info = p.rpc_url + '\n' + details.join(' · ')
                 var ok = mkEl('span', '✓', 'ok info-btn')
@@ -2162,7 +2159,7 @@
                         if (displayName !== cleanName) nameTd.title = cleanName
                         if (isUs)
                             nameTd.appendChild(
-                                mkEl('span', ' (this host)', 'this-host')
+                                mkEl('span', ' (source)', 'source-tag')
                             )
                         tr.appendChild(nameTd)
 
@@ -2345,47 +2342,9 @@
                     }
                 }
 
-                // The host itself: when it isn't a validator, list it under Peers.
+                // Source nodes (our own --rpc endpoints) arrive in the peer union
+                // flagged source; they render like any peer with a "(source)" tag.
                 tbody = peerBody
-                if (!hideHost && !weAreInValset && lastStatus && lastStatus.node_info) {
-                    var thisTr = document.createElement('tr')
-                    var thisName = mkEl('td', null, null)
-                    thisName.appendChild(
-                        document.createTextNode(
-                            lastStatus.node_info.moniker || 'unknown'
-                        )
-                    )
-                    thisName.appendChild(
-                        mkEl('span', ' (this host)', 'this-host')
-                    )
-                    thisTr.appendChild(thisName)
-                    var thisNodeID =
-                        lastStatus.node_info.id ||
-                        nodeIdFromNetAddr(lastStatus.node_info.net_address)
-                    thisTr.appendChild(
-                        thisNodeID
-                            ? midTruncCell(thisNodeID, { copy: thisNodeID })
-                            : createCell({
-                                  text: '-',
-                                  style: 'font-size:11px;color:var(--fg2)',
-                              })
-                    )
-                    thisTr.appendChild(countryCell('')) // Country (host: unknown)
-                    thisTr.appendChild(providerCell('', '')) // Provider (host: unknown)
-                    thisTr.appendChild(createCell({ text: String(peerCount) })) // Peers
-                    // RPC — the monitored node is reachable by definition (it's us)
-                    var thisRPC = document.createElement('td')
-                    var thisOk = mkEl('span', '✓', 'ok info-btn')
-                    thisOk.setAttribute(
-                        'data-popover',
-                        'the monitored node · peers: ' +
-                            peerCount +
-                            (votes ? ' · height: ' + votes.height : '')
-                    )
-                    thisRPC.appendChild(thisOk)
-                    thisTr.appendChild(thisRPC)
-                    tbody.appendChild(thisTr)
-                }
 
                 // Update both headers with counts
                 var valCount =
@@ -2393,18 +2352,15 @@
                 var otherPeers = []
                 if (peers) {
                     for (var i = 0; i < peers.length; i++) {
-                        if (!usedPeers[peers[i].moniker || ''])
-                            otherPeers.push(peers[i])
+                        if (usedPeers[peers[i].moniker || '']) continue
+                        if (hideSources && peers[i].source) continue
+                        otherPeers.push(peers[i])
                     }
                 }
-                var hostIsPeer =
-                    !hideHost && !weAreInValset && lastStatus && lastStatus.node_info
-                        ? 1
-                        : 0
                 $('validators-header').textContent =
                     'Validators (' + valCount + ')'
                 $('peers-header').textContent =
-                    'Peers (' + (otherPeers.length + hostIsPeer) + ')'
+                    'Peers (' + otherPeers.length + ')'
 
                 // Non-validator peers (sentries, full nodes)
                 if (otherPeers.length > 0) {
@@ -2429,13 +2385,16 @@
                             : undefined
 
                         var tr2 = document.createElement('tr')
-                        tr2.appendChild(
-                            createCell({
-                                text: p.moniker || '',
-                                highlight: hlKey,
-                                copy: p.moniker || '',
-                            })
-                        )
+                        var pNameCell = createCell({
+                            text: p.moniker || '',
+                            highlight: hlKey,
+                            copy: p.moniker || '',
+                        })
+                        if (p.source)
+                            pNameCell.appendChild(
+                                mkEl('span', ' (source)', 'source-tag')
+                            )
+                        tr2.appendChild(pNameCell)
                         tr2.appendChild(
                             pNodeID
                                 ? midTruncCell(pNodeID, {
@@ -2524,9 +2483,9 @@
                             nameSpan.appendChild(dot)
                         }
                         nameSpan.appendChild(document.createTextNode(data.name))
-                        if (data.isUs)
+                        if (data.isUs || data.source)
                             nameSpan.appendChild(
-                                mkEl('span', ' (this host)', 'this-host')
+                                mkEl('span', ' (source)', 'source-tag')
                             )
                         top.appendChild(nameSpan)
                         if (data.healthText) {
@@ -2649,32 +2608,6 @@
                         return card
                     }
 
-                    // The host itself, when it's a full node (listed under Peers)
-                    if (!hideHost && !weAreInValset && lastStatus && lastStatus.node_info) {
-                        peerContainer.appendChild(
-                            makeCard({
-                                name: lastStatus.node_info.moniker || 'unknown',
-                                isUs: true,
-                                minimal: true,
-                                dotClass: 'green',
-                                healthText: 'this host',
-                                healthCls: 'ok',
-                                nodeId:
-                                    lastStatus.node_info.id ||
-                                    nodeIdFromNetAddr(
-                                        lastStatus.node_info.net_address
-                                    ),
-                                ip: '-',
-                                country: '-',
-                                provider: '-',
-                                peers: String(peerCount),
-                                rpcUrl: '',
-                                rpcText: 'local',
-                                rpcCls: 'ok',
-                            })
-                        )
-                    }
-
                     // Validators
                     if (
                         votes &&
@@ -2789,6 +2722,7 @@
                             var reachable = !!p.rpc_url
                             peerContainer.appendChild(
                                 makeCard({
+                                    source: p.source,
                                     name:
                                         p.moniker ||
                                         shortAddr(p.val_address || ''),
@@ -3113,7 +3047,7 @@
             }
 
             function handleChecks(d) {
-                hideHost = !!d.hide_host
+                hideSources = !!d.hide_sources
                 if (d.apphash_last && lastStatus && lastStatus.sync_info) {
                     var h = lastStatus.sync_info.latest_block_height
                     setHashWithHeight('d-apphash-last', d.apphash_last, h)
@@ -3167,23 +3101,25 @@
                 clearChildren(g)
                 if (list) clearChildren(list)
 
-                var located = (peers || []).filter(function (p) {
+                var allPeers = peers || []
+                if (allPeers.length === 0) {
+                    card.style.display = 'none'
+                    return
+                }
+                card.style.display = ''
+                var located = allPeers.filter(function (p) {
                     return (
                         typeof p.lat === 'number' &&
                         (p.lat !== 0 || p.lon !== 0)
                     )
                 })
-                if (located.length === 0) {
-                    card.style.display = 'none'
-                    return
-                }
-                card.style.display = ''
 
-                // Per-country totals drive the side list and the coarse dot
-                // tooltip (country total only — never per-node or per-city).
+                // Aggregate ALL peers (located + unlocated) for the side lists so
+                // peers with no public IP (hence no country/provider) are counted
+                // under "Unknown". Map dots are plotted only for located peers.
                 var byCountry = {}
                 var byProvider = {}
-                located.forEach(function (p) {
+                allPeers.forEach(function (p) {
                     var code = p.country || 'Unknown'
                     byCountry[code] = (byCountry[code] || 0) + 1
                     var prov = p.provider || 'Unknown'

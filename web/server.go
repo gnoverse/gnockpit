@@ -65,7 +65,8 @@ var upgrader = websocket.Upgrader{
 
 // Server serves the web dashboard with WebSocket and background data fetching.
 type Server struct {
-	Client   *node.Client
+	Client   *node.Client  // primary endpoint (first --rpc): names, genesis, boot
+	Sources  *node.Sources // all endpoints: best-source selection + peer union
 	Addr     string
 	Interval time.Duration
 
@@ -88,7 +89,7 @@ type Server struct {
 	ChainStuckSecs  int            // seconds without a new block before status is "down"
 	Links           []Link         // static header link buttons
 	StatusLinks     []*StatusLink  // header links with a live BetterStack status dot
-	HideHost        bool           // hide the monitored node's own "(this host)" entry from the peers list
+	HideSources     bool           // hide the configured source nodes from the peers list
 }
 
 // NewServer creates a new web server.
@@ -161,7 +162,7 @@ type checkData struct {
 	ValAddress  string           `json:"val_address,omitempty"`
 	ValPubKey   string           `json:"val_pubkey,omitempty"`
 	System      *node.SystemInfo `json:"system,omitempty"`
-	HideHost    bool             `json:"hide_host,omitempty"`
+	HideSources bool             `json:"hide_sources,omitempty"`
 }
 
 func (s *Server) buildVotesReport(snap *node.Snapshot) *node.VotesReport {
@@ -221,7 +222,7 @@ func (s *Server) buildCheckData(snap *node.Snapshot) checkData {
 	cd := checkData{
 		AppHashLast: snap.AppHashLast,
 		System:      snap.System,
-		HideHost:    s.HideHost,
+		HideSources: s.HideSources,
 	}
 	if snap.Status != nil {
 		cd.ValAddress = snap.Status.ValidatorInfo.Address
@@ -430,11 +431,11 @@ func (s *Server) handleBootStatus(w http.ResponseWriter, r *http.Request) {
 
 	bs := bootStatus{}
 
-	// Check RPC
-	ctx := r.Context()
-	if s.Client != nil {
-		_, err := s.Client.GetStatus(ctx)
-		bs.RPC = err == nil
+	// "Up" once at least one source has yielded chain data; goes false again if
+	// every source is unreachable — the banner then doubles as the all-down
+	// warning.
+	if snap := s.getSnapshot(); snap != nil && snap.Status != nil {
+		bs.RPC = true
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -452,38 +453,34 @@ func (s *Server) collectSystemInfo() *node.SystemInfo {
 
 // --- Data Fetching ---
 
-// peerLookupIP returns the address to resolve a peer by: its observed remote
-// IP, falling back to its advertised external address.
-func peerLookupIP(p node.Peer) string {
-	if p.RemoteIP != "" {
-		return p.RemoteIP
-	}
-	return p.ExternalAddress
-}
-
 func (s *Server) fetchSnapshot(ctx context.Context) *node.Snapshot {
 	snap := &node.Snapshot{
 		Timestamp: time.Now(),
 	}
 
-	status, err := s.Client.GetStatus(ctx)
-	if err != nil {
-		snap.Error = err.Error()
-	} else {
-		snap.Status = status
-		s.Client.Names.SetOurs(status.ValidatorInfo.Address, status.NodeInfo.Moniker)
+	poll := s.Sources.Poll(ctx)
+	if poll.Best == nil {
+		snap.Error = "all sources unreachable"
+		snap.System = s.collectSystemInfo()
+		return snap
 	}
+	best := poll.Best
+	snap.Status = poll.BestStatus
+	best.Names.SetOurs(poll.BestStatus.ValidatorInfo.Address, poll.BestStatus.NodeInfo.Moniker)
 
-	validators, _ := s.Client.GetValidators(ctx)
+	validators, err := best.GetValidators(ctx)
+	if err != nil {
+		log.Printf("validators: %v", err)
+	}
 	snap.Validators = validators
 	// Register pubkeys for all validators
 	for _, v := range validators {
 		if v.PubKey.Value != "" {
-			s.Client.Names.RegisterPubKey(v.Address, v.PubKey.Value)
+			best.Names.RegisterPubKey(v.Address, v.PubKey.Value)
 		}
 	}
 
-	cs, dumpPeers, err := s.Client.GetConsensusState(ctx)
+	cs, dumpPeers, err := best.GetConsensusState(ctx)
 	if err == nil {
 		snap.Consensus = cs
 		snap.RoundStartTime = cs.RoundStartTime
@@ -501,39 +498,54 @@ func (s *Server) fetchSnapshot(ctx context.Context) *node.Snapshot {
 		}
 	}
 
-	peers, err := s.Client.GetNetInfo(ctx)
-	if err == nil {
-		enriched := node.QueryAllPeers(ctx, peers, rpcPort, peerTimeout, false, validators, s.Client.LogFn, s.Client.Names)
-		sort.Slice(enriched, func(i, j int) bool {
-			return enriched[i].Moniker < enriched[j].Moniker
-		})
-		now := time.Now().Format(time.RFC3339)
-		for i := range enriched {
-			enriched[i].LastSeen = now
-			if enriched[i].FirstSeen == "" {
-				enriched[i].FirstSeen = now
-			}
-			dp := node.MatchDumpPeer(enriched[i].NodeID, enriched[i].RemoteIP, dumpByNodeID, dumpByIP)
-			if dp != nil {
-				enriched[i].PeerHeight = dp.Height
-				enriched[i].PeerRound = dp.Round
-				enriched[i].PeerStep = dp.Step
-				enriched[i].HasProposal = dp.Proposal
-				enriched[i].PeerPrevotes = dp.Prevotes
-				enriched[i].PeerPrecommits = dp.Precommits
-				if dp.NodeID != "" && dp.RemoteIP != "" && dp.P2PPort != "" {
-					enriched[i].P2PAddress = dp.NodeID + "@" + dp.RemoteIP + ":" + dp.P2PPort
-				}
+	// Union raw /net_info peers across all reachable sources, deduped by node ID
+	// (which also resolves each peer's public IP), then probe the union once. The
+	// source nodes go first so they're flagged and their RPC-URL IP takes
+	// precedence over any observation of them.
+	perSource := [][]node.Peer{poll.SourcePeers}
+	for _, c := range poll.Reachable {
+		raw, err := c.GetNetInfo(ctx)
+		if err != nil {
+			log.Printf("net_info from %s: %v", c.RPCURL, err)
+			continue
+		}
+		perSource = append(perSource, raw)
+	}
+	merged := node.MergePeers(perSource, s.Sources.NodeIDs())
+	s.Sources.FillSourceEgressIP(merged)
+	enriched := node.QueryAllPeers(ctx, merged, rpcPort, peerTimeout, false, validators, best.LogFn, best.Names)
+	sort.Slice(enriched, func(i, j int) bool {
+		return enriched[i].Moniker < enriched[j].Moniker
+	})
+	now := time.Now().Format(time.RFC3339)
+	for i := range enriched {
+		enriched[i].LastSeen = now
+		if enriched[i].FirstSeen == "" {
+			enriched[i].FirstSeen = now
+		}
+		dp := node.MatchDumpPeer(enriched[i].NodeID, enriched[i].RemoteIP, dumpByNodeID, dumpByIP)
+		if dp != nil {
+			enriched[i].PeerHeight = dp.Height
+			enriched[i].PeerRound = dp.Round
+			enriched[i].PeerStep = dp.Step
+			enriched[i].HasProposal = dp.Proposal
+			enriched[i].PeerPrevotes = dp.Prevotes
+			enriched[i].PeerPrecommits = dp.Precommits
+			if dp.NodeID != "" && dp.RemoteIP != "" && dp.P2PPort != "" {
+				enriched[i].P2PAddress = dp.NodeID + "@" + dp.RemoteIP + ":" + dp.P2PPort
 			}
 		}
-		snap.Peers = enriched
 	}
+	snap.Peers = enriched
 
 	// Geolocate peers for the network map (best-effort; empty until the
 	// database has been downloaded).
 	if s.GeoIP != nil {
 		for i := range snap.Peers {
-			ip := peerLookupIP(snap.Peers[i])
+			ip := snap.Peers[i].RemoteIP // public-or-empty after the merge
+			if ip == "" {
+				continue
+			}
 			if lat, lon, city, country, ok := s.GeoIP.Lookup(ip); ok {
 				snap.Peers[i].Lat = lat
 				snap.Peers[i].Lon = lon
@@ -547,7 +559,10 @@ func (s *Server) fetchSnapshot(ctx context.Context) *node.Snapshot {
 	// the ASN database has been downloaded).
 	if s.ASN != nil {
 		for i := range snap.Peers {
-			ip := peerLookupIP(snap.Peers[i])
+			ip := snap.Peers[i].RemoteIP // public-or-empty after the merge
+			if ip == "" {
+				continue
+			}
 			if asn, org, ok := s.ASN.Lookup(ip); ok {
 				snap.Peers[i].ASN = asn
 				snap.Peers[i].ASOrg = org
@@ -561,7 +576,7 @@ func (s *Server) fetchSnapshot(ctx context.Context) *node.Snapshot {
 		var h int
 		fmt.Sscanf(snap.Status.SyncInfo.LatestBlockHeight, "%d", &h)
 		if h > 1 {
-			if ah, err := s.Client.GetBlockAppHash(ctx, h); err == nil {
+			if ah, err := best.GetBlockAppHash(ctx, h); err == nil {
 				snap.AppHashLast = ah
 			}
 		}
@@ -572,7 +587,7 @@ func (s *Server) fetchSnapshot(ctx context.Context) *node.Snapshot {
 		var h int
 		fmt.Sscanf(snap.Status.SyncInfo.LatestBlockHeight, "%d", &h)
 		if h > 2 {
-			signing, err := s.Client.GetSigningStats(ctx, h, 100, s.MissedBlocksPct)
+			signing, err := best.GetSigningStats(ctx, h, 100, s.MissedBlocksPct)
 			if err == nil {
 				snap.Signing = signing
 			}

@@ -21,7 +21,7 @@ const (
 )
 
 var (
-	flagRPC             string
+	flagRPCs            stringSlice
 	flagVerbose         bool
 	flagInterval        time.Duration
 	flagWebPort         int
@@ -36,7 +36,7 @@ var (
 	flagASNPath         string
 	flagLinks           stringSlice
 	flagStatusLinks     stringSlice
-	flagHideHost        bool
+	flagHideSources     bool
 )
 
 // stringSlice is a flag.Value that accumulates one entry per occurrence,
@@ -51,7 +51,7 @@ func (s *stringSlice) Set(v string) error {
 }
 
 func usage() {
-	fmt.Fprint(flag.CommandLine.Output(), `gnockpit — live web dashboard for a single gno.land validator node.
+	fmt.Fprint(flag.CommandLine.Output(), `gnockpit — live web dashboard for gno.land validator nodes.
 
 Usage:
   gnockpit [flags]
@@ -64,7 +64,7 @@ Flags:
 func main() {
 	flag.Usage = usage
 
-	flag.StringVar(&flagRPC, "rpc", defaultRPC, "Tendermint RPC endpoint of the gno.land node to monitor")
+	flag.Var(&flagRPCs, "rpc", fmt.Sprintf("Tendermint RPC endpoint to query; repeatable to consolidate several sources. Default %s", defaultRPC))
 	flag.BoolVar(&flagVerbose, "verbose", false, "log HTTP requests to the node")
 	flag.BoolVar(&flagVerbose, "v", false, "log HTTP requests to the node (shorthand)")
 	flag.DurationVar(&flagInterval, "interval", defaultInterval, "dashboard refresh interval")
@@ -80,7 +80,7 @@ func main() {
 	flag.StringVar(&flagASNPath, "asn-db", "/tmp/gnockpit-asn.mmdb", "path for the DB-IP ASN Lite mmdb powering cloud-provider detection; auto-downloaded and refreshed monthly. Empty disables it.")
 	flag.Var(&flagLinks, "link", `extra header link button, "Title|URL", repeatable`)
 	flag.Var(&flagStatusLinks, "status-link", `header link with a live status dot, "Title|URL" (BetterStack status pages only for now — the dot reflects <URL>/index.json), repeatable`)
-	flag.BoolVar(&flagHideHost, "hide-host", false, `hide the monitored node's own "(this host)" entry from the peers list`)
+	flag.BoolVar(&flagHideSources, "hide-sources", false, "hide the configured source nodes from the peers list")
 
 	flag.Parse()
 	if flag.NArg() > 0 {
@@ -99,9 +99,10 @@ func run() error {
 	ctx, cancel := newContext()
 	defer cancel()
 
-	c := newClient(ctx)
+	sources := newSources(ctx)
 	addr := fmt.Sprintf("%s:%d", flagWebAddr, flagWebPort)
-	srv := web.NewServer(c, addr, flagInterval)
+	srv := web.NewServer(sources.Primary(), addr, flagInterval)
+	srv.Sources = sources
 
 	db, err := push.OpenDB(flagDBPath)
 	if err != nil {
@@ -130,7 +131,7 @@ func run() error {
 	}
 	srv.MissedBlocksPct = flagMissedBlocksPct
 	srv.ChainStuckSecs = flagChainStuckSecs
-	srv.HideHost = flagHideHost
+	srv.HideSources = flagHideSources
 	srv.PushManager = pushMgr
 
 	for _, spec := range flagLinks {
@@ -166,25 +167,30 @@ func run() error {
 	return srv.Run(ctx)
 }
 
-func newClient(ctx context.Context) *node.Client {
-	c := node.NewClient(flagRPC, 10*time.Second)
-	c.Names = node.NewNameRegistryWithPersist(flagNamesPath)
+func newSources(ctx context.Context) *node.Sources {
+	if len(flagRPCs) == 0 {
+		flagRPCs = stringSlice{defaultRPC}
+	}
+	names := node.NewNameRegistryWithPersist(flagNamesPath)
+	sources := node.NewSources(flagRPCs, 10*time.Second, names, func(format string, args ...any) {
+		fmt.Fprintf(os.Stderr, format+"\n", args...)
+	})
 	if flagVerbose {
-		c.LogFn = func(method, url string, status int, dur time.Duration, err error) {
+		sources.SetRequestLogger(func(method, url string, status int, dur time.Duration, err error) {
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "%s %s -> %v (%dms)\n", method, url, err, dur.Milliseconds())
 			} else {
 				fmt.Fprintf(os.Stderr, "%s %s -> %d (%dms)\n", method, url, status, dur.Milliseconds())
 			}
-		}
+		})
 	}
-	// Validator names and the genesis time come from the node's /genesis
+	// Validator names and the genesis time come from the primary node's /genesis
 	// endpoint, streamed and parsed only up to the validators array. Failure is
 	// non-fatal: persisted names and live peer discovery still apply.
-	if err := c.SeedNamesFromGenesis(ctx); err != nil {
+	if err := sources.Primary().SeedNamesFromGenesis(ctx); err != nil {
 		fmt.Fprintf(os.Stderr, "warning: could not seed validator names from genesis RPC: %v\n", err)
 	}
-	return c
+	return sources
 }
 
 func newContext() (context.Context, context.CancelFunc) {

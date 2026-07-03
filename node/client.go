@@ -150,8 +150,7 @@ func (c *Client) GetNetInfo(ctx context.Context) ([]Peer, error) {
 				Software   string `json:"software"`
 				NetAddress string `json:"net_address"`
 			} `json:"node_info"`
-			RemoteIP   string `json:"remote_ip"`
-			IsOutbound bool   `json:"is_outbound"`
+			RemoteIP string `json:"remote_ip"`
 		} `json:"peers"`
 	}
 	if err := c.rpcGetJSON(ctx, "/net_info", &result); err != nil {
@@ -170,7 +169,6 @@ func (c *Client) GetNetInfo(ctx context.Context) ([]Peer, error) {
 			RemoteIP:        p.RemoteIP,
 			NodeID:          nodeID,
 			Version:         p.NodeInfo.Version,
-			IsOutbound:      p.IsOutbound,
 			ExternalAddress: hostFromNetAddress(p.NodeInfo.NetAddress),
 		}
 	}

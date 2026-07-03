@@ -107,8 +107,7 @@ type Peer struct {
 	NodeID     string `json:"node_id"`
 	Version    string `json:"version,omitempty"`     // software version from net_info
 	P2PAddress string `json:"p2p_address,omitempty"` // nodeID@ip:port
-	// From net_info node_info (advertised identity / connection direction).
-	IsOutbound      bool   `json:"is_outbound,omitempty"`      // true if we dialed this peer
+	// From net_info node_info (advertised identity).
 	ExternalAddress string `json:"external_address,omitempty"` // advertised host from node_info.net_address
 	RPCURL          string `json:"rpc_url,omitempty"`          // peer RPC endpoint that answered, if any
 	// Populated by network/consensus queries
@@ -139,6 +138,9 @@ type Peer struct {
 	ASN      uint   `json:"asn,omitempty"`
 	ASOrg    string `json:"as_org,omitempty"`
 	Provider string `json:"provider,omitempty"`
+	// Source is true when this peer is one of gnockpit's own configured RPC
+	// endpoints (a "source" node), matched by node ID.
+	Source bool `json:"source,omitempty"`
 }
 
 // Validator represents a validator from the validator set.
