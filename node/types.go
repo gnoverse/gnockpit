@@ -190,6 +190,7 @@ type VoteInfo struct {
 	Precommit   bool   `json:"precommit"`
 	SignRate    int    `json:"sign_rate"`    // signed blocks / window (0-100%)
 	AvgBlockMs  int    `json:"avg_block_ms"` // avg block time when proposing (ms)
+	Missed24h   int    `json:"missed_24h"`   // blocks missed in the last 24h (0 until history accrues)
 }
 
 // PeerState from dump_consensus_state peer_state (base64-encoded).
@@ -268,5 +269,6 @@ type VotesReport struct {
 	RoundStartTime string           `json:"round_start_time,omitempty"`
 	Config         *ConsensusConfig `json:"config,omitempty"`
 	Validators     []VoteInfo       `json:"validators"`
+	MissedSince    string           `json:"missed_since,omitempty"` // RFC3339; oldest block still in history (how far back missed counts reach)
 	Timestamp      time.Time        `json:"timestamp"`
 }

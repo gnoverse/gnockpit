@@ -40,6 +40,10 @@ func OpenDB(path string) (*DB, error) {
 // Close closes the underlying database connection.
 func (d *DB) Close() error { return d.db.Close() }
 
+// SQL returns the underlying database handle so sibling stores (e.g. the
+// signing-history store) can share the single connection.
+func (d *DB) SQL() *sql.DB { return d.db }
+
 func initSchema(db *sql.DB) error {
 	if _, err := db.Exec(`
 		CREATE TABLE IF NOT EXISTS vapid_keys (
@@ -226,4 +230,3 @@ func (d *DB) SubscribersForAlert(alertType AlertType, entityID string) ([]Subscr
 	}
 	return result, rows.Err()
 }
-

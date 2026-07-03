@@ -12,10 +12,12 @@ import (
 	"net/http"
 	"os/exec"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/gnoverse/gnockpit/history"
 	"github.com/gnoverse/gnockpit/node"
 	"github.com/gnoverse/gnockpit/web/icon"
 	"github.com/gnoverse/gnockpit/web/push"
@@ -39,6 +41,10 @@ const (
 	// checked for a new monthly release. The check is a cheap date comparison;
 	// a download only happens when the month actually changes.
 	geoIPRefreshInterval = 24 * time.Hour
+	// historyRetention bounds how far back block-signing history is kept.
+	historyRetention = 31 * 24 * time.Hour
+	// historyPruneInterval governs how often old signing history is pruned.
+	historyPruneInterval = time.Hour
 )
 
 // wsMsg is a WebSocket message envelope.
@@ -63,22 +69,25 @@ type Server struct {
 	Addr     string
 	Interval time.Duration
 
-	mu       sync.RWMutex
-	snapshot *node.Snapshot
+	mu          sync.RWMutex
+	snapshot    *node.Snapshot
+	missed24h   map[string]int // val address -> blocks missed in last 24h (guarded by mu)
+	missedSince time.Time      // oldest retained block time; how far back missed counts reach (guarded by mu)
 
 	// WebSocket clients
 	wsmu      sync.RWMutex
 	wsClients map[*wsClient]struct{}
 
 	// Set by caller before Run.
-	PushManager     *push.Manager // push notification manager (nil = disabled)
-	MissedBlocksPct int           // missed-block threshold for active validator counting
-	GeoIP           *node.GeoIP   // IP geolocation for the network map (nil = disabled)
-	NotifyTestToken string        // bearer token for the notify-test API (empty = disabled)
-	ChainStuckSecs  int           // seconds without a new block before status is "down"
-	Links           []Link        // static header link buttons
-	StatusLinks     []*StatusLink // header links with a live BetterStack status dot
-	HideHost        bool          // hide the monitored node's own "(this host)" entry from the peers list
+	PushManager     *push.Manager  // push notification manager (nil = disabled)
+	MissedBlocksPct int            // missed-block threshold for active validator counting
+	GeoIP           *node.GeoIP    // IP geolocation for the network map (nil = disabled)
+	History         *history.Store // block-signing history for missed-block windows (nil = disabled)
+	NotifyTestToken string         // bearer token for the notify-test API (empty = disabled)
+	ChainStuckSecs  int            // seconds without a new block before status is "down"
+	Links           []Link         // static header link buttons
+	StatusLinks     []*StatusLink  // header links with a live BetterStack status dot
+	HideHost        bool           // hide the monitored node's own "(this host)" entry from the peers list
 }
 
 // NewServer creates a new web server.
@@ -190,6 +199,19 @@ func (s *Server) buildVotesReport(snap *node.Snapshot) *node.VotesReport {
 				report.Validators[i].AvgBlockMs = perf.AvgBlockMs
 			}
 		}
+	}
+	// Attach missed-24h counts and the recording-since timestamp from history.
+	s.mu.RLock()
+	missed := s.missed24h
+	since := s.missedSince
+	s.mu.RUnlock()
+	if missed != nil {
+		for i := range report.Validators {
+			report.Validators[i].Missed24h = missed[report.Validators[i].Address]
+		}
+	}
+	if !since.IsZero() {
+		report.MissedSince = since.UTC().Format(time.RFC3339)
 	}
 	return report
 }
@@ -624,6 +646,75 @@ func (s *Server) ensureValidatorNames(snap *node.Snapshot) {
 
 // --- Publish Loop ---
 
+// recordHistory persists this snapshot's recent blocks into the signing-history
+// store and refreshes the cached missed-24h counts used by the validators view.
+// Errors are logged and swallowed: the live dashboard must keep working even if
+// history recording fails.
+func (s *Server) recordHistory(ctx context.Context, snap *node.Snapshot) {
+	if s.History == nil || snap == nil || snap.Signing == nil {
+		return
+	}
+	blocks := make([]history.Block, 0, len(snap.Signing.RecentBlocks))
+	for _, b := range snap.Signing.RecentBlocks {
+		h, err := strconv.ParseInt(b.Height, 10, 64)
+		if err != nil {
+			continue
+		}
+		t, err := time.Parse(time.RFC3339Nano, b.Time)
+		if err != nil {
+			continue
+		}
+		missing := make([]string, 0, len(b.Missing))
+		for _, mv := range b.Missing {
+			missing = append(missing, mv.Address)
+		}
+		blocks = append(blocks, history.Block{Height: h, Time: t, Missing: missing})
+	}
+	if err := s.History.RecordBlocks(ctx, blocks); err != nil {
+		log.Printf("history: record blocks: %v", err)
+		return
+	}
+	now := time.Now()
+	wc, err := s.History.MissedInWindow(ctx, 24*time.Hour, now)
+	if err != nil {
+		log.Printf("history: missed-24h: %v", err)
+		return
+	}
+	earliest, err := s.History.EarliestRecorded(ctx)
+	if err != nil {
+		log.Printf("history: earliest recorded: %v", err)
+		return
+	}
+	s.mu.Lock()
+	s.missed24h = wc.Missed
+	s.missedSince = earliest
+	s.mu.Unlock()
+}
+
+// historyPruneLoop periodically drops signing history older than the retention
+// horizon, then repeats on a slow timer.
+func (s *Server) historyPruneLoop(ctx context.Context) {
+	if s.History == nil {
+		return
+	}
+	prune := func() {
+		if err := s.History.Prune(ctx, time.Now().Add(-historyRetention)); err != nil {
+			log.Printf("history: prune: %v", err)
+		}
+	}
+	prune()
+	ticker := time.NewTicker(historyPruneInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			prune()
+		}
+	}
+}
+
 func (s *Server) publishLoop(ctx context.Context) {
 	ticker := time.NewTicker(s.Interval)
 	defer ticker.Stop()
@@ -634,6 +725,7 @@ func (s *Server) publishLoop(ctx context.Context) {
 		}
 		snap := s.fetchSnapshot(ctx)
 		s.setSnapshot(snap)
+		s.recordHistory(ctx, snap)
 		if s.PushManager != nil {
 			s.PushManager.EvaluateAndNotify(snap)
 		}
@@ -931,6 +1023,7 @@ func (s *Server) Run(ctx context.Context) error {
 	go s.valoperRefreshLoop(ctx)
 	go s.geoIPRefreshLoop(ctx)
 	go s.statusLinkRefreshLoop(ctx)
+	go s.historyPruneLoop(ctx)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", s.handleIndex)

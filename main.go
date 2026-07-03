@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/gnoverse/gnockpit/history"
 	"github.com/gnoverse/gnockpit/node"
 	"github.com/gnoverse/gnockpit/web"
 	"github.com/gnoverse/gnockpit/web/push"
@@ -105,6 +106,13 @@ func run() error {
 		return fmt.Errorf("open push database: %w", err)
 	}
 	defer db.Close()
+
+	// Signing history shares the same SQLite connection as the push store.
+	hist, err := history.NewStore(ctx, db.SQL())
+	if err != nil {
+		return fmt.Errorf("init signing history: %w", err)
+	}
+	srv.History = hist
 
 	pushMgr, err := push.NewManager(db, flagChainStuckSecs, flagMissedBlocksPct)
 	if err != nil {
