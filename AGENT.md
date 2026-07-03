@@ -2,7 +2,7 @@
 
 ## What is this?
 
-gnockpit is a real-time monitoring dashboard for a gno.land validator node. It's a single Go binary (`gnockpit [flags]`, no subcommands) that connects to one gnoland node and serves a live web dashboard, with web-push/PWA alerts and external (Shoutrrr) notifications.
+gnockpit is a real-time monitoring dashboard for gno.land validator nodes. It's a single Go binary (`gnockpit [flags]`, no subcommands) that connects to one or more gnoland RPC endpoints (`-rpc`, repeatable), consolidates their views, and serves a live web dashboard, with web-push/PWA alerts and external (Shoutrrr) notifications.
 
 ## Architecture
 
@@ -10,6 +10,8 @@ gnockpit is a real-time monitoring dashboard for a gno.land validator node. It's
 main.go          — CLI entry point (single command: starts the web dashboard)
 node/            — RPC client + types (pure data layer, no UI)
   client.go      — HTTP client for Tendermint RPC (/status, /net_info, /validators, etc.)
+  sources.go     — Sources: an ordered set of RPC endpoints polled together; best-source pick for global data + peer union/dedup (MergePeers)
+  ip.go          — public-IP validation (IsPublicIP): only public IPs are ever geolocated or displayed
   types.go       — All data types (Status, Peer, Validator, Snapshot, SigningStats, etc.)
   validators.go  — NameRegistry: maps validator addresses ↔ monikers, persists to JSON
   geoip.go       — DB-IP City Lite: IP → coordinates + country (auto-downloaded, monthly)
@@ -27,10 +29,10 @@ web/             — Web dashboard + HTTP API
 
 ### Data Flow
 1. `server.go` runs a **publish loop** every N seconds (default 5s)
-2. Each cycle calls `fetchSnapshot()` which queries the local RPC for status, validators, consensus, peers, block signing stats
+2. Each cycle calls `fetchSnapshot()` which polls every configured source (`node/sources.go: Poll`): global chain data (status, validators, consensus, signing) comes from the freshest reachable source; peers are unioned across all reachable sources and deduped by node ID (`MergePeers`) before their RPCs are probed. All sources down → `snap.Error` drives the "connecting to sources" banner.
 3. The snapshot is broadcast to all connected WebSocket clients as typed messages: `status`, `peers`, `votes`, `checks`, `signing`
 4. `index.html` receives these messages and updates the DOM in-place
-5. Each cycle also geolocates peers (`geoip`) and resolves their cloud provider (`asn`), and records the recent blocks' missing-validator sets into the `history` store (forward-only, deduped by height). This powers the network map, the Country/Provider columns, and per-validator missed-block windows (1h/24h/7d/30d/total). Validators inherit the country/provider of their correlated peer (matched via `ValAddress`), so validators the node isn't peered with have none.
+5. Each cycle also geolocates peers (`geoip`) and resolves their cloud provider (`asn`) — using each peer's resolved public IP only (peers with no usable public IP are geolocated to nothing and bucketed "Unknown" on the map) — and records the recent blocks' missing-validator sets into the `history` store (forward-only, deduped by height). This powers the network map, the Country/Provider columns, and per-validator missed-block windows (1h/24h/7d/30d/total). Validators inherit the country/provider of their correlated peer (matched via `ValAddress`), so validators no source is peered with have none.
 
 ### NameRegistry (validators.go)
 Maps validator addresses to human-readable monikers. This is critical because Tendermint RPC only returns addresses, not names. Discovery happens through:

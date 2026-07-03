@@ -20,13 +20,27 @@ gnockpit \
   -port 8080 \
   -addr 0.0.0.0 \
   -interval 5s
+
+# Consolidate several sources (e.g. seed nodes) — repeat -rpc; flag order sets precedence
+gnockpit \
+  -rpc http://seed-1:26657 \
+  -rpc http://seed-2:26657 \
+  -rpc http://seed-3:26657
 ```
+
+Passing `-rpc` more than once consolidates several endpoints into one overview:
+global chain state (height, validators, consensus, signing) is read from the
+freshest reachable source each cycle, while peers are unioned across all sources
+and deduplicated by node ID — so connecting to a few well-peered seed nodes
+surfaces far more of the network than any single node sees. The configured
+endpoints appear in the peer list flagged `(source)`. When conflicting values
+appear for the same peer, the earlier `-rpc` in flag order wins.
 
 ## Flags
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `-rpc` | `http://127.0.0.1:26657` | RPC endpoint URL |
+| `-rpc` | `http://127.0.0.1:26657` | Tendermint RPC endpoint; repeatable to consolidate several sources (flag order = precedence) |
 | `-names` | `/tmp/gnockpit-names.json` | Persistent name registry |
 | `-port` | `8080` | Web server port |
 | `-addr` | `0.0.0.0` | Bind address |
@@ -38,6 +52,7 @@ gnockpit \
 | `--missed-blocks-pct` | `5` | Percentage of missed blocks before the validator alert fires |
 | `--geoip-db` | `/tmp/gnockpit-geoip.mmdb` | DB-IP City Lite mmdb powering the network map + country columns; auto-downloaded and refreshed monthly. Empty disables it. |
 | `--asn-db` | `/tmp/gnockpit-asn.mmdb` | DB-IP ASN Lite mmdb powering cloud-provider detection; auto-downloaded and refreshed monthly. Empty disables it. |
+| `--hide-sources` | false | Hide the configured source nodes from the peers list |
 
 ## Name Registry
 
@@ -112,9 +127,16 @@ power this, auto-downloaded and refreshed monthly (CC-BY-4.0):
 - **ASN Lite** (`--asn-db`) → autonomous system → cloud provider (AWS, GCP,
   Hetzner, OVH, …), falling back to the raw AS-org name for unknown hosts.
 
-Country/provider is known only for nodes gnockpit is directly connected to;
-validators are matched to a connected peer, so validators the node isn't peered
-with show no country/provider. Set either flag to empty to disable that lookup.
+Only public IPs are geolocated; peers that expose no usable public address are
+grouped under an "Unknown" entry in the country and provider lists. Country and
+provider are known only for nodes one of the sources is connected to; validators
+are matched to a connected peer, so validators no source is peered with show
+none — connecting more sources widens coverage. Set either flag to empty to
+disable that lookup.
+
+A configured source reached over `localhost` or a private address has no public
+IP of its own; gnockpit then uses its own public egress IP for that source's map
+location, which is accurate when gnockpit runs alongside the node.
 
 ## Missed-block history
 
@@ -139,6 +161,7 @@ All endpoints are CORS-open JSON, for building external badges/dashboards.
 ## Features
 
 - Live WebSocket dashboard with real-time updates
+- Multi-source consolidation — query several RPC endpoints; peers unioned & deduped, freshest source drives chain state
 - Consensus monitoring — height, round, step, prevotes, precommits per validator
 - Peer management — validator detection, health status, RPC reachability
 - Network map — IP-geolocated peers, per-country list, Country + cloud-Provider columns
