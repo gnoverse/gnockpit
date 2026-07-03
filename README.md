@@ -53,6 +53,7 @@ appear for the same peer, the earlier `-rpc` in flag order wins.
 | `--geoip-db` | `/tmp/gnockpit-geoip.mmdb` | DB-IP City Lite mmdb powering the network map + country columns; auto-downloaded and refreshed monthly. Empty disables it. |
 | `--asn-db` | `/tmp/gnockpit-asn.mmdb` | DB-IP ASN Lite mmdb powering cloud-provider detection; auto-downloaded and refreshed monthly. Empty disables it. |
 | `--hide-sources` | false | Hide the configured source nodes from the peers list |
+| `--chain-name` | (chain-id) | Display name for the chain in titles and the app icon; defaults to the chain-id (e.g. `test13` for chain-id `test-13`) |
 
 ## Name Registry
 

@@ -872,7 +872,7 @@
                 margin-bottom: 4px;
             "
         >
-            <h1 id="page-title" style="margin-bottom: 0">🛩️ gnockpit</h1>
+            <h1 id="page-title" style="margin-bottom: 0">Gnockpit</h1>
             <div class="header-actions">
                 <span id="header-links" class="header-links"></span>
                 <button
@@ -1392,6 +1392,7 @@
             var lastPeers = null
             var lastStatus = null
             var hideSources = false // set from the server's --hide-sources flag
+            var chainNameOverride = '' // set from the server's --chain-name flag (empty = use chain-id)
             var lastRecentBlockHeight = 0
             var lastRecentBlocks = null
             var lastMissedBlocksPct = 5
@@ -2924,14 +2925,6 @@
                         )
                     dBlock.className = h === '0' ? 'v err' : 'v ok'
 
-                    var titleNet = $('d-network')
-                        ? $('d-network').textContent
-                        : ''
-                    if (titleNet && titleNet !== '-') {
-                        document.title =
-                            titleNet + ' \u2014 gnockpit \u00b7 block ' + h
-                    }
-
                     var bt = d.sync_info.latest_block_time || ''
                     var timeEl = $('d-time')
                     clearChildren(timeEl)
@@ -2961,45 +2954,32 @@
 
                 }
                 if (d.node_info) {
-                    var moniker = d.node_info.moniker || '-'
                     var network = d.node_info.network || '-'
-                    // Update h1 title with chain (moniker)
-                    var titleEl = $('page-title')
-                    if (titleEl && network !== '-') {
-                        clearChildren(titleEl)
-                        titleEl.appendChild(
-                            document.createTextNode(
-                                '\ud83d\udee9\ufe0f ' + network + ' '
-                            )
-                        )
-                        if (moniker !== '-') {
-                            var sub = document.createElement('span')
-                            sub.style.color = 'var(--fg2)'
-                            sub.style.fontSize = '0.7em'
-                            sub.textContent = '(' + moniker + ')'
-                            titleEl.appendChild(sub)
-                        }
+                    // Display name for the chain: the --chain-name override if
+                    // set, otherwise the chain-id itself.
+                    var chainDisplay = chainNameOverride || network
+                    // The chain-id row always shows the real chain-id.
+                    setText('d-network', network)
+                    if (chainDisplay && chainDisplay !== '-') {
+                        var title = 'Gnockpit ' + chainDisplay
+                        $('page-title').textContent = title
+                        document.title = title
                     }
-                    // Update PWA theme-color meta to match the chain's icon background color.
-                    // djb2 hash mirrors Go's icon.ChainColor — must stay in sync.
-                    if (network && network !== '-') {
+                    // Update PWA theme-color meta to match the chain's icon
+                    // background color. djb2 hash mirrors Go's icon.ChainColor
+                    // (fed the same display name) so the two stay in sync.
+                    if (chainDisplay && chainDisplay !== '-') {
                         var tcMeta = document.getElementById('theme-color-meta')
                         if (tcMeta) {
                             var h = 5381
-                            for (var i = 0; i < network.length; i++) {
+                            for (var i = 0; i < chainDisplay.length; i++) {
                                 h =
                                     (Math.imul(h, 33) ^
-                                        network.charCodeAt(i)) >>>
+                                        chainDisplay.charCodeAt(i)) >>>
                                     0
                             }
                             tcMeta.content = 'hsl(' + (h % 360) + ',55%,26%)'
                         }
-                    }
-                    setText('d-network', network)
-                    if (network !== '-') {
-                        $('page-title').textContent =
-                            network + ' \u2014 gnockpit'
-                        document.title = network + ' \u2014 gnockpit'
                     }
                 }
                 // Re-render network if this is the first status (so "this node" row appears)
@@ -3421,6 +3401,8 @@
                         return r.json()
                     })
                     .then(function (d) {
+                        if (typeof d.chain_name === 'string')
+                            chainNameOverride = d.chain_name
                         var panel = $('boot-panel')
                         if (d.rpc) {
                             panel.style.display = 'none'

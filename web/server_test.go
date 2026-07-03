@@ -15,6 +15,31 @@ import (
 	"github.com/gnoverse/gnockpit/web/push"
 )
 
+func TestChainName(t *testing.T) {
+	withNet := func(network string) *node.Snapshot {
+		snap := &node.Snapshot{Status: &node.Status{}}
+		snap.Status.NodeInfo.Network = network
+		return snap
+	}
+	// configured name wins over the chain-id
+	s := &Server{ChainName: "test13"}
+	s.setSnapshot(withNet("test-13"))
+	if got := s.chainName(); got != "test13" {
+		t.Errorf("configured: got %q, want test13", got)
+	}
+	// no configured name → chain-id from status
+	s = &Server{}
+	s.setSnapshot(withNet("test-13"))
+	if got := s.chainName(); got != "test-13" {
+		t.Errorf("default: got %q, want test-13", got)
+	}
+	// nothing known yet → gnockpit fallback
+	s = &Server{}
+	if got := s.chainName(); got != "gnockpit" {
+		t.Errorf("fallback: got %q, want gnockpit", got)
+	}
+}
+
 func TestHTMLEmbedded(t *testing.T) {
 	data, err := content.ReadFile("index.html")
 	if err != nil {

@@ -37,6 +37,7 @@ var (
 	flagLinks           stringSlice
 	flagStatusLinks     stringSlice
 	flagHideSources     bool
+	flagChainName       string
 )
 
 // stringSlice is a flag.Value that accumulates one entry per occurrence,
@@ -81,6 +82,7 @@ func main() {
 	flag.Var(&flagLinks, "link", `extra header link button, "Title|URL", repeatable`)
 	flag.Var(&flagStatusLinks, "status-link", `header link with a live status dot, "Title|URL" (BetterStack status pages only for now — the dot reflects <URL>/index.json), repeatable`)
 	flag.BoolVar(&flagHideSources, "hide-sources", false, "hide the configured source nodes from the peers list")
+	flag.StringVar(&flagChainName, "chain-name", "", "display name for the chain in titles and the app icon; defaults to the chain-id (e.g. \"test13\" for chain-id \"test-13\")")
 
 	flag.Parse()
 	if flag.NArg() > 0 {
@@ -132,6 +134,7 @@ func run() error {
 	srv.MissedBlocksPct = flagMissedBlocksPct
 	srv.ChainStuckSecs = flagChainStuckSecs
 	srv.HideSources = flagHideSources
+	srv.ChainName = flagChainName
 	srv.PushManager = pushMgr
 
 	for _, spec := range flagLinks {

@@ -90,6 +90,7 @@ type Server struct {
 	Links           []Link         // static header link buttons
 	StatusLinks     []*StatusLink  // header links with a live BetterStack status dot
 	HideSources     bool           // hide the configured source nodes from the peers list
+	ChainName       string         // display name for the chain; defaults to the chain-id when empty
 }
 
 // NewServer creates a new web server.
@@ -145,9 +146,13 @@ func (s *Server) setSnapshot(snap *node.Snapshot) {
 	s.mu.Unlock()
 }
 
-// chainName returns the connected chain's network ID from the latest snapshot.
-// Falls back to "gnockpit" if no snapshot is available yet.
+// chainName returns the chain's display name: the configured ChainName if set,
+// otherwise the connected chain's network ID (chain-id) from the latest
+// snapshot. Falls back to "gnockpit" if neither is available yet.
 func (s *Server) chainName() string {
+	if s.ChainName != "" {
+		return s.ChainName
+	}
 	snap := s.getSnapshot()
 	if snap != nil && snap.Status != nil && snap.Status.NodeInfo.Network != "" {
 		return snap.Status.NodeInfo.Network
@@ -426,10 +431,11 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleBootStatus(w http.ResponseWriter, r *http.Request) {
 	type bootStatus struct {
-		RPC bool `json:"rpc"`
+		RPC       bool   `json:"rpc"`
+		ChainName string `json:"chain_name,omitempty"` // configured display-name override, empty = use chain-id
 	}
 
-	bs := bootStatus{}
+	bs := bootStatus{ChainName: s.ChainName}
 
 	// "Up" once at least one source has yielded chain data; goes false again if
 	// every source is unreachable — the banner then doubles as the all-down
