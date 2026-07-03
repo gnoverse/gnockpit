@@ -9,11 +9,8 @@ RUN go mod download
 
 COPY . .
 
-# VERSION is baked in via -ldflags; without it the binary would fall back to
-# `git describe`, which isn't available in the runtime image.
-ARG VERSION=dev
 RUN CGO_ENABLED=0 go build -trimpath \
-    -ldflags "-s -w -X github.com/gnoverse/gnockpit/web.Version=${VERSION}" \
+    -ldflags "-s -w" \
     -o /out/gnockpit .
 
 # ---- Runtime ----

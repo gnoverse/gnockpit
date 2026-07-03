@@ -10,7 +10,6 @@ import (
 	"fmt"
 	"log"
 	"net/http"
-	"os/exec"
 	"sort"
 	"strconv"
 	"strings"
@@ -26,9 +25,6 @@ import (
 
 //go:embed index.html service-worker.js
 var content embed.FS
-
-// Version is set at build time via -ldflags or computed at startup.
-var Version = ""
 
 const (
 	rpcPort     = "26657"
@@ -281,13 +277,9 @@ func (s *Server) buildUpdateMsg(snap *node.Snapshot) wsMsg {
 // --- HTTP Handlers ---
 
 func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
-	// Redirect bare "/" to "/?v=<hash>" to bust aggressive browser caches.
+	// Mux registers this on "/", which also catches unknown paths; reject those.
 	if r.URL.Path != "/" {
 		http.NotFound(w, r)
-		return
-	}
-	if r.URL.Query().Get("v") != Version && Version != "" {
-		http.Redirect(w, r, "/?v="+Version, http.StatusFound)
 		return
 	}
 	data, err := content.ReadFile("index.html")
@@ -1080,11 +1072,6 @@ func (s *Server) handleNotifyTest(w http.ResponseWriter, r *http.Request) {
 
 // Run starts the web server, publish loop, and log streamer.
 func (s *Server) Run(ctx context.Context) error {
-	if Version == "" {
-		if out, err := exec.Command("git", "describe", "--tags", "--always", "--dirty").Output(); err == nil {
-			Version = strings.TrimSpace(string(out))
-		}
-	}
 	go s.publishLoop(ctx)
 	go s.valoperRefreshLoop(ctx)
 	go s.geoIPRefreshLoop(ctx)
