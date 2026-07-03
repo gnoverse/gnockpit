@@ -36,6 +36,8 @@ gnockpit \
 | `--chain-stuck-secs` | `30` | Seconds without a new block before the chain-stuck alert fires |
 | `--notify` | (none) | Shoutrrr notification URL (repeatable); see External Notifications |
 | `--missed-blocks-pct` | `5` | Percentage of missed blocks before the validator alert fires |
+| `--geoip-db` | `/tmp/gnockpit-geoip.mmdb` | DB-IP City Lite mmdb powering the network map + country columns; auto-downloaded and refreshed monthly. Empty disables it. |
+| `--asn-db` | `/tmp/gnockpit-asn.mmdb` | DB-IP ASN Lite mmdb powering cloud-provider detection; auto-downloaded and refreshed monthly. Empty disables it. |
 
 ## Name Registry
 
@@ -99,12 +101,49 @@ Alerts are sent to all configured URLs whenever a state transition occurs (firin
 
 See the [Shoutrrr documentation](https://containrrr.dev/shoutrrr/latest/) for the full list of supported services and URL formats.
 
+## Network Map & Cloud Providers
+
+gnockpit geolocates each connected peer's IP and surfaces it on an
+equirectangular world map, a per-country peer list, and Country/Provider columns
+in the peer and validator tables. Two [DB-IP Lite](https://db-ip.com) databases
+power this, auto-downloaded and refreshed monthly (CC-BY-4.0):
+
+- **City Lite** (`--geoip-db`) → coordinates + country.
+- **ASN Lite** (`--asn-db`) → autonomous system → cloud provider (AWS, GCP,
+  Hetzner, OVH, …), falling back to the raw AS-org name for unknown hosts.
+
+Country/provider is known only for nodes gnockpit is directly connected to;
+validators are matched to a connected peer, so validators the node isn't peered
+with show no country/provider. Set either flag to empty to disable that lookup.
+
+## Missed-block history
+
+Per-block validator signing is recorded forward into the SQLite database
+(`--db-path`) as blocks are observed — never backfilled — enabling missed-block
+counts over 1h / 24h / 7d / 30d / total windows (surfaced in the validators
+table and `/api/stats`). History older than 31 days is pruned. Windows only
+cover data recorded since gnockpit started; `/api/stats` exposes `recorded_since`
+so consumers know the coverage.
+
+## HTTP API
+
+All endpoints are CORS-open JSON, for building external badges/dashboards.
+
+| Endpoint | Description |
+|----------|-------------|
+| `/api/status` | Health summary (`status`/`chain`/`height`/`reason`/`time`) plus live network state, the last 100 blocks with signing status, and per-peer / per-validator column data. |
+| `/api/stats` | Aggregate stats: per-validator missed-block windows, cloud-provider and country aggregates, validator-set health, and the Nakamoto coefficient. |
+| `/api` | Raw internal snapshot dump (unstable shape; for debugging). |
+| `/badge.svg` | SVG status badge. |
+
 ## Features
 
 - Live WebSocket dashboard with real-time updates
 - Consensus monitoring — height, round, step, prevotes, precommits per validator
 - Peer management — validator detection, health status, RPC reachability
-- Signing stats — per-validator sign rate and proposer speed over last 100 blocks
+- Network map — IP-geolocated peers, per-country list, Country + cloud-Provider columns
+- Signing stats — per-validator sign rate + proposer speed (last 100 blocks) and missed-block counts over 1h/24h/7d/30d/total
+- HTTP API — CORS-open `/api/status` and `/api/stats` for external badges/dashboards
 - Alerts — browser push (PWA) and external notifications (Discord, Telegram, …) for chain-stuck and missed-blocks
 - Block history — recent blocks with signing visualization
 

@@ -12,8 +12,14 @@ node/            — RPC client + types (pure data layer, no UI)
   client.go      — HTTP client for Tendermint RPC (/status, /net_info, /validators, etc.)
   types.go       — All data types (Status, Peer, Validator, Snapshot, SigningStats, etc.)
   validators.go  — NameRegistry: maps validator addresses ↔ monikers, persists to JSON
-web/             — Web dashboard
+  geoip.go       — DB-IP City Lite: IP → coordinates + country (auto-downloaded, monthly)
+  asn.go         — DB-IP ASN Lite: IP → ASN + cloud provider (auto-downloaded, monthly)
+history/         — SQLite store of per-block validator signing (shares the push DB handle)
+  store.go       — RecordBlocks / MissedInWindow / MissedByWindows / Prune; missed-block windows
+web/             — Web dashboard + HTTP API
   server.go      — HTTP/WebSocket server, background data fetcher, system info collector
+  status.go      — /api/status: health + curated network state / recent blocks / peer + validator columns
+  stats.go       — /api/stats: missed-block windows, provider/country aggregates, set health, Nakamoto
   index.html     — Single-page dashboard (embedded via go:embed, vanilla JS, no framework)
 ```
 
@@ -24,6 +30,7 @@ web/             — Web dashboard
 2. Each cycle calls `fetchSnapshot()` which queries the local RPC for status, validators, consensus, peers, block signing stats
 3. The snapshot is broadcast to all connected WebSocket clients as typed messages: `status`, `peers`, `votes`, `checks`, `signing`
 4. `index.html` receives these messages and updates the DOM in-place
+5. Each cycle also geolocates peers (`geoip`) and resolves their cloud provider (`asn`), and records the recent blocks' missing-validator sets into the `history` store (forward-only, deduped by height). This powers the network map, the Country/Provider columns, and per-validator missed-block windows (1h/24h/7d/30d/total). Validators inherit the country/provider of their correlated peer (matched via `ValAddress`), so validators the node isn't peered with have none.
 
 ### NameRegistry (validators.go)
 Maps validator addresses to human-readable monikers. This is critical because Tendermint RPC only returns addresses, not names. Discovery happens through:
@@ -40,6 +47,17 @@ Fetches the last N blocks (default 100), extracts:
 - Who proposed each block (from `header.proposer_address`)
 - Block timestamps → compute per-proposer average block time
 - Sign rate per validator (signed/total as percentage)
+
+This is a live 100-block window. Longer-term **missed-block counts** come from the
+`history` store instead (Data Flow #5): it records each block's missing set forward
+and aggregates over 1h/24h/7d/30d/total via `MissedByWindows`. History is
+forward-only (never backfilled) and pruned past 31 days.
+
+### HTTP API (CORS-open JSON)
+- `/api/status` (status.go) — health summary (retrocompat `status`/`chain`/`height`/`reason`/`time`) plus `network`, `recent_blocks` (last 100), and per-`peers`/`validators` column data.
+- `/api/stats` (stats.go) — per-validator missed-block windows, provider + country aggregates, validator-set health, Nakamoto coefficient.
+- `/api` (server.go) — raw `Snapshot` dump (unstable shape; debugging).
+- Also: `/badge.svg`, `/ws`, `/api/boot`, `/api/push/*`, `/api/notify/*`.
 
 ## Important Patterns
 
