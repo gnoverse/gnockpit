@@ -1040,14 +1040,16 @@
                     <div class="table-wrap">
                         <table>
                             <colgroup>
+                                <col style="width: 13%" />
                                 <col style="width: 16%" />
-                                <col style="width: 22%" />
-                                <col style="width: 14%" />
-                                <col style="width: 10%" />
+                                <col style="width: 9%" />
+                                <col style="width: 12%" />
+                                <col style="width: 12%" />
                                 <col style="width: 8%" />
-                                <col style="width: 10%" />
-                                <col style="width: 10%" />
-                                <col style="width: 10%" />
+                                <col style="width: 6%" />
+                                <col style="width: 9%" />
+                                <col style="width: 8%" />
+                                <col style="width: 7%" />
                             </colgroup>
                             <thead>
                                 <tr>
@@ -1059,6 +1061,18 @@
                                         data-popover="Validator's consensus (signing) address, derived from its consensus public key"
                                     >
                                         Signing address
+                                    </th>
+                                    <th
+                                        class="info-btn"
+                                        data-popover="Country of the validator's IP, via its connected peer (DB-IP geolocation). Hover to cross-highlight the network map."
+                                    >
+                                        Country
+                                    </th>
+                                    <th
+                                        class="info-btn"
+                                        data-popover="Cloud provider guessed from the validator's IP, via its connected peer (DB-IP ASN). Hover the ⓘ on a row to see the IP."
+                                    >
+                                        Provider
                                     </th>
                                     <th
                                         data-sort="consensus"
@@ -1090,7 +1104,7 @@
                                         class="info-btn"
                                         data-popover="Blocks signed in last 100 blocks (%)"
                                     >
-                                        Sign%
+                                        Sign (Last 100)
                                     </th>
                                     <th
                                         id="missed24h-th"
@@ -1113,7 +1127,7 @@
                             </thead>
                             <tbody id="validators-body">
                                 <tr>
-                                    <td colspan="8">loading...</td>
+                                    <td colspan="10">loading...</td>
                                 </tr>
                             </tbody>
                         </table>
@@ -1143,8 +1157,8 @@
                             <colgroup>
                                 <col style="width: 22%" />
                                 <col style="width: 25%" />
-                                <col style="width: 18%" />
                                 <col style="width: 15%" />
+                                <col style="width: 18%" />
                                 <col style="width: 10%" />
                                 <col style="width: 10%" />
                             </colgroup>
@@ -1159,15 +1173,15 @@
                                     </th>
                                     <th
                                         class="info-btn"
-                                        data-popover="Peer's advertised external address, or the observed remote IP if it advertises none"
-                                    >
-                                        IP
-                                    </th>
-                                    <th
-                                        class="info-btn"
                                         data-popover="Country of the peer's IP (DB-IP geolocation). Hover to cross-highlight the network map."
                                     >
                                         Country
+                                    </th>
+                                    <th
+                                        class="info-btn"
+                                        data-popover="Cloud provider guessed from the peer's IP (DB-IP ASN). Hover the ⓘ on a row to see the IP."
+                                    >
+                                        Provider
                                     </th>
                                     <th
                                         class="info-btn"
@@ -1450,6 +1464,21 @@
                 inner.appendChild(mkEl('span', code, 'cc-code'))
                 td.appendChild(inner)
                 return td
+            }
+
+            // providerCell builds a cell showing the guessed cloud provider with
+            // an info icon whose tooltip reveals the IP it was guessed from.
+            function providerCell(provider, ip) {
+                if (!provider && !ip) {
+                    var empty = document.createElement('td')
+                    empty.textContent = '—'
+                    return empty
+                }
+                return createCell({
+                    text: provider || 'unknown',
+                    style: 'font-size:11px;color:var(--fg2)',
+                    popover: ip ? 'Guessed from IP: ' + ip : undefined,
+                })
             }
 
             function createRow(cells) {
@@ -2016,6 +2045,15 @@
                             })
                         )
 
+                        // Country + provider (from the validator's connected peer)
+                        tr.appendChild(countryCell(mp ? mp.country || '' : ''))
+                        tr.appendChild(
+                            providerCell(
+                                mp ? mp.provider || '' : '',
+                                mp ? mp.remote_ip || mp.external_address || '' : ''
+                            )
+                        )
+
                         // Consensus (merged: h/r/s + pv/pc/p)
                         var consTd = document.createElement('td')
                         consTd.style.fontSize = '12px'
@@ -2261,13 +2299,8 @@
                             copy: thisNodeID,
                         })
                     )
-                    thisTr.appendChild(
-                        createCell({
-                            text: '-',
-                            style: 'font-size:11px;color:var(--fg2)',
-                        })
-                    )
                     thisTr.appendChild(countryCell('')) // Country (host: unknown)
+                    thisTr.appendChild(providerCell('', '')) // Provider (host: unknown)
                     thisTr.appendChild(createCell({ text: String(peerCount) })) // Peers
                     // RPC — the monitored node is reachable by definition (it's us)
                     var thisRPC = document.createElement('td')
@@ -2334,16 +2367,8 @@
                                 copy: pNodeID,
                             })
                         )
-                        tr2.appendChild(
-                            createCell({
-                                text: pIP || '-',
-                                style: 'font-size:11px;color:var(--fg2)',
-                                popover: pIPPop || undefined,
-                                highlight: hlKey,
-                                copy: pIP,
-                            })
-                        )
                         tr2.appendChild(countryCell(p.country || '')) // Country
+                        tr2.appendChild(providerCell(p.provider || '', pIPPop)) // Provider
                         var pNPeers = p.n_peers ? String(p.n_peers) : '-'
                         tr2.appendChild(
                             createCell({
@@ -2360,6 +2385,8 @@
                     valBody.appendChild(
                         createRow([
                             { text: 'no validators', className: 'full-role' },
+                            '',
+                            '',
                             '',
                             '',
                             '',
@@ -2441,15 +2468,17 @@
                                       'node id',
                                       data.nodeId ? shortAddr(data.nodeId) : '-',
                                   ],
-                                  ['ip', data.ip],
                                   ['country', data.country || '-'],
+                                  ['provider', data.provider || '-'],
                                   ['peers', data.peers || '-'],
                               ]
                             : [
                                   ['signing', data.address],
+                                  ['country', data.country || '-'],
+                                  ['provider', data.provider || '-'],
                                   ['consensus', data.consensus],
                                   [
-                                      'sign%',
+                                      'sign (last 100)',
                                       { text: data.signRate, cls: data.signCls },
                                   ],
                                   [
@@ -2557,6 +2586,7 @@
                                     ),
                                 ip: '-',
                                 country: '-',
+                                provider: '-',
                                 peers: String(peerCount),
                                 rpcUrl: '',
                                 rpcText: 'local',
@@ -2623,6 +2653,13 @@
                                     address: shortAddr(v.address),
                                     fullAddress: v.address,
                                     pubKey: v.pub_key || '',
+                                    country:
+                                        mp && mp.country
+                                            ? countryFlag(mp.country) +
+                                              ' ' +
+                                              countryName(mp.country)
+                                            : '-',
+                                    provider: mp ? mp.provider || '-' : '-',
                                     consensus: consStr,
                                     signRate:
                                         signRate !== null
@@ -2703,6 +2740,7 @@
                                           ' ' +
                                           countryName(p.country)
                                         : '-',
+                                    provider: p.provider || '-',
                                     fullAddress: p.val_address || '',
                                     pubKey: p.val_pubkey || '',
                                     peers: p.n_peers ? String(p.n_peers) : '-',
