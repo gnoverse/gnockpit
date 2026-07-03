@@ -3200,6 +3200,10 @@
                         (n === 1 ? ' peer' : ' peers')
                     )
                 }
+                function providerText(prov) {
+                    var n = byProvider[prov] || 0
+                    return prov + ' · ' + n + (n === 1 ? ' peer' : ' peers')
+                }
 
                 // Group peers that resolve to the same location — city-level data
                 // places every node in a city at one point — then size each
@@ -3239,7 +3243,9 @@
                     c.setAttribute('class', grp.hasVal ? 'map-dot is-val' : 'map-dot')
                     c.setAttribute('data-cc', grp.country)
                     if (grp.provider) c.setAttribute('data-prov', grp.provider)
-                    c.setAttribute('data-popover', popoverText(grp.country))
+                    var dotPop = popoverText(grp.country)
+                    if (grp.provider) dotPop += '\n' + providerText(grp.provider)
+                    c.setAttribute('data-popover', dotPop)
                     g.appendChild(c)
                     if (grp.n > 1) {
                         var t = document.createElementNS(SVG_NS, 'text')
