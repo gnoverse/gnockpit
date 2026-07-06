@@ -232,6 +232,25 @@ func (c *Client) GetValidators(ctx context.Context) ([]Validator, error) {
 	return vals, nil
 }
 
+// GetValidatorSetAt returns the set of validator addresses at a given height,
+// used to tell an established-but-down validator (in the set from the window's
+// start) from one that was only added mid-window.
+func (c *Client) GetValidatorSetAt(ctx context.Context, height int) (map[string]bool, error) {
+	var result struct {
+		Validators []struct {
+			Address string `json:"address"`
+		} `json:"validators"`
+	}
+	if err := c.rpcGetJSON(ctx, fmt.Sprintf("/validators?height=%d", height), &result); err != nil {
+		return nil, err
+	}
+	set := make(map[string]bool, len(result.Validators))
+	for _, v := range result.Validators {
+		set[v.Address] = true
+	}
+	return set, nil
+}
+
 // GetBlock fetches /block at a given height.
 func (c *Client) GetBlock(ctx context.Context, height int) (json.RawMessage, error) {
 	path := fmt.Sprintf("/block?height=%d", height)
@@ -308,8 +327,12 @@ func (c *Client) GetCommit(ctx context.Context, height int) (*CommitInfo, error)
 	}, nil
 }
 
-// GetSigningStats fetches the last N blocks and computes validator signing stats.
-func (c *Client) GetSigningStats(ctx context.Context, currentHeight int, window int, missedBlocksPct int) (*SigningStats, error) {
+// GetSigningStats fetches the last `window` blocks (capped at 100) and returns
+// per-validator signing activity, scoped to the blocks each validator was
+// actually in the set for — a newly added validator is not charged for blocks
+// before it joined. Active/inactive state and the BFT margin are derived by the
+// caller from the streaks, since they need cross-cycle hysteresis.
+func (c *Client) GetSigningStats(ctx context.Context, currentHeight int, window int) (*SigningStats, error) {
 	if currentHeight < 2 || window < 1 {
 		return nil, fmt.Errorf("need height >= 2 and window >= 1")
 	}
@@ -320,49 +343,42 @@ func (c *Client) GetSigningStats(ctx context.Context, currentHeight int, window 
 		window = 100
 	}
 
-	// Get validator set for address->name mapping
-	valAddrs := map[string]bool{}
-	if vals, err := c.GetValidators(ctx); err == nil {
-		for _, v := range vals {
-			valAddrs[v.Address] = true
-		}
+	vals, err := c.GetValidators(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("validators: %w", err)
+	}
+	valAddrs := make(map[string]bool, len(vals))
+	for _, v := range vals {
+		valAddrs[v.Address] = true
 	}
 
 	stats := &SigningStats{
-		WindowSize:      window,
-		TotalCount:      len(valAddrs),
-		MissedBlocksPct: missedBlocksPct,
-		ValidatorSigns:  make(map[string]int),
+		WindowSize:   window,
+		TotalCount:   len(valAddrs),
+		BFTThreshold: (len(valAddrs)*2)/3 + 1,
 	}
 
 	startHeight := currentHeight - window + 1
+	// Valset at the window's first block (best-effort): lets computeSigning tell
+	// an established-but-down validator from one only added mid-window. If this
+	// fails (nil), a validator down for the whole window looks never-eligible and
+	// won't be flagged that cycle — it recovers once the lookup succeeds.
+	atStart, _ := c.GetValidatorSetAt(ctx, startHeight)
+
+	// Pass 1: fetch each commit, collecting the ordered per-block signer sets
+	// (oldest first) and block metadata.
+	var signers []map[string]bool
+	var proposers []string
 	for h := startHeight; h <= currentHeight; h++ {
 		commit, err := c.GetCommit(ctx, h)
 		if err != nil {
 			continue
 		}
-
-		// Total = precommit slots for this height (the valset at that height)
+		// Total = precommit slots for this height (the valset at that height).
 		blockTotal := len(commit.Precommits)
 		if blockTotal == 0 {
 			blockTotal = len(valAddrs) // fallback for genesis block
 		}
-		proposerAddr := commit.ProposerAddress
-		proposerName := proposerAddr
-		if c.Names != nil {
-			if n := c.Names.Name(proposerAddr); n != proposerAddr {
-				proposerName = n
-			}
-		}
-		bi := BlockInfo{
-			Height:   commit.Height,
-			Time:     commit.Time,
-			Total:    blockTotal,
-			Proposer: proposerName,
-			AppHash:  commit.AppHash,
-			NumTxs:   commit.NumTxs,
-		}
-
 		signed := map[string]bool{}
 		for _, pc := range commit.Precommits {
 			if string(pc) == "null" {
@@ -373,22 +389,43 @@ func (c *Client) GetSigningStats(ctx context.Context, currentHeight int, window 
 			}
 			if json.Unmarshal(pc, &vote) == nil && vote.ValidatorAddress != "" {
 				signed[vote.ValidatorAddress] = true
-				stats.ValidatorSigns[vote.ValidatorAddress]++
 			}
 		}
-		bi.Signers = len(signed)
+		proposerName := commit.ProposerAddress
+		if c.Names != nil {
+			if n := c.Names.Name(commit.ProposerAddress); n != commit.ProposerAddress {
+				proposerName = n
+			}
+		}
+		stats.RecentBlocks = append(stats.RecentBlocks, BlockInfo{
+			Height:   commit.Height,
+			Time:     commit.Time,
+			Total:    blockTotal,
+			Signers:  len(signed),
+			Proposer: proposerName,
+			AppHash:  commit.AppHash,
+			NumTxs:   commit.NumTxs,
+		})
+		signers = append(signers, signed)
+		proposers = append(proposers, commit.ProposerAddress)
+	}
+
+	stats.ValidatorSigning = computeSigning(signers, atStart, valAddrs)
+
+	// Pass 2: per-block missing set — count a validator only for blocks where it
+	// was in the set (From <= block index).
+	for i := range stats.RecentBlocks {
 		for addr := range valAddrs {
-			if !signed[addr] {
+			if stats.ValidatorSigning[addr].From <= i && !signers[i][addr] {
 				mv := MissingValidator{Address: addr}
 				if c.Names != nil {
 					if n := c.Names.Name(addr); n != addr {
 						mv.Name = n
 					}
 				}
-				bi.Missing = append(bi.Missing, mv)
+				stats.RecentBlocks[i].Missing = append(stats.RecentBlocks[i].Missing, mv)
 			}
 		}
-		stats.RecentBlocks = append(stats.RecentBlocks, bi)
 	}
 
 	// Compute block times and per-proposer perf
@@ -408,27 +445,7 @@ func (c *Client) GetSigningStats(ctx context.Context, currentHeight int, window 
 		stats.RecentBlocks[i].BlockMs = ms
 		totalBlockMs += int64(ms)
 		blockCount++
-		// Track proposer perf — use the proposer address from the block header
-		pAddr := ""
-		for _, blk := range stats.RecentBlocks[i : i+1] {
-			// Find the proposer address (not name)
-			for addr := range valAddrs {
-				if c.Names != nil {
-					n := c.Names.Name(addr)
-					if n == blk.Proposer || addr == blk.Proposer {
-						pAddr = addr
-						break
-					}
-				}
-				if addr == blk.Proposer {
-					pAddr = addr
-					break
-				}
-			}
-		}
-		if pAddr == "" {
-			pAddr = stats.RecentBlocks[i].Proposer
-		}
+		pAddr := proposers[i] // proposer_address from the block header
 		if _, ok := stats.ValidatorPerf[pAddr]; !ok {
 			stats.ValidatorPerf[pAddr] = &ValidatorPerf{}
 		}
@@ -443,25 +460,11 @@ func (c *Client) GetSigningStats(ctx context.Context, currentHeight int, window 
 		if perf.Proposed > 0 {
 			perf.AvgBlockMs = perf.AvgBlockMs / perf.Proposed
 		}
-		perf.Signed = stats.ValidatorSigns[addr]
+		perf.Signed = stats.ValidatorSigning[addr].Signed
 	}
 
-	// Count active (missed fewer than missedBlocksPct% of blocks in window)
-	for addr := range valAddrs {
-		signed := stats.ValidatorSigns[addr]
-		missed := window - signed
-		missedPct := missed * 100 / window
-		if missedPct < missedBlocksPct {
-			stats.ActiveCount++
-		}
-	}
-
-	stats.BFTThreshold = (stats.TotalCount*2)/3 + 1
-	stats.Margin = stats.ActiveCount - stats.BFTThreshold
-	// Can add one if: with total+1 validators, active count still >= new threshold
-	newThreshold := ((stats.TotalCount + 1) * 2 / 3) + 1
-	stats.CanAddOne = stats.ActiveCount >= newThreshold
-
+	// ActiveCount / Margin / CanAddOne depend on the hysteretic up/down state and
+	// are set by the caller after the alert detector runs.
 	return stats, nil
 }
 

@@ -82,7 +82,8 @@ type StatusValidator struct {
 	Provider    string `json:"provider,omitempty"`
 	VotingPower string `json:"voting_power,omitempty"`
 	SPOF        bool   `json:"spof"`
-	SignRate    int    `json:"sign_rate"`
+	Inactive    bool   `json:"inactive,omitempty"`
+	Missed100   int    `json:"missed_100"`
 	Missed24h   int    `json:"missed_24h"`
 	AvgBlockMs  int    `json:"avg_block_ms"`
 }
@@ -164,7 +165,8 @@ func (s *Server) buildStatusReport(snap *node.Snapshot, now time.Time) StatusRep
 				Name:        vi.Name,
 				Address:     vi.Address,
 				VotingPower: vi.VotingPower,
-				SignRate:    vi.SignRate,
+				Inactive:    vi.Inactive,
+				Missed100:   vi.Missed100,
 				Missed24h:   vi.Missed24h,
 				AvgBlockMs:  vi.AvgBlockMs,
 				SPOF:        isSPOF(vpByAddr[vi.Address], totalVP),

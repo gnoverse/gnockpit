@@ -50,8 +50,11 @@ func TestBuildStatusReport(t *testing.T) {
 			{Address: "g1a", VotingPower: "10"},
 			{Address: "g1b", VotingPower: "1"},
 		},
-		Peers:   []node.Peer{{ValAddress: "g1a", Country: "US", Provider: "AWS", RPCURL: "http://x"}},
-		Signing: &node.SigningStats{WindowSize: 100, ValidatorSigns: map[string]int{"g1a": 100, "g1b": 100}},
+		Peers: []node.Peer{{ValAddress: "g1a", Country: "US", Provider: "AWS", RPCURL: "http://x"}},
+		Signing: &node.SigningStats{WindowSize: 100, ValidatorSigning: map[string]node.ValSigning{
+			"g1a": {Signed: 100, Eligible: 100, SignedInARow: 100},
+			"g1b": {Signed: 100, Eligible: 100, SignedInARow: 100},
+		}},
 	}
 	rep := s.buildStatusReport(snap, now)
 
@@ -94,8 +97,8 @@ func TestBuildStatusReport(t *testing.T) {
 	if !a.SPOF {
 		t.Error("g1a should be SPOF (10 of 11 total VP)")
 	}
-	if a.SignRate != 100 {
-		t.Errorf("g1a sign_rate = %d, want 100", a.SignRate)
+	if a.Missed100 != 0 {
+		t.Errorf("g1a missed_100 = %d, want 0", a.Missed100)
 	}
 	// g1b has no matched peer and only 1/11 VP.
 	if b.Country != "" || b.Provider != "" {

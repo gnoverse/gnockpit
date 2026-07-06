@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -77,7 +78,7 @@ type Server struct {
 
 	// Set by caller before Run.
 	PushManager     *push.Manager  // push notification manager (nil = disabled)
-	MissedBlocksPct int            // missed-block threshold for active validator counting
+	MaxMissedInARow int            // consecutive missed/signed blocks that flip a validator down/up
 	GeoIP           *node.GeoIP    // IP geolocation for the network map (nil = disabled)
 	ASN             *node.ASN      // IP-to-ASN/cloud-provider resolution (nil = disabled)
 	History         *history.Store // block-signing history for missed-block windows (nil = disabled)
@@ -166,6 +167,31 @@ type checkData struct {
 	HideSources bool             `json:"hide_sources,omitempty"`
 }
 
+// applyValidatorHealth fills the active-validator count and BFT margin from the
+// alert detector's hysteretic down/up state: a validator counts as inactive
+// while its missing-blocks alert is firing (missed the streak threshold, not yet
+// recovered by signing the streak back). Must run after the detector.
+func (s *Server) applyValidatorHealth(snap *node.Snapshot) {
+	if snap == nil || snap.Signing == nil {
+		return
+	}
+	down := map[string]bool{}
+	if s.PushManager != nil {
+		down = s.PushManager.MissingBlocksFiring()
+	}
+	snap.Signing.Inactive = down
+	active := 0
+	for addr := range snap.Signing.ValidatorSigning {
+		if !down[addr] {
+			active++
+		}
+	}
+	snap.Signing.ActiveCount = active
+	snap.Signing.Margin = active - snap.Signing.BFTThreshold
+	newThreshold := ((snap.Signing.TotalCount + 1) * 2 / 3) + 1
+	snap.Signing.CanAddOne = active >= newThreshold
+}
+
 func (s *Server) buildVotesReport(snap *node.Snapshot) *node.VotesReport {
 	if snap.Consensus == nil {
 		return nil
@@ -177,8 +203,11 @@ func (s *Server) buildVotesReport(snap *node.Snapshot) *node.VotesReport {
 		Proposer:       s.Client.Names.NameWithUs(snap.Consensus.Proposer),
 		RoundStartTime: snap.Consensus.RoundStartTime,
 		Config:         snap.Consensus.Config,
-		Validators:     snap.Consensus.Votes,
-		Timestamp:      snap.Timestamp,
+		// Clone: the per-validator loops below mutate elements in place, and this
+		// runs concurrently from the publish loop, WS-connect, and /api/status —
+		// all sharing the one snapshot pointer. Each caller gets its own copy.
+		Validators: slices.Clone(snap.Consensus.Votes),
+		Timestamp:  snap.Timestamp,
 	}
 	// Enrich with voting power and bech32 pubkey from validator set
 	vpByAddr := make(map[string]string, len(snap.Validators))
@@ -192,12 +221,13 @@ func (s *Server) buildVotesReport(snap *node.Snapshot) *node.VotesReport {
 		report.Validators[i].VotingPower = vpByAddr[addr]
 		report.Validators[i].PubKey = pkByAddr[addr]
 	}
-	// Enrich with signing rate + proposer speed from signing stats
-	if snap.Signing != nil && snap.Signing.WindowSize > 0 {
+	// Enrich with missed-block count + proposer speed from signing stats, and the
+	// down/inactive flag from the alert detector's hysteretic state.
+	if snap.Signing != nil {
 		for i := range report.Validators {
 			addr := report.Validators[i].Address
-			signed := snap.Signing.ValidatorSigns[addr]
-			report.Validators[i].SignRate = signed * 100 / snap.Signing.WindowSize
+			report.Validators[i].Missed100 = snap.Signing.ValidatorSigning[addr].Missed
+			report.Validators[i].Inactive = snap.Signing.Inactive[addr]
 			if perf, ok := snap.Signing.ValidatorPerf[addr]; ok {
 				report.Validators[i].AvgBlockMs = perf.AvgBlockMs
 			}
@@ -585,8 +615,11 @@ func (s *Server) fetchSnapshot(ctx context.Context) *node.Snapshot {
 		var h int
 		fmt.Sscanf(snap.Status.SyncInfo.LatestBlockHeight, "%d", &h)
 		if h > 2 {
-			signing, err := best.GetSigningStats(ctx, h, 100, s.MissedBlocksPct)
-			if err == nil {
+			signing, err := best.GetSigningStats(ctx, h, 100)
+			if err != nil {
+				log.Printf("signing stats: %v", err)
+			} else {
+				signing.MaxMissedInARow = s.MaxMissedInARow
 				snap.Signing = signing
 			}
 		}
@@ -641,7 +674,7 @@ func (s *Server) ensureValidatorNames(snap *node.Snapshot) {
 		}
 	}
 	if snap.Signing != nil {
-		for addr := range snap.Signing.ValidatorSigns {
+		for addr := range snap.Signing.ValidatorSigning {
 			if addr != "" {
 				addrs[addr] = struct{}{}
 			}
@@ -757,11 +790,16 @@ func (s *Server) publishLoop(ctx context.Context) {
 			s.Client.Names.ReloadIfChanged()
 		}
 		snap := s.fetchSnapshot(ctx)
-		s.setSnapshot(snap)
-		s.recordHistory(ctx, snap)
 		if s.PushManager != nil {
 			s.PushManager.EvaluateAndNotify(snap)
 		}
+		// Active-validator count and the down set depend on the detector's
+		// hysteretic state, so derive them after EvaluateAndNotify has updated it.
+		// Both run before setSnapshot so the published snapshot is complete and
+		// immutable when a WebSocket client reads it on connect.
+		s.applyValidatorHealth(snap)
+		s.setSnapshot(snap)
+		s.recordHistory(ctx, snap)
 
 		// Broadcast to WebSocket clients as a single batched message to reduce
 		// JSON.parse calls and WS message overhead on the frontend.
@@ -945,10 +983,7 @@ func (s *Server) handlePushEntities(w http.ResponseWriter, r *http.Request) {
 	snap := s.getSnapshot()
 	resp := push.EntitiesResponse{
 		ChainStuckSecs:  s.PushManager.ChainStuckSecs(),
-		MissedBlocksPct: s.PushManager.MissedBlocksPct(),
-	}
-	if snap != nil && snap.Signing != nil {
-		resp.WindowSize = snap.Signing.WindowSize
+		MaxMissedInARow: s.PushManager.MaxMissedInARow(),
 	}
 
 	if snap != nil && snap.Consensus != nil {

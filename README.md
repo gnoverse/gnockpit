@@ -49,7 +49,7 @@ appear for the same peer, the earlier `-rpc` in flag order wins.
 | `--db-path` | `/tmp/gnockpit.db` | SQLite database for push notifications (see Push Notifications) |
 | `--chain-stuck-secs` | `30` | Seconds without a new block before the chain-stuck alert fires |
 | `--notify` | (none) | Shoutrrr notification URL (repeatable); see External Notifications |
-| `--missed-blocks-pct` | `5` | Percentage of missed blocks before the validator alert fires |
+| `--max-missed-in-a-row` | `10` | Consecutive blocks a validator must miss to be flagged down (alert fires + counted inactive); it recovers after signing that many in a row |
 | `--geoip-db` | `/tmp/gnockpit-geoip.mmdb` | DB-IP City Lite mmdb powering the network map + country columns; auto-downloaded and refreshed monthly. Empty disables it. |
 | `--asn-db` | `/tmp/gnockpit-asn.mmdb` | DB-IP ASN Lite mmdb powering cloud-provider detection; auto-downloaded and refreshed monthly. Empty disables it. |
 | `--hide-sources` | false | Hide the configured source nodes from the peers list |
@@ -86,7 +86,7 @@ gnockpit can send browser push notifications for validator monitoring alerts. Th
 
 **Available alerts:**
 
-- **Validator missing blocks** — fires when a validator misses more than N% of blocks in the recent signing window
+- **Validator missing blocks** — fires when a validator misses N blocks in a row, and recovers once it signs N in a row (`--max-missed-in-a-row`)
 - **Chain stuck** — fires when no new block is produced for N seconds
 - **Node unreachable** — fires when gnockpit cannot reach a monitored node's RPC
 - **Node out of sync** — fires when a node reports it is catching up
@@ -166,7 +166,7 @@ All endpoints are CORS-open JSON, for building external badges/dashboards.
 - Consensus monitoring — height, round, step, prevotes, precommits per validator
 - Peer management — validator detection, health status, RPC reachability
 - Network map — IP-geolocated peers, per-country list, Country + cloud-Provider columns
-- Signing stats — per-validator sign rate + proposer speed (last 100 blocks) and missed-block counts over 1h/24h/7d/30d/total
+- Signing stats — per-validator blocks missed in the last 100 + proposer speed, and missed-block counts over 1h/24h/7d/30d/total
 - HTTP API — CORS-open `/api/status` and `/api/stats` for external badges/dashboards
 - Alerts — browser push (PWA) and external notifications (Discord, Telegram, …) for chain-stuck and missed-blocks
 - Block history — recent blocks with signing visualization

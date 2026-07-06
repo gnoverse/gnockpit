@@ -5,7 +5,7 @@ type AlertType string
 
 const (
 	AlertValidatorMissingBlocks AlertType = "validator_missing_blocks"
-	AlertChainStuck            AlertType = "chain_stuck"
+	AlertChainStuck             AlertType = "chain_stuck"
 )
 
 // EntityIDLocal is the sentinel entity ID for the locally monitored node.
@@ -46,8 +46,7 @@ type Entity struct {
 type EntitiesResponse struct {
 	Validators      []Entity `json:"validators"`
 	ChainStuckSecs  int      `json:"chain_stuck_secs"`
-	MissedBlocksPct int      `json:"missed_blocks_pct"`
-	WindowSize      int      `json:"window_size"`
+	MaxMissedInARow int      `json:"max_missed_in_a_row"`
 }
 
 // SubscribeRequest is the payload for POST /api/push/subscribe.

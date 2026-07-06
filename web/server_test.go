@@ -88,9 +88,16 @@ func TestNetworkStateVPFields(t *testing.T) {
 	if strings.Contains(html, `id="ns-peers"`) {
 		t.Error("ns-peers should be removed from Network State (moved to peers table)")
 	}
-	// The validators table has no Peers column; peer counts belong to the peers table.
-	if strings.Contains(html, `data-sort="peers"`) {
-		t.Error("validators table should not have a sortable Peers column")
+	// The validators table has no Peers column; peer counts belong to the peers
+	// table (whose own Peers column is sortable). Scope the check to the
+	// validators table's header so the peers table's data-sort="peers" is allowed.
+	if vIdx := strings.Index(html, `id="validators-body"`); vIdx != -1 {
+		vHead := html[:vIdx]
+		if ts := strings.LastIndex(vHead, "<thead>"); ts != -1 {
+			if strings.Contains(vHead[ts:], `data-sort="peers"`) {
+				t.Error("validators table should not have a sortable Peers column")
+			}
+		}
 	}
 }
 
@@ -334,8 +341,8 @@ func TestHandlePushEntities_ReturnsJSON(t *testing.T) {
 	if entities.ChainStuckSecs != 30 {
 		t.Errorf("expected chain_stuck_secs=30, got %d", entities.ChainStuckSecs)
 	}
-	if entities.MissedBlocksPct != 5 {
-		t.Errorf("expected missed_blocks_pct=5, got %d", entities.MissedBlocksPct)
+	if entities.MaxMissedInARow != 5 {
+		t.Errorf("expected max_missed_in_a_row=5, got %d", entities.MaxMissedInARow)
 	}
 }
 
@@ -366,8 +373,8 @@ func TestHandlePushEntities_WithSnapshot(t *testing.T) {
 	if entities.ChainStuckSecs != 30 {
 		t.Errorf("expected chain_stuck_secs=30, got %d", entities.ChainStuckSecs)
 	}
-	if entities.MissedBlocksPct != 5 {
-		t.Errorf("expected missed_blocks_pct=5, got %d", entities.MissedBlocksPct)
+	if entities.MaxMissedInARow != 5 {
+		t.Errorf("expected max_missed_in_a_row=5, got %d", entities.MaxMissedInARow)
 	}
 }
 

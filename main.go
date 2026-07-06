@@ -28,7 +28,7 @@ var (
 	flagWebAddr         string
 	flagDBPath          string
 	flagChainStuckSecs  int
-	flagMissedBlocksPct int
+	flagMaxMissedInARow int
 	flagNamesPath       string
 	flagNotifyURLs      stringSlice
 	flagPublicURL       string
@@ -74,7 +74,7 @@ func main() {
 	flag.IntVar(&flagWebPort, "port", 8080, "web server port")
 	flag.StringVar(&flagDBPath, "db-path", "/tmp/gnockpit.db", "SQLite path for web-push subscriptions and VAPID keys; use a persistent path so keys survive reboots")
 	flag.IntVar(&flagChainStuckSecs, "chain-stuck-secs", 30, "seconds without a new block before the chain-stuck alert fires")
-	flag.IntVar(&flagMissedBlocksPct, "missed-blocks-pct", 5, "percent of blocks missed in the signing window before the validator-missing-blocks alert fires")
+	flag.IntVar(&flagMaxMissedInARow, "max-missed-in-a-row", 10, "consecutive blocks a validator must miss to be flagged down (alert fires + counted inactive) and must then sign to recover")
 	flag.Var(&flagNotifyURLs, "notify", "Shoutrrr notification URL, repeatable (e.g. discord://token@id)")
 	flag.StringVar(&flagPublicURL, "public-url", "", "public URL of this gnockpit instance, appended to external notification messages")
 	flag.StringVar(&flagGeoIPPath, "geoip-db", "/tmp/gnockpit-geoip.mmdb", "path for the DB-IP City Lite mmdb powering the network map; auto-downloaded and refreshed monthly. Empty disables the map.")
@@ -119,7 +119,7 @@ func run() error {
 	}
 	srv.History = hist
 
-	pushMgr, err := push.NewManager(db, flagChainStuckSecs, flagMissedBlocksPct)
+	pushMgr, err := push.NewManager(db, flagChainStuckSecs, flagMaxMissedInARow)
 	if err != nil {
 		return fmt.Errorf("init push manager: %w", err)
 	}
@@ -131,7 +131,7 @@ func run() error {
 	if flagPublicURL != "" {
 		pushMgr.SetPublicURL(flagPublicURL)
 	}
-	srv.MissedBlocksPct = flagMissedBlocksPct
+	srv.MaxMissedInARow = flagMaxMissedInARow
 	srv.ChainStuckSecs = flagChainStuckSecs
 	srv.HideSources = flagHideSources
 	srv.ChainName = flagChainName

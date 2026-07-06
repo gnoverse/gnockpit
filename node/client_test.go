@@ -327,7 +327,7 @@ func TestGetSigningStatsMissingValidators(t *testing.T) {
 	c.Names.Register(addr1, "validator-one")
 	c.Names.Register(addr3, "validator-three")
 
-	stats, err := c.GetSigningStats(context.Background(), 2, 1, 5)
+	stats, err := c.GetSigningStats(context.Background(), 2, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -371,37 +371,30 @@ func TestGetSigningStatsMissingValidators(t *testing.T) {
 	}
 }
 
-func TestActiveCountWithMissedBlocksThreshold(t *testing.T) {
+func TestGetSigningStatsPerValidator(t *testing.T) {
 	const (
 		addrA = "g1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 		addrB = "g1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 	)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
-		case r.URL.Path == "/validators":
+		case r.URL.Path == "/validators": // current set and any ?height= query
 			fmt.Fprintf(w, `{"jsonrpc":"2.0","result":{"validators":[
 				{"address":%q,"pub_key":{"type":"ed25519","value":"AA"},"voting_power":"1"},
 				{"address":%q,"pub_key":{"type":"ed25519","value":"BB"},"voting_power":"1"}
 			]}}`, addrA, addrB)
 		default:
-			h := r.URL.Query().Get("height")
-			if h == "2" {
-				// Both validators sign
+			if r.URL.Query().Get("height") == "2" {
+				// Both validators sign height 2.
 				fmt.Fprintf(w, `{"jsonrpc":"2.0","result":{"signed_header":{
 					"header":{"height":"2","time":"2026-01-01T00:00:00Z","proposer_address":%q},
-					"commit":{"precommits":[
-						{"validator_address":%q},
-						{"validator_address":%q}
-					]}
+					"commit":{"precommits":[{"validator_address":%q},{"validator_address":%q}]}
 				}}}`, addrA, addrA, addrB)
 			} else {
-				// Only A signs
+				// Only A signs height 3 — B misses the most recent block.
 				fmt.Fprintf(w, `{"jsonrpc":"2.0","result":{"signed_header":{
 					"header":{"height":"3","time":"2026-01-01T00:00:01Z","proposer_address":%q},
-					"commit":{"precommits":[
-						{"validator_address":%q},
-						null
-					]}
+					"commit":{"precommits":[{"validator_address":%q},null]}
 				}}}`, addrA, addrA)
 			}
 		}
@@ -410,32 +403,21 @@ func TestActiveCountWithMissedBlocksThreshold(t *testing.T) {
 
 	c := NewClient(srv.URL, 5*time.Second)
 
-	// B signed 1/2 blocks → 50% missed.
-	// With threshold 51%: 50 < 51 → B is active → ActiveCount=2
-	stats, err := c.GetSigningStats(context.Background(), 3, 2, 51)
+	// Window of 2 blocks (heights 2,3). A signs both; B signs 2, misses 3.
+	stats, err := c.GetSigningStats(context.Background(), 3, 2)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if stats.ActiveCount != 2 {
-		t.Errorf("threshold 51%%: ActiveCount = %d, want 2", stats.ActiveCount)
+	a, b := stats.ValidatorSigning[addrA], stats.ValidatorSigning[addrB]
+	if a.Signed != 2 || a.Missed != 0 || a.SignedInARow != 2 {
+		t.Errorf("A = %+v, want signed 2 / missed 0 / signed-streak 2", a)
 	}
-
-	// With threshold 50%: 50 >= 50 → B is inactive → ActiveCount=1
-	stats, err = c.GetSigningStats(context.Background(), 3, 2, 50)
-	if err != nil {
-		t.Fatal(err)
+	if b.Signed != 1 || b.Missed != 1 || b.MissedInARow != 1 || b.SignedInARow != 0 {
+		t.Errorf("B = %+v, want signed 1 / missed 1 / missed-streak 1", b)
 	}
-	if stats.ActiveCount != 1 {
-		t.Errorf("threshold 50%%: ActiveCount = %d, want 1", stats.ActiveCount)
-	}
-
-	// With threshold 100%: even 50% missed < 100% → both active
-	stats, err = c.GetSigningStats(context.Background(), 3, 2, 100)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if stats.ActiveCount != 2 {
-		t.Errorf("threshold 100%%: ActiveCount = %d, want 2", stats.ActiveCount)
+	// Active/inactive is derived server-side from the detector, not here.
+	if stats.ActiveCount != 0 {
+		t.Errorf("ActiveCount = %d, want 0 (set by the server, not GetSigningStats)", stats.ActiveCount)
 	}
 }
 

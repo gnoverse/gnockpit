@@ -26,18 +26,19 @@ func makeSnap(height string, snapErr string, votes []node.VoteInfo, catchingUp b
 	return snap
 }
 
-// makeSnapWithSigning creates a snapshot with signing stats and a block height.
-func makeSnapWithSigning(height string, windowSize int, validatorSigns map[string]int) *node.Snapshot {
+// makeSnapWithSigning builds a snapshot whose signing stats carry per-validator
+// consecutive missed/signed streaks — what the missing-blocks alert keys on.
+func makeSnapWithSigning(height string, signing map[string]node.ValSigning) *node.Snapshot {
 	return &node.Snapshot{
 		Timestamp: time.Now(),
-		Status: &node.Status{
-			SyncInfo: node.SyncInfo{LatestBlockHeight: height},
-		},
-		Signing: &node.SigningStats{
-			WindowSize:     windowSize,
-			ValidatorSigns: validatorSigns,
-		},
+		Status:    &node.Status{SyncInfo: node.SyncInfo{LatestBlockHeight: height}},
+		Signing:   &node.SigningStats{WindowSize: 100, ValidatorSigning: signing},
 	}
+}
+
+// vs is a ValSigning with the given consecutive missed / signed streaks.
+func vs(missedInARow, signedInARow int) node.ValSigning {
+	return node.ValSigning{MissedInARow: missedInARow, SignedInARow: signedInARow}
 }
 
 func findAlert(alerts []push.Alert, t push.AlertType, entityID string) *push.Alert {
@@ -112,105 +113,82 @@ func TestDetect_ChainStuck_EmptyHeightDoesNotResetClock(t *testing.T) {
 }
 
 // ---- validator_missing_blocks tests ----
-// Pattern: first Detect call at height H establishes firstSeenHeight for each validator.
-// Second call at H+windowSize gives a full effective window, making assertions predictable.
+// The alert is hysteretic: it fires after `testThreshold` consecutive missed
+// blocks and only recovers after `testThreshold` consecutive signed blocks. The
+// first observation of a validator records state silently (startup suppression).
 
-const (
-	testWindow    = 100
-	testThreshold = 5 // 5%
-)
+const testThreshold = 5 // consecutive blocks to fire / recover
 
-func TestDetect_ValidatorMissingBlocks_WarmupPreventsEarlyFire(t *testing.T) {
+func TestDetect_ValidatorMissingBlocks_FirstDetectionSilent(t *testing.T) {
 	d := push.NewAlertDetector(30, testThreshold)
-	// Even with 0 signed blocks (100% miss rate), first call should not fire
-	// because effectiveWindow = 0.
-	alerts := d.Detect(makeSnapWithSigning("100", testWindow, map[string]int{"g1bbb": 0}))
+	// Already down on first sight (e.g. after a restart): record silently.
+	alerts := d.Detect(makeSnapWithSigning("100", map[string]node.ValSigning{"g1bbb": vs(testThreshold, 0)}))
 	if a := findAlert(alerts, push.AlertValidatorMissingBlocks, "g1bbb"); a != nil {
-		t.Error("expected no alert on first detection (warmup period)")
+		t.Error("expected no alert on first detection (startup suppression)")
 	}
 }
 
-func TestDetect_ValidatorMissingBlocks_ThresholdNotReached(t *testing.T) {
+func TestDetect_ValidatorMissingBlocks_BelowThresholdDoesNotFire(t *testing.T) {
 	d := push.NewAlertDetector(30, testThreshold)
-	// 3% missed (3/100) — below the 5% threshold.
-	signs := map[string]int{"g1bbb": 97}
-	d.Detect(makeSnapWithSigning("100", testWindow, signs)) // establish firstSeen
-	alerts := d.Detect(makeSnapWithSigning("200", testWindow, signs))
+	// Baseline active, then missing fewer than the threshold in a row: stays active.
+	d.Detect(makeSnapWithSigning("100", map[string]node.ValSigning{"g1bbb": vs(0, testThreshold)}))
+	alerts := d.Detect(makeSnapWithSigning("104", map[string]node.ValSigning{"g1bbb": vs(testThreshold-1, 0)}))
 	if a := findAlert(alerts, push.AlertValidatorMissingBlocks, "g1bbb"); a != nil {
-		t.Error("expected no alert when miss rate is below threshold")
-	}
-}
-
-func TestDetect_ValidatorMissingBlocks_SuppressFirstTransition(t *testing.T) {
-	d := push.NewAlertDetector(30, testThreshold)
-	// First evaluation (warmup): establishes firstSeen.
-	d.Detect(makeSnapWithSigning("100", testWindow, map[string]int{"g1bbb": 85}))
-	// Second evaluation: first time this key is evaluated — should record state
-	// silently, not emit an alert. This prevents re-notifications after restarts.
-	alerts := d.Detect(makeSnapWithSigning("200", testWindow, map[string]int{"g1bbb": 85}))
-	if a := findAlert(alerts, push.AlertValidatorMissingBlocks, "g1bbb"); a != nil {
-		t.Error("expected no alert on first evaluation of a key (startup suppression)")
-	}
-	// Third evaluation: same state, no change, no alert.
-	alerts = d.Detect(makeSnapWithSigning("201", testWindow, map[string]int{"g1bbb": 85}))
-	if a := findAlert(alerts, push.AlertValidatorMissingBlocks, "g1bbb"); a != nil {
-		t.Error("expected no re-fire while still above threshold")
-	}
-	// Recovery: state changes from firing → not firing — SHOULD emit.
-	alerts = d.Detect(makeSnapWithSigning("202", testWindow, map[string]int{"g1bbb": 98}))
-	if a := findAlert(alerts, push.AlertValidatorMissingBlocks, "g1bbb"); a == nil || a.Firing {
-		t.Error("expected recovery alert after suppressed initial fire")
+		t.Error("expected no fire within the missed band (hysteresis hold)")
 	}
 }
 
 func TestDetect_ValidatorMissingBlocks_Fires(t *testing.T) {
 	d := push.NewAlertDetector(30, testThreshold)
-	good := map[string]int{"g1bbb": 100, "g1aaa": 100}
-	bad := map[string]int{"g1bbb": 85, "g1aaa": 100}
-	d.Detect(makeSnapWithSigning("100", testWindow, good)) // warmup
-	d.Detect(makeSnapWithSigning("200", testWindow, good)) // baseline (silent)
-	// bbb starts missing blocks — transition fires.
-	alerts := d.Detect(makeSnapWithSigning("300", testWindow, bad))
+	active := map[string]node.ValSigning{"g1bbb": vs(0, testThreshold), "g1aaa": vs(0, testThreshold)}
+	d.Detect(makeSnapWithSigning("100", active)) // baseline (silent, active)
+	// bbb misses the threshold in a row — fires. aaa keeps signing.
+	bad := map[string]node.ValSigning{"g1bbb": vs(testThreshold, 0), "g1aaa": vs(0, testThreshold)}
+	alerts := d.Detect(makeSnapWithSigning("200", bad))
 	if a := findAlert(alerts, push.AlertValidatorMissingBlocks, "g1bbb"); a == nil || !a.Firing {
-		t.Error("expected validator_missing_blocks to fire for g1bbb")
+		t.Error("expected fire for g1bbb after missing the streak")
 	}
 	if a := findAlert(alerts, push.AlertValidatorMissingBlocks, "g1aaa"); a != nil {
-		t.Error("unexpected alert for g1aaa who is signing all blocks")
+		t.Error("unexpected alert for still-signing g1aaa")
 	}
 }
 
-func TestDetect_ValidatorMissingBlocks_NoDoubleFireWithoutRecovery(t *testing.T) {
+func TestDetect_ValidatorMissingBlocks_NoDoubleFire(t *testing.T) {
 	d := push.NewAlertDetector(30, testThreshold)
-	signs := map[string]int{"g1bbb": 85} // 15% missed
-	d.Detect(makeSnapWithSigning("100", testWindow, signs))
-	d.Detect(makeSnapWithSigning("200", testWindow, signs)) // fires
-	// Same state: must not re-fire.
-	alerts := d.Detect(makeSnapWithSigning("201", testWindow, signs))
+	d.Detect(makeSnapWithSigning("100", map[string]node.ValSigning{"g1bbb": vs(0, testThreshold)}))
+	down := map[string]node.ValSigning{"g1bbb": vs(testThreshold+5, 0)}
+	d.Detect(makeSnapWithSigning("200", down)) // fires
+	alerts := d.Detect(makeSnapWithSigning("201", down))
 	if a := findAlert(alerts, push.AlertValidatorMissingBlocks, "g1bbb"); a != nil {
-		t.Error("expected no re-fire while still above threshold")
+		t.Error("expected no re-fire while still down")
 	}
 }
 
-func TestDetect_ValidatorMissingBlocks_Recovers(t *testing.T) {
+func TestDetect_ValidatorMissingBlocks_HoldsUntilRecoveryStreak(t *testing.T) {
 	d := push.NewAlertDetector(30, testThreshold)
-	d.Detect(makeSnapWithSigning("100", testWindow, map[string]int{"g1bbb": 85}))
-	d.Detect(makeSnapWithSigning("200", testWindow, map[string]int{"g1bbb": 85})) // fires
-	// Miss rate drops below threshold.
-	alerts := d.Detect(makeSnapWithSigning("201", testWindow, map[string]int{"g1bbb": 98})) // 2% missed
-	a := findAlert(alerts, push.AlertValidatorMissingBlocks, "g1bbb")
-	if a == nil || a.Firing {
-		t.Error("expected recovery when miss rate drops below threshold")
+	d.Detect(makeSnapWithSigning("100", map[string]node.ValSigning{"g1bbb": vs(0, testThreshold)})) // active
+	d.Detect(makeSnapWithSigning("200", map[string]node.ValSigning{"g1bbb": vs(testThreshold, 0)})) // fires
+	// Signs some, but fewer than the threshold in a row: must stay down.
+	alerts := d.Detect(makeSnapWithSigning("205", map[string]node.ValSigning{"g1bbb": vs(0, testThreshold-1)}))
+	if a := findAlert(alerts, push.AlertValidatorMissingBlocks, "g1bbb"); a != nil {
+		t.Error("expected NO recovery before signing the full streak (hysteresis hold)")
+	}
+	// Signs the full streak: recovers.
+	alerts = d.Detect(makeSnapWithSigning("210", map[string]node.ValSigning{"g1bbb": vs(0, testThreshold)}))
+	if a := findAlert(alerts, push.AlertValidatorMissingBlocks, "g1bbb"); a == nil || a.Firing {
+		t.Error("expected recovery after signing the full streak")
 	}
 }
 
 func TestDetect_ValidatorMissingBlocks_RefireAfterRecovery(t *testing.T) {
 	d := push.NewAlertDetector(30, testThreshold)
-	d.Detect(makeSnapWithSigning("100", testWindow, map[string]int{"g1bbb": 85}))
-	d.Detect(makeSnapWithSigning("200", testWindow, map[string]int{"g1bbb": 85})) // fires
-	d.Detect(makeSnapWithSigning("201", testWindow, map[string]int{"g1bbb": 98})) // recovers
-	// Miss rate climbs again — must re-fire.
-	alerts := d.Detect(makeSnapWithSigning("202", testWindow, map[string]int{"g1bbb": 85}))
+	down := map[string]node.ValSigning{"g1bbb": vs(testThreshold, 0)}
+	up := map[string]node.ValSigning{"g1bbb": vs(0, testThreshold)}
+	d.Detect(makeSnapWithSigning("100", up))   // baseline active
+	d.Detect(makeSnapWithSigning("200", down)) // fires
+	d.Detect(makeSnapWithSigning("300", up))   // recovers
+	alerts := d.Detect(makeSnapWithSigning("400", down))
 	if a := findAlert(alerts, push.AlertValidatorMissingBlocks, "g1bbb"); a == nil || !a.Firing {
-		t.Error("expected re-fire after recovery when miss rate exceeds threshold again")
+		t.Error("expected re-fire after recovery when missing the streak again")
 	}
 }

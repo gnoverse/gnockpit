@@ -11,13 +11,12 @@ import (
 // Not safe for concurrent use; callers must ensure single-goroutine access
 // (Manager.EvaluateAndNotify is called from the publishLoop goroutine only).
 type AlertDetector struct {
-	chainStuckSecs  int
-	missedBlocksPct int
+	chainStuckSecs   int
+	maxMissedInARow  int
 	lastHeightChange time.Time
 	lastHeight       int64
 	initialized      bool
 	firingAlerts     map[alertKey]bool
-	firstSeenHeight  map[string]int64
 }
 
 type alertKey struct {
@@ -26,13 +25,24 @@ type alertKey struct {
 }
 
 // NewAlertDetector creates a detector with the given thresholds.
-func NewAlertDetector(chainStuckSecs, missedBlocksPct int) *AlertDetector {
+func NewAlertDetector(chainStuckSecs, maxMissedInARow int) *AlertDetector {
 	return &AlertDetector{
 		chainStuckSecs:  chainStuckSecs,
-		missedBlocksPct: missedBlocksPct,
+		maxMissedInARow: maxMissedInARow,
 		firingAlerts:    make(map[alertKey]bool),
-		firstSeenHeight: make(map[string]int64),
 	}
+}
+
+// MissingBlocksFiring returns the set of validator addresses whose missing-blocks
+// alert is currently firing — i.e. those currently considered down/inactive.
+func (d *AlertDetector) MissingBlocksFiring() map[string]bool {
+	out := make(map[string]bool)
+	for k, firing := range d.firingAlerts {
+		if k.alertType == AlertValidatorMissingBlocks && firing {
+			out[k.entityID] = true
+		}
+	}
+	return out
 }
 
 // OverrideLastHeightChange is for testing only.
@@ -101,63 +111,57 @@ func (d *AlertDetector) detectChainStuck(snap *node.Snapshot) []Alert {
 }
 
 func (d *AlertDetector) detectValidatorMissingBlocks(snap *node.Snapshot) []Alert {
-	if snap.Signing == nil || snap.Signing.WindowSize == 0 || snap.Status == nil {
+	if snap.Signing == nil || d.maxMissedInARow < 1 {
 		return nil
 	}
-	var currentHeight int64
-	if n, _ := fmt.Sscanf(snap.Status.SyncInfo.LatestBlockHeight, "%d", &currentHeight); n == 0 {
-		return nil
-	}
+	n := d.maxMissedInARow
 
-	windowSize := int64(snap.Signing.WindowSize)
-
-	// Collect all validator addresses: those with signing data and those in the validator set.
-	addrs := make(map[string]string) // addr -> display name
+	name := make(map[string]string, len(snap.Validators))
 	for _, v := range snap.Validators {
-		name := v.Name
-		if name == "" {
-			name = v.Address
+		nm := v.Name
+		if nm == "" {
+			nm = v.Address
 		}
-		addrs[v.Address] = name
-	}
-	for addr := range snap.Signing.ValidatorSigns {
-		if _, ok := addrs[addr]; !ok {
-			addrs[addr] = addr
-		}
+		name[v.Address] = nm
 	}
 
 	var alerts []Alert
-	for addr, name := range addrs {
-		// Record the first block height at which we observed this validator.
-		if _, seen := d.firstSeenHeight[addr]; !seen {
-			d.firstSeenHeight[addr] = currentHeight
+	for addr, vs := range snap.Signing.ValidatorSigning {
+		// Hysteresis: fire after n missed in a row, recover only after n signed in
+		// a row. In between, hold the previous state so a flapping validator does
+		// not toggle the alert. First observation records state silently.
+		prev, exists := d.firingAlerts[alertKey{AlertValidatorMissingBlocks, addr}]
+		var firing bool
+		switch {
+		case !exists:
+			firing = vs.MissedInARow >= n
+		case !prev && vs.MissedInARow >= n:
+			firing = true
+		case prev && vs.SignedInARow >= n:
+			firing = false
+		default:
+			firing = prev
 		}
-		firstSeen := d.firstSeenHeight[addr]
 
-		// Effective window starts at the later of (currentHeight-windowSize) and firstSeen,
-		// preventing false positives for new validators and after restarts.
-		windowStart := currentHeight - windowSize
-		if firstSeen > windowStart {
-			windowStart = firstSeen
+		nm := name[addr]
+		if nm == "" {
+			nm = addr
 		}
-		effectiveWindow := currentHeight - windowStart
-		if effectiveWindow <= 0 {
-			continue
-		}
-
-		signed := int64(snap.Signing.ValidatorSigns[addr])
-		missed := effectiveWindow - signed
-		if missed < 0 {
-			missed = 0
-		}
-		missedPct := int(missed * 100 / effectiveWindow)
-
-		firing := missedPct >= d.missedBlocksPct
 		if a := d.transition(AlertValidatorMissingBlocks, addr, firing,
-			"Validator missing blocks", fmt.Sprintf("%s missed %d%% of recent blocks", name, missedPct),
-			"Validator back online", fmt.Sprintf("%s is signing again (%d%% missed)", name, missedPct),
+			"Validator missing blocks", fmt.Sprintf("%s missed %d blocks in a row", nm, vs.MissedInARow),
+			"Validator back online", fmt.Sprintf("%s is signing again (%d in a row)", nm, vs.SignedInARow),
 		); a != nil {
 			alerts = append(alerts, *a)
+		}
+	}
+	// Drop state for validators no longer in the set, so firingAlerts doesn't grow
+	// unbounded as the set rotates and a rejoining validator starts fresh.
+	for k := range d.firingAlerts {
+		if k.alertType != AlertValidatorMissingBlocks {
+			continue
+		}
+		if _, ok := snap.Signing.ValidatorSigning[k.entityID]; !ok {
+			delete(d.firingAlerts, k)
 		}
 	}
 	return alerts

@@ -25,7 +25,7 @@ type Manager struct {
 	vapidPublicKey  string
 	vapidPrivateKey string
 	chainStuckSecs  int
-	missedBlocksPct int
+	maxMissedInARow int
 	chainName       string
 	notifier        *router.ServiceRouter
 	notifyURLs      []string
@@ -33,7 +33,7 @@ type Manager struct {
 }
 
 // NewManager creates a Manager, loading or auto-generating VAPID keys.
-func NewManager(db *DB, chainStuckSecs, missedBlocksPct int) (*Manager, error) {
+func NewManager(db *DB, chainStuckSecs, maxMissedInARow int) (*Manager, error) {
 	pub, priv, err := db.LoadVAPIDKeys()
 	if err != nil {
 		return nil, fmt.Errorf("load VAPID keys: %w", err)
@@ -49,19 +49,24 @@ func NewManager(db *DB, chainStuckSecs, missedBlocksPct int) (*Manager, error) {
 	}
 	return &Manager{
 		db:              db,
-		detector:        NewAlertDetector(chainStuckSecs, missedBlocksPct),
+		detector:        NewAlertDetector(chainStuckSecs, maxMissedInARow),
 		vapidPublicKey:  pub,
 		vapidPrivateKey: priv,
 		chainStuckSecs:  chainStuckSecs,
-		missedBlocksPct: missedBlocksPct,
+		maxMissedInARow: maxMissedInARow,
 	}, nil
 }
 
 // ChainStuckSecs returns the chain-stuck threshold in seconds.
 func (m *Manager) ChainStuckSecs() int { return m.chainStuckSecs }
 
-// MissedBlocksPct returns the validator missing-blocks threshold percentage.
-func (m *Manager) MissedBlocksPct() int { return m.missedBlocksPct }
+// MaxMissedInARow returns the consecutive missed/signed blocks that flip a
+// validator down/up (fires and recovers the missing-blocks alert).
+func (m *Manager) MaxMissedInARow() int { return m.maxMissedInARow }
+
+// MissingBlocksFiring returns the set of validator addresses currently flagged
+// down (missing-blocks alert firing), for the active-validator count.
+func (m *Manager) MissingBlocksFiring() map[string]bool { return m.detector.MissingBlocksFiring() }
 
 // ChainName returns the last observed chain network ID.
 func (m *Manager) ChainName() string { return m.chainName }
