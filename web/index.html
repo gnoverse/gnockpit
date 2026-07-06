@@ -491,6 +491,20 @@
             .map-dot.is-val {
                 fill: var(--blue);
             }
+            .map-leader-val {
+                stroke: var(--blue);
+                stroke-width: 0.4;
+                opacity: 0.75;
+            }
+            .map-leader-peer {
+                stroke: var(--green);
+                stroke-width: 0.4;
+                opacity: 0.75;
+            }
+            .map-anchor {
+                fill: var(--fg);
+                opacity: 0.8;
+            }
             .map-legend {
                 position: absolute;
                 left: 8px;
@@ -1214,12 +1228,12 @@
                                         SPOF
                                     </th>
                                     <th
-                                        data-sort="sign"
+                                        data-sort="missed"
                                         style="cursor: pointer"
                                         class="info-btn"
-                                        data-popover="Blocks signed in last 100 blocks (%)"
+                                        data-popover="Blocks missed in the last 100 (only counting blocks the validator was in the set for)"
                                     >
-                                        Sign (Last 100)
+                                        Missed last 100
                                     </th>
                                     <th
                                         id="missed24h-th"
@@ -1426,7 +1440,6 @@
             var chainNameOverride = '' // set from the server's --chain-name flag (empty = use chain-id)
             var lastRecentBlockHeight = 0
             var lastRecentBlocks = null
-            var lastMissedBlocksPct = 5
 
 
             function $(id) {
@@ -1953,11 +1966,7 @@
                             pcCount++
                             pcVP += vp
                         }
-                        if (
-                            typeof vi.sign_rate === 'number' &&
-                            100 - vi.sign_rate < lastMissedBlocksPct
-                        )
-                            activeVP += vp
+                        if (!vi.inactive) activeVP += vp
                     }
                 }
                 var bftVP = Math.floor((totalVP * 2) / 3) + 1
@@ -2097,15 +2106,9 @@
                     var sortedVals = votes.validators.slice()
                     sortedVals.sort(function (a, b) {
                         var va, vb
-                        if (valSortKey === 'sign') {
-                            va =
-                                typeof a.sign_rate === 'number'
-                                    ? a.sign_rate
-                                    : -1
-                            vb =
-                                typeof b.sign_rate === 'number'
-                                    ? b.sign_rate
-                                    : -1
+                        if (valSortKey === 'missed') {
+                            va = typeof a.missed_100 === 'number' ? a.missed_100 : -1
+                            vb = typeof b.missed_100 === 'number' ? b.missed_100 : -1
                         } else if (valSortKey === 'speed') {
                             va =
                                 typeof a.avg_block_ms === 'number' &&
@@ -2272,11 +2275,9 @@
                             pctSpan.style.cssText =
                                 'color:var(--fg2);font-weight:normal'
                             vpTd.appendChild(pctSpan)
-                            vpTd.setAttribute('data-sort-val', String(vpNum))
                             vpTd.setAttribute('data-copy', vp)
                         } else {
                             vpTd.textContent = '-'
-                            vpTd.setAttribute('data-sort-val', '0')
                         }
                         tr.appendChild(vpTd)
 
@@ -2287,34 +2288,27 @@
                         if (totalVP > 0 && totalVP - spofVp < bftVP) {
                             spofTd.textContent = 'yes'
                             spofTd.className = 'err'
-                            spofTd.setAttribute('data-sort-val', '1')
                         } else {
                             spofTd.textContent = 'no'
                             spofTd.style.color = 'var(--fg2)'
-                            spofTd.setAttribute('data-sort-val', '0')
                         }
                         tr.appendChild(spofTd)
 
-                        // Sign rate
-                        var signTd = document.createElement('td')
-                        var signRate = v.sign_rate
-                        if (typeof signRate === 'number') {
-                            signTd.textContent = signRate + '%'
-                            signTd.className =
-                                signRate >= 100
-                                    ? 'ok'
-                                    : signRate >= 80
-                                      ? 'warn'
-                                      : 'err'
-                            signTd.setAttribute(
-                                'data-sort-val',
-                                String(signRate)
-                            )
+                        // Missed (last 100) — red when the validator is currently
+                        // flagged down (missed the streak), yellow for stray misses.
+                        var missed100Td = document.createElement('td')
+                        var missed100 = v.missed_100
+                        if (typeof missed100 === 'number') {
+                            missed100Td.textContent = String(missed100)
+                            missed100Td.className = v.inactive
+                                ? 'err'
+                                : missed100 > 0
+                                  ? 'warn'
+                                  : 'ok'
                         } else {
-                            signTd.textContent = '-'
-                            signTd.setAttribute('data-sort-val', '-1')
+                            missed100Td.textContent = '-'
                         }
-                        tr.appendChild(signTd)
+                        tr.appendChild(missed100Td)
 
                         // Missed 24h (from signing history; 0 until history accrues)
                         var missedTd = document.createElement('td')
@@ -2328,13 +2322,8 @@
                                     : missed24h <= 5
                                       ? 'warn'
                                       : 'err'
-                            missedTd.setAttribute(
-                                'data-sort-val',
-                                String(missed24h)
-                            )
                         } else {
                             missedTd.textContent = '-'
-                            missedTd.setAttribute('data-sort-val', '-1')
                         }
                         if (votesMissedSince)
                             missedTd.title =
@@ -2348,7 +2337,6 @@
                         if (typeof avgMs === 'number' && avgMs > 0) {
                             var secs = (avgMs / 1000).toFixed(1)
                             speedTd.textContent = secs + 's'
-                            speedTd.setAttribute('data-sort-val', String(avgMs))
                             speedTd.className =
                                 avgMs <= 3600
                                     ? 'ok'
@@ -2358,7 +2346,6 @@
                             speedTd._avgMs = avgMs // store for ranking pass
                         } else {
                             speedTd.textContent = '-'
-                            speedTd.setAttribute('data-sort-val', '99999')
                         }
                         tr.appendChild(speedTd)
                         tr._speedTd = speedTd // reference for ranking
@@ -2558,7 +2545,7 @@
 
                     function makeCard(data) {
                         // data: { name, isUs, dotClass, healthText, healthCls, address, ip,
-                        //         consensus, signRate, signCls, speed, speedCls,
+                        //         consensus, missed100, missed100Cls, speed, speedCls,
                         //         rpcUrl, rpcText, rpcCls }
                         var card = document.createElement('div')
                         card.className =
@@ -2616,8 +2603,8 @@
                                   ['country', data.country || '-'],
                                   ['provider', data.provider || '-'],
                                   [
-                                      'sign (last 100)',
-                                      { text: data.signRate, cls: data.signCls },
+                                      'missed last 100',
+                                      { text: data.missed100, cls: data.missed100Cls },
                                   ],
                                   [
                                       'missed 24h',
@@ -2724,9 +2711,9 @@
                                 peerByAddr[v.address] ||
                                 null
 
-                            var signRate =
-                                typeof v.sign_rate === 'number'
-                                    ? v.sign_rate
+                            var missed100 =
+                                typeof v.missed_100 === 'number'
+                                    ? v.missed_100
                                     : null
 
                             var speedText = '-',
@@ -2759,17 +2746,17 @@
                                               countryName(mp.country)
                                             : '-',
                                     provider: mp ? mp.provider || '-' : '-',
-                                    signRate:
-                                        signRate !== null
-                                            ? signRate + '%'
+                                    missed100:
+                                        missed100 !== null
+                                            ? String(missed100)
                                             : '-',
-                                    signCls:
-                                        signRate !== null
-                                            ? signRate >= 100
-                                                ? 'ok'
-                                                : signRate >= 80
+                                    missed100Cls:
+                                        missed100 !== null
+                                            ? v.inactive
+                                                ? 'err'
+                                                : missed100 > 0
                                                   ? 'warn'
-                                                  : 'err'
+                                                  : 'ok'
                                             : '',
                                     missed24h:
                                         typeof v.missed_24h === 'number'
@@ -3112,8 +3099,6 @@
 
             function handleSigning(d) {
                 if (!d) return
-                if (typeof d.missed_blocks_pct === 'number')
-                    lastMissedBlocksPct = d.missed_blocks_pct
                 var activeEl = $('ns-active')
                 setText('ns-active', d.active_count + '/' + d.total_count)
                 activeEl.className =
@@ -3229,71 +3214,188 @@
                     var prov = p.provider || 'Unknown'
                     byProvider[prov] = (byProvider[prov] || 0) + 1
                 })
-                function popoverText(code) {
-                    var n = byCountry[code] || 0
-                    return (
-                        countryFlag(code) +
-                        ' ' +
-                        countryName(code) +
-                        ' · ' +
-                        n +
-                        (n === 1 ? ' peer' : ' peers')
-                    )
+                // Per-country validator / peer counts among located peers, for the
+                // cluster tooltips.
+                function isVal(p) {
+                    return !!p.val_address || (p.role || '').indexOf('val') === 0
                 }
-                function providerText(prov) {
-                    var n = byProvider[prov] || 0
-                    return prov + ' · ' + n + (n === 1 ? ' peer' : ' peers')
+                // Per country: total validator/peer counts, and a per-provider
+                // validator/peer breakdown for the tooltip.
+                var ccVal = {},
+                    ccPeer = {},
+                    ccProv = {} // cc -> { provider -> {v, p} }
+                located.forEach(function (p) {
+                    var cc = p.country || 'Unknown'
+                    if (isVal(p)) ccVal[cc] = (ccVal[cc] || 0) + 1
+                    else ccPeer[cc] = (ccPeer[cc] || 0) + 1
+                    var prov = p.provider || 'unknown'
+                    var m = (ccProv[cc] = ccProv[cc] || {})
+                    var e = (m[prov] = m[prov] || { v: 0, p: 0 })
+                    if (isVal(p)) e.v++
+                    else e.p++
+                })
+                // Provider breakdown lines for a country, most nodes first.
+                function providerLines(cc) {
+                    var m = ccProv[cc]
+                    if (!m) return ''
+                    var names = Object.keys(m).sort(function (a, b) {
+                        var ta = m[a].v + m[a].p,
+                            tb = m[b].v + m[b].p
+                        return tb - ta || (a < b ? -1 : a > b ? 1 : 0)
+                    })
+                    return names
+                        .map(function (pr) {
+                            var e = m[pr],
+                                parts = []
+                            if (e.v) parts.push(e.v + ' val')
+                            if (e.p) parts.push(e.p + ' peer')
+                            return '\n☁️ ' + pr + ' · ' + parts.join(' · ')
+                        })
+                        .join('')
                 }
 
-                // Group peers that resolve to the same location — city-level data
-                // places every node in a city at one point — then size each
-                // cluster by its peer count and label clusters of more than one,
-                // so co-located peers are countable instead of overlapping.
-                var groups = {}
+                // One point per (city coordinate, type): city-level geo puts every
+                // node in a city on one coordinate, split into validators vs peers.
+                var byKey = {}
                 located.forEach(function (p) {
-                    var cx = p.lon + 180
-                    var cy = 90 - p.lat
-                    var key = cx.toFixed(2) + ',' + cy.toFixed(2)
-                    if (!groups[key])
-                        groups[key] = {
-                            cx: cx,
-                            cy: cy,
-                            n: 0,
-                            country: p.country || 'Unknown',
-                            provider: '',
-                            hasVal: false,
+                    var type = isVal(p) ? 'val' : 'peer'
+                    var cx = p.lon + 180,
+                        cy = 90 - p.lat
+                    var key = cx.toFixed(3) + ',' + cy.toFixed(3) + ',' + type
+                    var pt = byKey[key]
+                    if (!pt)
+                        pt = byKey[key] = {
+                            cc: p.country || 'Unknown',
+                            type: type,
+                            count: 0,
+                            sx: 0,
+                            sy: 0,
                         }
-                    groups[key].n++
-                    if (p.val_address || (p.role || '').indexOf('val') === 0)
-                        groups[key].hasVal = true
-                    if (!groups[key].provider && p.provider)
-                        groups[key].provider = p.provider
+                    pt.count++
+                    pt.sx += cx
+                    pt.sy += cy
+                })
+                var pts = Object.keys(byKey).map(function (k) {
+                    return byKey[k]
+                })
+                var GAP = 4
+                function fin(p) {
+                    p.x = p.sx / p.count
+                    p.y = p.sy / p.count
+                    p.r = 1.4 + 0.75 * Math.sqrt(p.count)
+                    p.ax = p.x
+                    p.ay = p.y
+                }
+                pts.forEach(fin)
+
+                // Merge same-country, same-type points that collide — even across
+                // cities — into one country cluster; repeat until stable.
+                var changed = true
+                while (changed) {
+                    changed = false
+                    for (var i = 0; i < pts.length && !changed; i++) {
+                        for (var j = i + 1; j < pts.length; j++) {
+                            var a = pts[i],
+                                b = pts[j]
+                            if (a.cc !== b.cc || a.type !== b.type) continue
+                            var dx = b.x - a.x,
+                                dy = b.y - a.y
+                            if (Math.sqrt(dx * dx + dy * dy) < a.r + b.r + GAP) {
+                                a.sx += b.sx
+                                a.sy += b.sy
+                                a.count += b.count
+                                fin(a)
+                                pts.splice(j, 1)
+                                changed = true
+                                break
+                            }
+                        }
+                    }
+                }
+
+                // Declutter what still overlaps (different countries, or validators
+                // vs peers at one city): push apart, spring back toward the anchor.
+                for (var it = 0; it < 80; it++) {
+                    for (var x = 0; x < pts.length; x++) {
+                        for (var y = x + 1; y < pts.length; y++) {
+                            var p1 = pts[x],
+                                p2 = pts[y]
+                            var ex = p2.x - p1.x,
+                                ey = p2.y - p1.y
+                            var d = Math.sqrt(ex * ex + ey * ey) || 0.001,
+                                mn = p1.r + p2.r + GAP
+                            if (d < mn) {
+                                var push = (mn - d) / 2,
+                                    ux = ex / d,
+                                    uy = ey / d
+                                p1.x -= ux * push
+                                p1.y -= uy * push
+                                p2.x += ux * push
+                                p2.y += uy * push
+                            }
+                        }
+                    }
+                    pts.forEach(function (p) {
+                        p.x += (p.ax - p.x) * 0.08
+                        p.y += (p.ay - p.y) * 0.08
+                    })
+                }
+
+                // Leader lines + anchor dots first, so they sit under the clusters.
+                pts.forEach(function (p) {
+                    var off = Math.sqrt(
+                        (p.x - p.ax) * (p.x - p.ax) + (p.y - p.ay) * (p.y - p.ay)
+                    )
+                    if (off <= p.r * 0.5 + 0.3) return
+                    var line = document.createElementNS(SVG_NS, 'line')
+                    line.setAttribute('x1', p.ax.toFixed(2))
+                    line.setAttribute('y1', p.ay.toFixed(2))
+                    line.setAttribute('x2', p.x.toFixed(2))
+                    line.setAttribute('y2', p.y.toFixed(2))
+                    line.setAttribute(
+                        'class',
+                        p.type === 'val' ? 'map-leader-val' : 'map-leader-peer'
+                    )
+                    g.appendChild(line)
+                    var anch = document.createElementNS(SVG_NS, 'circle')
+                    anch.setAttribute('cx', p.ax.toFixed(2))
+                    anch.setAttribute('cy', p.ay.toFixed(2))
+                    anch.setAttribute('r', '0.5')
+                    anch.setAttribute('class', 'map-anchor')
+                    g.appendChild(anch)
                 })
 
-                Object.keys(groups).forEach(function (key) {
-                    var grp = groups[key]
-                    var r =
-                        grp.n > 1
-                            ? Math.min(2.2 + 1.1 * Math.sqrt(grp.n - 1), 6.5)
-                            : 2.2
+                // Clusters: blue validators / green peers, labelled with the count,
+                // data-cc for country cross-highlight, popover with both counts.
+                pts.forEach(function (p) {
                     var c = document.createElementNS(SVG_NS, 'circle')
-                    c.setAttribute('cx', grp.cx.toFixed(2))
-                    c.setAttribute('cy', grp.cy.toFixed(2))
-                    c.setAttribute('r', r.toFixed(2))
-                    c.setAttribute('class', grp.hasVal ? 'map-dot is-val' : 'map-dot')
-                    c.setAttribute('data-cc', grp.country)
-                    if (grp.provider) c.setAttribute('data-prov', grp.provider)
-                    var dotPop = popoverText(grp.country)
-                    if (grp.provider) dotPop += '\n' + providerText(grp.provider)
-                    c.setAttribute('data-popover', dotPop)
+                    c.setAttribute('cx', p.x.toFixed(2))
+                    c.setAttribute('cy', p.y.toFixed(2))
+                    c.setAttribute('r', p.r.toFixed(2))
+                    c.setAttribute('class', p.type === 'val' ? 'map-dot is-val' : 'map-dot')
+                    c.setAttribute('data-cc', p.cc)
+                    // Flag + country and totals, then a cloud-icon line per provider
+                    // with its validator/peer counts.
+                    c.setAttribute(
+                        'data-popover',
+                        countryFlag(p.cc) +
+                            ' ' +
+                            countryName(p.cc) +
+                            '\n' +
+                            (ccVal[p.cc] || 0) +
+                            ' validators · ' +
+                            (ccPeer[p.cc] || 0) +
+                            ' peers' +
+                            providerLines(p.cc)
+                    )
                     g.appendChild(c)
-                    if (grp.n > 1) {
+                    if (p.count > 1) {
                         var t = document.createElementNS(SVG_NS, 'text')
-                        t.setAttribute('x', grp.cx.toFixed(2))
-                        t.setAttribute('y', grp.cy.toFixed(2))
+                        t.setAttribute('x', p.x.toFixed(2))
+                        t.setAttribute('y', p.y.toFixed(2))
                         t.setAttribute('class', 'map-count')
-                        t.setAttribute('font-size', (r * 0.95).toFixed(2))
-                        t.textContent = String(grp.n)
+                        t.setAttribute('font-size', (p.r * 0.95).toFixed(2))
+                        t.textContent = String(p.count)
                         g.appendChild(t)
                     }
                 })
@@ -3873,8 +3975,7 @@
                     _pushEntities = {
                         validators: [],
                         chain_stuck_secs: 30,
-                        missed_blocks_pct: 5,
-                        window_size: 100,
+                        max_missed_in_a_row: 10,
                     }
                 }
                 renderAlertsForm()
@@ -3911,12 +4012,10 @@
                 const entities = _pushEntities || {
                     validators: [],
                     chain_stuck_secs: 30,
-                    missed_blocks_pct: 5,
-                    window_size: 100,
+                    max_missed_in_a_row: 10,
                 }
                 const chainStuckSecs = entities.chain_stuck_secs || 30
-                const missedBlocksPct = entities.missed_blocks_pct || 5
-                const windowSize = entities.window_size || 100
+                const maxMissedInARow = entities.max_missed_in_a_row || 10
                 const validators = entities.validators || []
 
                 const recStyle =
@@ -3966,7 +4065,7 @@
                         : ''
 
                 const valSectionHTML = `<div style="padding:10px 0; border-bottom:1px solid var(--border,#333);">
-        <div style="font-weight:500; margin-bottom:4px;">Validator missing blocks<span style="${hintStyle}">${missedBlocksPct} on the last ${windowSize}</span></div>
+        <div style="font-weight:500; margin-bottom:4px;">Validator missing blocks<span style="${hintStyle}">${maxMissedInARow} in a row</span></div>
         ${valAllRow}${valRows}
     </div>`
 
