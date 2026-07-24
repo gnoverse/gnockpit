@@ -1,23 +1,23 @@
 package web
 
 import (
-	"bufio"
 	"context"
 	"crypto/rand"
-	"crypto/sha256"
+	"crypto/subtle"
 	"embed"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
-	"os"
-	"os/exec"
+	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/gnoverse/gnockpit/history"
 	"github.com/gnoverse/gnockpit/node"
 	"github.com/gnoverse/gnockpit/web/icon"
 	"github.com/gnoverse/gnockpit/web/push"
@@ -27,12 +27,21 @@ import (
 //go:embed index.html service-worker.js
 var content embed.FS
 
-// Version is set at build time via -ldflags or computed at startup.
-var Version = ""
-
 const (
 	rpcPort     = "26657"
 	peerTimeout = 3 * time.Second
+	// valoperRefreshInterval governs how often validator names are refreshed
+	// from the on-chain registry. Identity is near-static and the refresh is
+	// expensive (one query per valoper), so keep it slow.
+	valoperRefreshInterval = 15 * time.Minute
+	// geoIPRefreshInterval governs how often the IP-geolocation database is
+	// checked for a new monthly release. The check is a cheap date comparison;
+	// a download only happens when the month actually changes.
+	geoIPRefreshInterval = 24 * time.Hour
+	// historyRetention bounds how far back block-signing history is kept.
+	historyRetention = 31 * 24 * time.Hour
+	// historyPruneInterval governs how often old signing history is pruned.
+	historyPruneInterval = time.Hour
 )
 
 // wsMsg is a WebSocket message envelope.
@@ -53,93 +62,41 @@ var upgrader = websocket.Upgrader{
 
 // Server serves the web dashboard with WebSocket and background data fetching.
 type Server struct {
-	Client   *node.Client
+	Client   *node.Client  // primary endpoint (first --rpc): names, genesis, boot
+	Sources  *node.Sources // all endpoints: best-source selection + peer union
 	Addr     string
 	Interval time.Duration
 
-	mu       sync.RWMutex
-	snapshot *node.Snapshot
-
-	// SSE clients (legacy fallback)
-	sseClients map[chan string]struct{}
+	mu          sync.RWMutex
+	snapshot    *node.Snapshot
+	missed24h   map[string]int // val address -> blocks missed in last 24h (guarded by mu)
+	missedSince time.Time      // oldest retained block time; how far back missed counts reach (guarded by mu)
 
 	// WebSocket clients
 	wsmu      sync.RWMutex
 	wsClients map[*wsClient]struct{}
 
-	// Diagnosis reports
-	diagmu   sync.RWMutex
-	diagData map[string]*DiagReport // keyed by IP
-
-	startTime     time.Time
-	genesisSHA    string // computed from local genesis file at startup
-	chainDataSize string
-	chainDataTime time.Time
-
-	// Configurable paths (set by caller before Run)
-	DataDir         string         // gnoland data directory (for disk stats)
-	GenesisPath     string         // path to genesis.json (for hash computation)
-	Backend         RuntimeBackend // log and process metrics backend (nil = unavailable)
+	// Set by caller before Run.
 	PushManager     *push.Manager  // push notification manager (nil = disabled)
-	MissedBlocksPct int            // missed-block threshold for active validator counting
-
-	// Peer activity from log parsing
-	peerActivity sync.Map // IP -> time.Time (last seen)
-	lastLogEvent time.Time
-}
-
-// DiagReport holds a per-node diagnosis report.
-type DiagReport struct {
-	IP      string      `json:"ip"`
-	Moniker string      `json:"moniker"`
-	Time    string      `json:"time"`
-	Checks  []DiagCheck `json:"checks"`
-}
-
-// DiagCheck is a single check in a diagnosis.
-type DiagCheck struct {
-	Name   string `json:"name"`
-	Status string `json:"status"` // ok, warn, err
-	Detail string `json:"detail"`
+	MaxMissedInARow int            // consecutive missed/signed blocks that flip a validator down/up
+	GeoIP           *node.GeoIP    // IP geolocation for the network map (nil = disabled)
+	ASN             *node.ASN      // IP-to-ASN/cloud-provider resolution (nil = disabled)
+	History         *history.Store // block-signing history for missed-block windows (nil = disabled)
+	NotifyTestToken string         // bearer token for the notify-test API (empty = disabled)
+	ChainStuckSecs  int            // seconds without a new block before status is "down"
+	Links           []Link         // static header link buttons
+	StatusLinks     []*StatusLink  // header links with a live BetterStack status dot
+	HideSources     bool           // hide the configured source nodes from the peers list
+	ChainName       string         // display name for the chain; defaults to the chain-id when empty
 }
 
 // NewServer creates a new web server.
 func NewServer(client *node.Client, addr string, interval time.Duration) *Server {
 	return &Server{
-		Client:     client,
-		Addr:       addr,
-		Interval:   interval,
-		sseClients: make(map[chan string]struct{}),
-		wsClients:  make(map[*wsClient]struct{}),
-		diagData:   make(map[string]*DiagReport),
-		startTime:  time.Now(),
-	}
-}
-
-// --- SSE client management (legacy fallback) ---
-
-func (s *Server) addSSEClient(ch chan string) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.sseClients[ch] = struct{}{}
-}
-
-func (s *Server) removeSSEClient(ch chan string) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	delete(s.sseClients, ch)
-	close(ch)
-}
-
-func (s *Server) broadcastSSE(event, data string) {
-	msg := fmt.Sprintf("event: %s\ndata: %s\n\n", event, data)
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	for ch := range s.sseClients {
-		select {
-		case ch <- msg:
-		default:
-		}
+		Client:    client,
+		Addr:      addr,
+		Interval:  interval,
+		wsClients: make(map[*wsClient]struct{}),
 	}
 }
 
@@ -186,14 +143,13 @@ func (s *Server) setSnapshot(snap *node.Snapshot) {
 	s.mu.Unlock()
 }
 
-// GetSnapshot returns the most recent data snapshot. Used by main to construct backends.
-func (s *Server) GetSnapshot() *node.Snapshot {
-	return s.getSnapshot()
-}
-
-// chainName returns the connected chain's network ID from the latest snapshot.
-// Falls back to "gnockpit" if no snapshot is available yet.
+// chainName returns the chain's display name: the configured ChainName if set,
+// otherwise the connected chain's network ID (chain-id) from the latest
+// snapshot. Falls back to "gnockpit" if neither is available yet.
 func (s *Server) chainName() string {
+	if s.ChainName != "" {
+		return s.ChainName
+	}
 	snap := s.getSnapshot()
 	if snap != nil && snap.Status != nil && snap.Status.NodeInfo.Network != "" {
 		return snap.Status.NodeInfo.Network
@@ -204,12 +160,36 @@ func (s *Server) chainName() string {
 // --- Snapshot data building ---
 
 type checkData struct {
-	GenesisSHA  string           `json:"genesis_sha256"`
 	AppHashLast string           `json:"apphash_last,omitempty"`
-	Uptime      string           `json:"uptime"`
 	ValAddress  string           `json:"val_address,omitempty"`
 	ValPubKey   string           `json:"val_pubkey,omitempty"`
 	System      *node.SystemInfo `json:"system,omitempty"`
+	HideSources bool             `json:"hide_sources,omitempty"`
+}
+
+// applyValidatorHealth fills the active-validator count and BFT margin from the
+// alert detector's hysteretic down/up state: a validator counts as inactive
+// while its missing-blocks alert is firing (missed the streak threshold, not yet
+// recovered by signing the streak back). Must run after the detector.
+func (s *Server) applyValidatorHealth(snap *node.Snapshot) {
+	if snap == nil || snap.Signing == nil {
+		return
+	}
+	down := map[string]bool{}
+	if s.PushManager != nil {
+		down = s.PushManager.MissingBlocksFiring()
+	}
+	snap.Signing.Inactive = down
+	active := 0
+	for addr := range snap.Signing.ValidatorSigning {
+		if !down[addr] {
+			active++
+		}
+	}
+	snap.Signing.ActiveCount = active
+	snap.Signing.Margin = active - snap.Signing.BFTThreshold
+	newThreshold := ((snap.Signing.TotalCount + 1) * 2 / 3) + 1
+	snap.Signing.CanAddOne = active >= newThreshold
 }
 
 func (s *Server) buildVotesReport(snap *node.Snapshot) *node.VotesReport {
@@ -223,8 +203,11 @@ func (s *Server) buildVotesReport(snap *node.Snapshot) *node.VotesReport {
 		Proposer:       s.Client.Names.NameWithUs(snap.Consensus.Proposer),
 		RoundStartTime: snap.Consensus.RoundStartTime,
 		Config:         snap.Consensus.Config,
-		Validators:     snap.Consensus.Votes,
-		Timestamp:      snap.Timestamp,
+		// Clone: the per-validator loops below mutate elements in place, and this
+		// runs concurrently from the publish loop, WS-connect, and /api/status —
+		// all sharing the one snapshot pointer. Each caller gets its own copy.
+		Validators: slices.Clone(snap.Consensus.Votes),
+		Timestamp:  snap.Timestamp,
 	}
 	// Enrich with voting power and bech32 pubkey from validator set
 	vpByAddr := make(map[string]string, len(snap.Validators))
@@ -238,26 +221,39 @@ func (s *Server) buildVotesReport(snap *node.Snapshot) *node.VotesReport {
 		report.Validators[i].VotingPower = vpByAddr[addr]
 		report.Validators[i].PubKey = pkByAddr[addr]
 	}
-	// Enrich with signing rate + proposer speed from signing stats
-	if snap.Signing != nil && snap.Signing.WindowSize > 0 {
+	// Enrich with missed-block count + proposer speed from signing stats, and the
+	// down/inactive flag from the alert detector's hysteretic state.
+	if snap.Signing != nil {
 		for i := range report.Validators {
 			addr := report.Validators[i].Address
-			signed := snap.Signing.ValidatorSigns[addr]
-			report.Validators[i].SignRate = signed * 100 / snap.Signing.WindowSize
+			report.Validators[i].Missed100 = snap.Signing.ValidatorSigning[addr].Missed
+			report.Validators[i].Inactive = snap.Signing.Inactive[addr]
 			if perf, ok := snap.Signing.ValidatorPerf[addr]; ok {
 				report.Validators[i].AvgBlockMs = perf.AvgBlockMs
 			}
 		}
+	}
+	// Attach missed-24h counts and the recording-since timestamp from history.
+	s.mu.RLock()
+	missed := s.missed24h
+	since := s.missedSince
+	s.mu.RUnlock()
+	if missed != nil {
+		for i := range report.Validators {
+			report.Validators[i].Missed24h = missed[report.Validators[i].Address]
+		}
+	}
+	if !since.IsZero() {
+		report.MissedSince = since.UTC().Format(time.RFC3339)
 	}
 	return report
 }
 
 func (s *Server) buildCheckData(snap *node.Snapshot) checkData {
 	cd := checkData{
-		GenesisSHA:  snap.GenesisSHA,
 		AppHashLast: snap.AppHashLast,
-		Uptime:      snap.Uptime,
 		System:      snap.System,
+		HideSources: s.HideSources,
 	}
 	if snap.Status != nil {
 		cd.ValAddress = snap.Status.ValidatorInfo.Address
@@ -311,13 +307,9 @@ func (s *Server) buildUpdateMsg(snap *node.Snapshot) wsMsg {
 // --- HTTP Handlers ---
 
 func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
-	// Redirect bare "/" to "/?v=<hash>" to bust aggressive browser caches.
+	// Mux registers this on "/", which also catches unknown paths; reject those.
 	if r.URL.Path != "/" {
 		http.NotFound(w, r)
-		return
-	}
-	if r.URL.Query().Get("v") != Version && Version != "" {
-		http.Redirect(w, r, "/?v="+Version, http.StatusFound)
 		return
 	}
 	data, err := content.ReadFile("index.html")
@@ -407,72 +399,6 @@ func (s *Server) handleAPI(w http.ResponseWriter, r *http.Request) {
 	enc.Encode(snap)
 }
 
-func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
-	flusher, ok := w.(http.Flusher)
-	if !ok {
-		http.Error(w, "streaming not supported", 500)
-		return
-	}
-
-	w.Header().Set("Content-Type", "text/event-stream")
-	w.Header().Set("Cache-Control", "no-cache")
-	w.Header().Set("Connection", "keep-alive")
-	w.Header().Set("Access-Control-Allow-Origin", "*")
-
-	ch := make(chan string, 32)
-	s.addSSEClient(ch)
-	defer s.removeSSEClient(ch)
-
-	// Send current snapshot immediately on connect
-	if snap := s.getSnapshot(); snap != nil {
-		s.sendSSESnapshot(snap, ch)
-	}
-	flusher.Flush()
-
-	ctx := r.Context()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case msg, ok := <-ch:
-			if !ok {
-				return
-			}
-			fmt.Fprint(w, msg)
-			flusher.Flush()
-		}
-	}
-}
-
-func (s *Server) sendSSESnapshot(snap *node.Snapshot, ch chan string) {
-	sendEvent := func(event string, data interface{}) {
-		if b, err := json.Marshal(data); err == nil {
-			msg := fmt.Sprintf("event: %s\ndata: %s\n\n", event, string(b))
-			select {
-			case ch <- msg:
-			default:
-			}
-		}
-	}
-
-	msg := fmt.Sprintf("event: time\ndata: %s\n\n", snap.Timestamp.Format("15:04:05"))
-	select {
-	case ch <- msg:
-	default:
-	}
-
-	if snap.Status != nil {
-		sendEvent("status", snap.Status)
-	}
-	if snap.Peers != nil {
-		sendEvent("peers", snap.Peers)
-	}
-	if report := s.buildVotesReport(snap); report != nil {
-		sendEvent("votes", report)
-	}
-	sendEvent("checks", s.buildCheckData(snap))
-}
-
 // --- WebSocket Handler ---
 
 func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
@@ -526,233 +452,63 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 // --- Boot Status (visible even when RPC is down) ---
 
 func (s *Server) handleBootStatus(w http.ResponseWriter, r *http.Request) {
-	type dbInfo struct {
-		Name string `json:"name"`
-		Size string `json:"size"`
-	}
 	type bootStatus struct {
-		RPC     bool     `json:"rpc"`
-		DBs     []dbInfo `json:"dbs"`
-		Process bool     `json:"process"`
-		CPU     string   `json:"cpu,omitempty"`
-		Mem     string   `json:"mem,omitempty"`
-		Uptime  string   `json:"uptime,omitempty"`
+		RPC       bool   `json:"rpc"`
+		ChainName string `json:"chain_name,omitempty"` // configured display-name override, empty = use chain-id
 	}
 
-	bs := bootStatus{}
+	bs := bootStatus{ChainName: s.ChainName}
 
-	// Check RPC
-	ctx := r.Context()
-	if s.Client != nil {
-		_, err := s.Client.GetStatus(ctx)
-		bs.RPC = err == nil
-	}
-
-	// DB sizes
-	if s.DataDir != "" {
-		dbDir := s.DataDir + "/db"
-		entries, _ := os.ReadDir(dbDir)
-		for _, e := range entries {
-			if !e.IsDir() || !strings.HasSuffix(e.Name(), ".db") {
-				continue
-			}
-			if out, err := exec.CommandContext(ctx, "du", "-sh", dbDir+"/"+e.Name()).Output(); err == nil {
-				fields := strings.Fields(string(out))
-				if len(fields) >= 1 {
-					bs.DBs = append(bs.DBs, dbInfo{Name: e.Name(), Size: fields[0]})
-				}
-			}
-		}
-	}
-
-	// Process info via backend
-	if s.Backend != nil {
-		if d, err := s.Backend.ServiceUptime(ctx); err == nil {
-			bs.Process = true
-			bs.Uptime = d.Truncate(time.Second).String()
-		}
-		if kb, err := s.Backend.ProcessMemory(ctx); err == nil && kb > 0 {
-			bs.Mem = fmt.Sprintf("%.0f MB", float64(kb)/1024)
-		}
+	// "Up" once at least one source has yielded chain data; goes false again if
+	// every source is unreachable — the banner then doubles as the all-down
+	// warning.
+	if snap := s.getSnapshot(); snap != nil && snap.Status != nil {
+		bs.RPC = true
 	}
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(bs)
 }
 
-func (s *Server) handleResetCache(w http.ResponseWriter, r *http.Request) {
-	if r.Method != "POST" {
-		http.Error(w, "POST only", 405)
-		return
-	}
-	// Clear snapshot
-	s.setSnapshot(nil)
-	// Clear peer activity
-	s.peerActivity.Range(func(key, _ interface{}) bool {
-		s.peerActivity.Delete(key)
-		return true
-	})
-	// Clear diagnosis data
-	s.diagmu.Lock()
-	s.diagData = make(map[string]*DiagReport)
-	s.diagmu.Unlock()
-	// Clear chain data cache
-	s.chainDataSize = ""
-	s.chainDataTime = time.Time{}
-	// Clear and reload name registry from persist file
-	if s.Client != nil && s.Client.Names != nil {
-		s.Client.Names.Reload()
-	}
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
-}
-
 // --- System Info ---
 
-func (s *Server) collectSystemInfo(ctx context.Context) *node.SystemInfo {
-	si := &node.SystemInfo{}
-
-	// Disk usage
-	dfPath := s.DataDir
-	if dfPath == "" {
-		dfPath = "/"
+func (s *Server) collectSystemInfo() *node.SystemInfo {
+	return &node.SystemInfo{
+		NodeTime:    time.Now().UTC().Format("2006-01-02T15:04:05Z"),
+		GenesisTime: s.Client.Names.GenesisTime,
 	}
-	if out, err := exec.CommandContext(ctx, "df", "-h", dfPath).Output(); err == nil {
-		lines := strings.Split(strings.TrimSpace(string(out)), "\n")
-		if len(lines) >= 2 {
-			fields := strings.Fields(lines[1])
-			if len(fields) >= 5 {
-				si.DiskTotal = fields[1]
-				si.DiskUsed = fields[2]
-				pct := strings.TrimSuffix(fields[4], "%")
-				fmt.Sscanf(pct, "%d", &si.DiskPercent)
-			}
-		}
-	}
-
-	if data, err := os.ReadFile("/proc/loadavg"); err == nil {
-		fields := strings.Fields(string(data))
-		if len(fields) >= 3 {
-			si.LoadAvg = fields[0] + " " + fields[1] + " " + fields[2]
-		}
-	}
-
-	if data, err := os.ReadFile("/proc/cpuinfo"); err == nil {
-		si.NumCPU = strings.Count(string(data), "processor\t:")
-	}
-
-	if f, err := os.Open("/proc/meminfo"); err == nil {
-		defer f.Close()
-		memInfo := map[string]string{}
-		scanner := bufio.NewScanner(f)
-		for scanner.Scan() {
-			parts := strings.SplitN(scanner.Text(), ":", 2)
-			if len(parts) == 2 {
-				memInfo[strings.TrimSpace(parts[0])] = strings.TrimSpace(parts[1])
-			}
-		}
-		var totalKB, availKB int
-		fmt.Sscanf(memInfo["MemTotal"], "%d", &totalKB)
-		fmt.Sscanf(memInfo["MemAvailable"], "%d", &availKB)
-		if totalKB > 0 {
-			usedKB := totalKB - availKB
-			si.MemUsed = fmt.Sprintf("%.1fG", float64(usedKB)/1024/1024)
-			si.MemTotal = fmt.Sprintf("%.1fG", float64(totalKB)/1024/1024)
-			si.MemPercent = usedKB * 100 / totalKB
-		}
-	}
-
-	if s.Backend != nil {
-		if uptime, err := s.Backend.ServiceUptime(ctx); err == nil {
-			si.GnolandUptime = uptime.Truncate(time.Second).String()
-		}
-		if kb, err := s.Backend.ProcessMemory(ctx); err == nil && kb > 0 {
-			si.GnolandMem = fmt.Sprintf("%.1fG", float64(kb)/1024/1024)
-		}
-	}
-
-	// Chain data size (cached, updated max once per minute)
-	if s.DataDir != "" && time.Since(s.chainDataTime) > time.Minute {
-		if out, err := exec.CommandContext(ctx, "du", "-sh", s.DataDir).Output(); err == nil {
-			parts := strings.Fields(string(out))
-			if len(parts) > 0 {
-				s.chainDataSize = parts[0]
-				s.chainDataTime = time.Now()
-			}
-		}
-	}
-	si.ChainDataSize = s.chainDataSize
-
-	si.NodeTime = time.Now().UTC().Format("2006-01-02T15:04:05Z")
-	si.GenesisTime = s.Client.Names.GenesisTime
-
-	// Git info for gno source
-	if gnoRoot := s.gnoRootDir(); gnoRoot != "" {
-		if out, err := exec.CommandContext(ctx, "git", "-C", gnoRoot, "rev-parse", "--abbrev-ref", "HEAD").Output(); err == nil {
-			si.GitBranch = strings.TrimSpace(string(out))
-		}
-		if out, err := exec.CommandContext(ctx, "git", "-C", gnoRoot, "rev-parse", "--short", "HEAD").Output(); err == nil {
-			si.GitSHA = strings.TrimSpace(string(out))
-		}
-	}
-	if s.Backend != nil {
-		if hash, err := s.Backend.BinaryHash(ctx); err == nil {
-			si.BinaryHash = hash
-		}
-	}
-
-	// Persistent peers from config
-	if dataDir := s.DataDir; dataDir != "" {
-		if data, err := os.ReadFile(dataDir + "/config/config.toml"); err == nil {
-			for _, line := range strings.Split(string(data), "\n") {
-				line = strings.TrimSpace(line)
-				if !strings.Contains(line, "=") {
-					continue
-				}
-				key := strings.TrimSpace(strings.SplitN(line, "=", 2)[0])
-				if key != "persistent_peers" {
-					continue
-				}
-				val := strings.SplitN(line, "=", 2)[1]
-				val = strings.Trim(strings.TrimSpace(val), "\"")
-				if val != "" {
-					si.PersistentPeers = val
-				}
-				break
-			}
-		}
-	}
-
-	return si
 }
 
 // --- Data Fetching ---
 
 func (s *Server) fetchSnapshot(ctx context.Context) *node.Snapshot {
 	snap := &node.Snapshot{
-		GenesisSHA: s.genesisSHA,
-		Timestamp:  time.Now(),
-		Uptime:     time.Since(s.startTime).Truncate(time.Second).String(),
+		Timestamp: time.Now(),
 	}
 
-	status, err := s.Client.GetStatus(ctx)
+	poll := s.Sources.Poll(ctx)
+	if poll.Best == nil {
+		snap.Error = "all sources unreachable"
+		snap.System = s.collectSystemInfo()
+		return snap
+	}
+	best := poll.Best
+	snap.Status = poll.BestStatus
+	best.Names.SetOurs(poll.BestStatus.ValidatorInfo.Address, poll.BestStatus.NodeInfo.Moniker)
+
+	validators, err := best.GetValidators(ctx)
 	if err != nil {
-		snap.Error = err.Error()
-	} else {
-		snap.Status = status
-		s.Client.Names.SetOurs(status.ValidatorInfo.Address, status.NodeInfo.Moniker)
+		log.Printf("validators: %v", err)
 	}
-
-	validators, _ := s.Client.GetValidators(ctx)
 	snap.Validators = validators
 	// Register pubkeys for all validators
 	for _, v := range validators {
 		if v.PubKey.Value != "" {
-			s.Client.Names.RegisterPubKey(v.Address, v.PubKey.Value)
+			best.Names.RegisterPubKey(v.Address, v.PubKey.Value)
 		}
 	}
 
-	cs, dumpPeers, err := s.Client.GetConsensusState(ctx)
+	cs, dumpPeers, err := best.GetConsensusState(ctx)
 	if err == nil {
 		snap.Consensus = cs
 		snap.RoundStartTime = cs.RoundStartTime
@@ -770,37 +526,77 @@ func (s *Server) fetchSnapshot(ctx context.Context) *node.Snapshot {
 		}
 	}
 
-	peers, err := s.Client.GetNetInfo(ctx)
-	if err == nil {
-		enriched := node.QueryAllPeers(ctx, peers, rpcPort, peerTimeout, false, validators, s.Client.LogFn, s.Client.Names)
-		sort.Slice(enriched, func(i, j int) bool {
-			return enriched[i].Moniker < enriched[j].Moniker
-		})
-		now := time.Now().Format(time.RFC3339)
-		for i := range enriched {
-			enriched[i].LastSeen = now
-			if enriched[i].FirstSeen == "" {
-				enriched[i].FirstSeen = now
-			}
-			var dp *node.DumpPeer
-			if d, ok := dumpByIP[enriched[i].RemoteIP]; ok {
-				dp = d
-			} else if d, ok := dumpByNodeID[enriched[i].NodeID]; ok {
-				dp = d
-			}
-			if dp != nil {
-				enriched[i].PeerHeight = dp.Height
-				enriched[i].PeerRound = dp.Round
-				enriched[i].PeerStep = dp.Step
-				enriched[i].HasProposal = dp.Proposal
-				enriched[i].PeerPrevotes = dp.Prevotes
-				enriched[i].PeerPrecommits = dp.Precommits
-				if dp.NodeID != "" && dp.RemoteIP != "" && dp.P2PPort != "" {
-					enriched[i].P2PAddress = dp.NodeID + "@" + dp.RemoteIP + ":" + dp.P2PPort
-				}
+	// Union raw /net_info peers across all reachable sources, deduped by node ID
+	// (which also resolves each peer's public IP), then probe the union once. The
+	// source nodes go first so they're flagged and their RPC-URL IP takes
+	// precedence over any observation of them.
+	perSource := [][]node.Peer{poll.SourcePeers}
+	for _, c := range poll.Reachable {
+		raw, err := c.GetNetInfo(ctx)
+		if err != nil {
+			log.Printf("net_info from %s: %v", c.RPCURL, err)
+			continue
+		}
+		perSource = append(perSource, raw)
+	}
+	merged := node.MergePeers(perSource, s.Sources.NodeIDs())
+	s.Sources.FillSourceEgressIP(merged)
+	enriched := node.QueryAllPeers(ctx, merged, rpcPort, peerTimeout, false, validators, best.LogFn, best.Names)
+	sort.Slice(enriched, func(i, j int) bool {
+		return enriched[i].Moniker < enriched[j].Moniker
+	})
+	now := time.Now().Format(time.RFC3339)
+	for i := range enriched {
+		enriched[i].LastSeen = now
+		if enriched[i].FirstSeen == "" {
+			enriched[i].FirstSeen = now
+		}
+		dp := node.MatchDumpPeer(enriched[i].NodeID, enriched[i].RemoteIP, dumpByNodeID, dumpByIP)
+		if dp != nil {
+			enriched[i].PeerHeight = dp.Height
+			enriched[i].PeerRound = dp.Round
+			enriched[i].PeerStep = dp.Step
+			enriched[i].HasProposal = dp.Proposal
+			enriched[i].PeerPrevotes = dp.Prevotes
+			enriched[i].PeerPrecommits = dp.Precommits
+			if dp.NodeID != "" && dp.RemoteIP != "" && dp.P2PPort != "" {
+				enriched[i].P2PAddress = dp.NodeID + "@" + dp.RemoteIP + ":" + dp.P2PPort
 			}
 		}
-		snap.Peers = enriched
+	}
+	snap.Peers = enriched
+
+	// Geolocate peers for the network map (best-effort; empty until the
+	// database has been downloaded).
+	if s.GeoIP != nil {
+		for i := range snap.Peers {
+			ip := snap.Peers[i].RemoteIP // public-or-empty after the merge
+			if ip == "" {
+				continue
+			}
+			if lat, lon, city, country, ok := s.GeoIP.Lookup(ip); ok {
+				snap.Peers[i].Lat = lat
+				snap.Peers[i].Lon = lon
+				snap.Peers[i].City = city
+				snap.Peers[i].Country = country
+			}
+		}
+	}
+
+	// Resolve each peer's cloud provider from its IP (best-effort; empty until
+	// the ASN database has been downloaded).
+	if s.ASN != nil {
+		for i := range snap.Peers {
+			ip := snap.Peers[i].RemoteIP // public-or-empty after the merge
+			if ip == "" {
+				continue
+			}
+			if asn, org, ok := s.ASN.Lookup(ip); ok {
+				snap.Peers[i].ASN = asn
+				snap.Peers[i].ASOrg = org
+				snap.Peers[i].Provider = node.Provider(org)
+			}
+		}
 	}
 
 	// App hash for last block
@@ -808,7 +604,7 @@ func (s *Server) fetchSnapshot(ctx context.Context) *node.Snapshot {
 		var h int
 		fmt.Sscanf(snap.Status.SyncInfo.LatestBlockHeight, "%d", &h)
 		if h > 1 {
-			if ah, err := s.Client.GetBlockAppHash(ctx, h); err == nil {
+			if ah, err := best.GetBlockAppHash(ctx, h); err == nil {
 				snap.AppHashLast = ah
 			}
 		}
@@ -819,14 +615,17 @@ func (s *Server) fetchSnapshot(ctx context.Context) *node.Snapshot {
 		var h int
 		fmt.Sscanf(snap.Status.SyncInfo.LatestBlockHeight, "%d", &h)
 		if h > 2 {
-			signing, err := s.Client.GetSigningStats(ctx, h, 100, s.MissedBlocksPct)
-			if err == nil {
+			signing, err := best.GetSigningStats(ctx, h, 100)
+			if err != nil {
+				log.Printf("signing stats: %v", err)
+			} else {
+				signing.MaxMissedInARow = s.MaxMissedInARow
 				snap.Signing = signing
 			}
 		}
 	}
 
-	snap.System = s.collectSystemInfo(ctx)
+	snap.System = s.collectSystemInfo()
 
 	// gnockpit-names.json is the single source of truth for validator names.
 	// QueryAllPeers above already filled gaps with monikers it discovered via
@@ -875,7 +674,7 @@ func (s *Server) ensureValidatorNames(snap *node.Snapshot) {
 		}
 	}
 	if snap.Signing != nil {
-		for addr := range snap.Signing.ValidatorSigns {
+		for addr := range snap.Signing.ValidatorSigning {
 			if addr != "" {
 				addrs[addr] = struct{}{}
 			}
@@ -913,6 +712,75 @@ func (s *Server) ensureValidatorNames(snap *node.Snapshot) {
 
 // --- Publish Loop ---
 
+// recordHistory persists this snapshot's recent blocks into the signing-history
+// store and refreshes the cached missed-24h counts used by the validators view.
+// Errors are logged and swallowed: the live dashboard must keep working even if
+// history recording fails.
+func (s *Server) recordHistory(ctx context.Context, snap *node.Snapshot) {
+	if s.History == nil || snap == nil || snap.Signing == nil {
+		return
+	}
+	blocks := make([]history.Block, 0, len(snap.Signing.RecentBlocks))
+	for _, b := range snap.Signing.RecentBlocks {
+		h, err := strconv.ParseInt(b.Height, 10, 64)
+		if err != nil {
+			continue
+		}
+		t, err := time.Parse(time.RFC3339Nano, b.Time)
+		if err != nil {
+			continue
+		}
+		missing := make([]string, 0, len(b.Missing))
+		for _, mv := range b.Missing {
+			missing = append(missing, mv.Address)
+		}
+		blocks = append(blocks, history.Block{Height: h, Time: t, Missing: missing})
+	}
+	if err := s.History.RecordBlocks(ctx, blocks); err != nil {
+		log.Printf("history: record blocks: %v", err)
+		return
+	}
+	now := time.Now()
+	wc, err := s.History.MissedInWindow(ctx, 24*time.Hour, now)
+	if err != nil {
+		log.Printf("history: missed-24h: %v", err)
+		return
+	}
+	earliest, err := s.History.EarliestRecorded(ctx)
+	if err != nil {
+		log.Printf("history: earliest recorded: %v", err)
+		return
+	}
+	s.mu.Lock()
+	s.missed24h = wc.Missed
+	s.missedSince = earliest
+	s.mu.Unlock()
+}
+
+// historyPruneLoop periodically drops signing history older than the retention
+// horizon, then repeats on a slow timer.
+func (s *Server) historyPruneLoop(ctx context.Context) {
+	if s.History == nil {
+		return
+	}
+	prune := func() {
+		if err := s.History.Prune(ctx, time.Now().Add(-historyRetention)); err != nil {
+			log.Printf("history: prune: %v", err)
+		}
+	}
+	prune()
+	ticker := time.NewTicker(historyPruneInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			prune()
+		}
+	}
+}
+
 func (s *Server) publishLoop(ctx context.Context) {
 	ticker := time.NewTicker(s.Interval)
 	defer ticker.Stop()
@@ -922,30 +790,16 @@ func (s *Server) publishLoop(ctx context.Context) {
 			s.Client.Names.ReloadIfChanged()
 		}
 		snap := s.fetchSnapshot(ctx)
-		s.setSnapshot(snap)
 		if s.PushManager != nil {
 			s.PushManager.EvaluateAndNotify(snap)
 		}
-
-		timeStr := snap.Timestamp.Format("15:04:05")
-
-		// Broadcast to SSE clients (legacy)
-		s.broadcastSSE("time", timeStr)
-		broadcastSSEJSON := func(event string, data interface{}) {
-			if b, err := json.Marshal(data); err == nil {
-				s.broadcastSSE(event, string(b))
-			}
-		}
-		if snap.Status != nil {
-			broadcastSSEJSON("status", snap.Status)
-		}
-		if snap.Peers != nil {
-			broadcastSSEJSON("peers", snap.Peers)
-		}
-		if report := s.buildVotesReport(snap); report != nil {
-			broadcastSSEJSON("votes", report)
-		}
-		broadcastSSEJSON("checks", s.buildCheckData(snap))
+		// Active-validator count and the down set depend on the detector's
+		// hysteretic state, so derive them after EvaluateAndNotify has updated it.
+		// Both run before setSnapshot so the published snapshot is complete and
+		// immutable when a WebSocket client reads it on connect.
+		s.applyValidatorHealth(snap)
+		s.setSnapshot(snap)
+		s.recordHistory(ctx, snap)
 
 		// Broadcast to WebSocket clients as a single batched message to reduce
 		// JSON.parse calls and WS message overhead on the frontend.
@@ -964,368 +818,85 @@ func (s *Server) publishLoop(ctx context.Context) {
 	}
 }
 
-// --- Log Streaming ---
-
-func (s *Server) logStreamLoop(ctx context.Context) {
-	if s.Backend == nil {
-		return
+// valoperRefreshLoop refreshes validator names from the on-chain
+// r/gnops/valopers registry: once at startup, then on a slow timer. The
+// registry enumeration is one RPC per valoper, so it must never run in the
+// snapshot loop. Names land in the registry (non-overwriting / upgrading
+// unknown-val-N) and the next snapshot's ensureValidatorNames picks them up.
+func (s *Server) valoperRefreshLoop(ctx context.Context) {
+	refresh := func() {
+		names, err := s.Client.FetchValoperNames(ctx)
+		if err != nil {
+			log.Printf("valoper name refresh failed: %v", err)
+			return
+		}
+		s.Client.Names.SeedFromValopers(names)
 	}
+	refresh()
+
+	ticker := time.NewTicker(valoperRefreshInterval)
+	defer ticker.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		default:
+		case <-ticker.C:
+			refresh()
 		}
-
-		rc, err := s.Backend.StreamLogs(ctx)
-		if err != nil {
-			log.Printf("log stream error: %v", err)
-			time.Sleep(2 * time.Second)
-			continue
-		}
-
-		scanner := bufio.NewScanner(rc)
-		for scanner.Scan() {
-			entry := parseGnolandLog(scanner.Text())
-			entry.Msg = strings.ReplaceAll(entry.Msg, "/root/", "~/")
-			s.broadcastWS(wsMsg{Type: "log", Data: entry})
-			s.parseLogEvent(entry)
-		}
-
-		rc.Close()
-		log.Printf("log stream ended, restarting in 2s")
-		time.Sleep(2 * time.Second)
 	}
 }
 
-// parseLogEvent extracts structured events from log lines
-// parseLogEvent extracts structured events from a parsed log entry.
-func (s *Server) parseLogEvent(entry LogEntry) {
-	now := time.Now()
-	// Rate limit: don't trigger snapshot refresh more than once per second.
-	if now.Sub(s.lastLogEvent) < time.Second {
+// geoIPRefreshLoop keeps the IP-geolocation database current: it checks daily
+// and downloads the new month's DB-IP City Lite file when the month rolls over
+// (EnsureFresh is a no-op when the loaded month is already current). The first
+// run downloads the database in the background, so the map fills in once it
+// completes without blocking the dashboard.
+func (s *Server) geoIPRefreshLoop(ctx context.Context) {
+	if s.GeoIP == nil {
 		return
 	}
-
-	// Extract peer IP from the "peer" extra field ("nodeID@IP:port").
-	if peer, ok := entry.Extra["peer"].(string); ok {
-		if at := strings.Index(peer, "@"); at > 0 {
-			hostPort := peer[at+1:]
-			if col := strings.LastIndex(hostPort, ":"); col > 0 {
-				s.peerActivity.Store(hostPort[:col], now)
-			}
+	refresh := func() {
+		if err := s.GeoIP.EnsureFresh(ctx, time.Now()); err != nil {
+			log.Printf("geoip refresh failed: %v", err)
 		}
 	}
+	refresh()
 
-	// Consensus events: trigger an immediate snapshot refresh.
-	if strings.Contains(entry.Msg, "enterNewRound") || strings.Contains(entry.Msg, "enterPrevote") ||
-		strings.Contains(entry.Msg, "enterPrecommit") || strings.Contains(entry.Msg, "finalizing commit") ||
-		strings.Contains(entry.Msg, "executed block") {
-		s.lastLogEvent = now
-		go func() {
-			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			defer cancel()
-			snap := s.fetchSnapshot(ctx)
-			s.setSnapshot(snap)
-			timeStr := snap.Timestamp.Format("15:04:05")
-			s.broadcastWS(wsMsg{Type: "time", Data: timeStr})
-			if snap.Status != nil {
-				s.broadcastWS(wsMsg{Type: "status", Data: snap.Status})
-			}
-			if snap.Peers != nil {
-				s.broadcastWS(wsMsg{Type: "peers", Data: snap.Peers})
-			}
-			if report := s.buildVotesReport(snap); report != nil {
-				s.broadcastWS(wsMsg{Type: "votes", Data: report})
-			}
-			s.broadcastWS(wsMsg{Type: "checks", Data: s.buildCheckData(snap)})
-			if snap.Signing != nil {
-				s.broadcastWS(wsMsg{Type: "signing", Data: snap.Signing})
-			}
-		}()
+	ticker := time.NewTicker(geoIPRefreshInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			refresh()
+		}
 	}
 }
 
-// --- Log API ---
-
-func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
-	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
-	defer cancel()
-
-	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("Access-Control-Allow-Origin", "*")
-
-	if s.Backend == nil {
-		json.NewEncoder(w).Encode(map[string]interface{}{"lines": []LogEntry{}, "count": 0})
+// asnRefreshLoop keeps the IP-to-ASN database current, checking daily and
+// downloading only when the month rolls over, mirroring geoIPRefreshLoop.
+func (s *Server) asnRefreshLoop(ctx context.Context) {
+	if s.ASN == nil {
 		return
 	}
-
-	nInt := 200
-	if n := r.URL.Query().Get("n"); n != "" {
-		fmt.Sscanf(n, "%d", &nInt) // invalid values leave nInt at 200 (intentional)
-	}
-
-	lines, err := s.Backend.FetchLogs(ctx, nInt)
-	if err != nil {
-		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
-		return
-	}
-	entries := make([]LogEntry, len(lines))
-	for i, l := range lines {
-		e := parseGnolandLog(l)
-		e.Msg = strings.ReplaceAll(e.Msg, "/root/", "~/")
-		entries[i] = e
-	}
-	json.NewEncoder(w).Encode(map[string]interface{}{"lines": entries, "count": len(entries)})
-}
-
-// --- Diagnose API ---
-
-func (s *Server) handleDiagnose(w http.ResponseWriter, r *http.Request) {
-	ip := r.URL.Query().Get("ip")
-	moniker := r.URL.Query().Get("moniker")
-	if ip == "" {
-		http.Error(w, "missing ip parameter", 400)
-		return
-	}
-
-	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
-	defer cancel()
-
-	report := &DiagReport{
-		IP:      ip,
-		Moniker: moniker,
-		Time:    time.Now().UTC().Format("2006-01-02T15:04:05Z"),
-	}
-
-	rpcURL := fmt.Sprintf("http://%s:%s", ip, rpcPort)
-	pc := node.NewClient(rpcURL, 5*time.Second)
-
-	// Check 1: RPC reachable
-	status, err := pc.GetStatus(ctx)
-	if err != nil {
-		report.Checks = append(report.Checks, DiagCheck{"rpc", "err", "Not reachable: " + err.Error()})
-		// Check what we know from our P2P side
-		snap := s.getSnapshot()
-		if snap != nil {
-			for _, p := range snap.Peers {
-				if p.RemoteIP == ip && p.PeerHeight != "" {
-					report.Checks = append(report.Checks, DiagCheck{"gossip", "ok", fmt.Sprintf("We see their consensus at h=%s (from our P2P)", p.PeerHeight)})
-					break
-				}
-			}
-		}
-	} else {
-		report.Checks = append(report.Checks, DiagCheck{"rpc", "ok", "Reachable at " + rpcURL})
-
-		// Check 2: Block height
-		h := status.SyncInfo.LatestBlockHeight
-		snap := s.getSnapshot()
-		nh := "?"
-		var nhInt int
-		if snap != nil && snap.Consensus != nil {
-			nh = snap.Consensus.Height
-			fmt.Sscanf(nh, "%d", &nhInt)
-		}
-
-		// Check 2: Block height vs network
-		var hInt int
-		fmt.Sscanf(h, "%d", &hInt)
-		if nhInt > 0 && hInt < nhInt-10 {
-			report.Checks = append(report.Checks, DiagCheck{"height", "warn", fmt.Sprintf("Block %s — behind network (%s)", h, nh)})
-		} else {
-			report.Checks = append(report.Checks, DiagCheck{"height", "ok", fmt.Sprintf("Block %s (network: %s)", h, nh)})
-		}
-
-		// Check 3: Catching up
-		if status.SyncInfo.CatchingUp {
-			report.Checks = append(report.Checks, DiagCheck{"sync", "warn", "Node is catching up"})
-		} else {
-			report.Checks = append(report.Checks, DiagCheck{"sync", "ok", "Synced"})
-		}
-
-		// Check 4: Block time
-		bt := status.SyncInfo.LatestBlockTime
-		if strings.HasPrefix(bt, "1970") {
-			// Check if genesis is in the future — if so, this is expected
-			genTime := s.Client.Names.GenesisTime
-			preGenesis := false
-			if genTime != "" {
-				if gt, err := time.Parse(time.RFC3339, genTime); err == nil && time.Now().Before(gt) {
-					preGenesis = true
-				}
-			}
-			if preGenesis {
-				report.Checks = append(report.Checks, DiagCheck{"block_time", "ok", "Pre-genesis — waiting for genesis time"})
-			} else {
-				report.Checks = append(report.Checks, DiagCheck{"block_time", "warn", "Block time is 1970 — no blocks produced yet"})
-			}
-		} else {
-			report.Checks = append(report.Checks, DiagCheck{"block_time", "ok", bt})
-		}
-
-		// Check 5: Validator info
-		if status.ValidatorInfo.Address != "" {
-			valAddr := status.ValidatorInfo.Address
-			pubKey := s.Client.Names.PubKey(valAddr)
-			valDetail := "Address: " + valAddr
-			if pubKey != "" {
-				valDetail += " | PubKey: " + pubKey
-			}
-			report.Checks = append(report.Checks, DiagCheck{"validator", "ok", valDetail})
-			// Add copyable "addr pubkey # moniker" line
-			valLine := valAddr
-			if pubKey != "" {
-				valLine += " " + pubKey
-			}
-			peerMoniker := status.NodeInfo.Moniker
-			if moniker != "" {
-				peerMoniker = moniker
-			}
-			valLine += " # " + peerMoniker
-			report.Checks = append(report.Checks, DiagCheck{"val_identity", "ok", valLine})
-			if moniker != "" {
-				s.Client.Names.Register(valAddr, moniker)
-			}
-		} else {
-			report.Checks = append(report.Checks, DiagCheck{"validator", "warn", "No validator address — not a validator?"})
-		}
-
-		// Check 6: Moniker
-		if moniker != "" && status.NodeInfo.Moniker != moniker {
-			report.Checks = append(report.Checks, DiagCheck{"moniker", "warn", fmt.Sprintf("Reports as '%s' but we expected '%s'", status.NodeInfo.Moniker, moniker)})
-		} else {
-			report.Checks = append(report.Checks, DiagCheck{"moniker", "ok", "Reports as: " + status.NodeInfo.Moniker})
-		}
-
-		// Check 7: Network/chain
-		ourNet := ""
-		if snap != nil && snap.Status != nil {
-			ourNet = snap.Status.NodeInfo.Network
-		}
-		if ourNet != "" && status.NodeInfo.Network != ourNet {
-			report.Checks = append(report.Checks, DiagCheck{"chain", "err", "Different chain! Theirs: " + status.NodeInfo.Network + ", ours: " + ourNet})
-		} else {
-			report.Checks = append(report.Checks, DiagCheck{"chain", "ok", status.NodeInfo.Network})
-		}
-
-		// Check 8: Version
-		ourVer := ""
-		if snap != nil && snap.Status != nil {
-			ourVer = snap.Status.NodeInfo.Version
-		}
-		if ourVer != "" && status.NodeInfo.Version != ourVer {
-			report.Checks = append(report.Checks, DiagCheck{"version", "warn", fmt.Sprintf("%s (ours: %s)", status.NodeInfo.Version, ourVer)})
-		} else {
-			report.Checks = append(report.Checks, DiagCheck{"version", "ok", status.NodeInfo.Version})
-		}
-
-		// Check 9: Net address
-		report.Checks = append(report.Checks, DiagCheck{"net_address", "ok", status.NodeInfo.NetAddress})
-
-		// Check 10: Their peers
-		theirPeers, peerErr := pc.GetNetInfo(ctx)
-		if peerErr != nil {
-			report.Checks = append(report.Checks, DiagCheck{"their_peers", "warn", "Cannot fetch: " + peerErr.Error()})
-		} else {
-			if len(theirPeers) == 0 {
-				report.Checks = append(report.Checks, DiagCheck{"their_peers", "err", "No peers connected!"})
-			} else if len(theirPeers) < 3 {
-				report.Checks = append(report.Checks, DiagCheck{"their_peers", "warn", fmt.Sprintf("%d peers (low)", len(theirPeers))})
-			} else {
-				report.Checks = append(report.Checks, DiagCheck{"their_peers", "ok", fmt.Sprintf("%d peers", len(theirPeers))})
-			}
-		}
-
-		// Check 11: Their validator set
-		theirVals, valErr := pc.GetValidators(ctx)
-		if valErr != nil {
-			report.Checks = append(report.Checks, DiagCheck{"their_valset", "warn", "Cannot fetch: " + valErr.Error()})
-		} else {
-			ourValCount := 0
-			if snap != nil && snap.Consensus != nil {
-				ourValCount = len(snap.Consensus.Votes)
-			}
-			if ourValCount > 0 && len(theirVals) != ourValCount {
-				report.Checks = append(report.Checks, DiagCheck{"their_valset", "warn", fmt.Sprintf("%d validators (we have %d)", len(theirVals), ourValCount)})
-			} else {
-				report.Checks = append(report.Checks, DiagCheck{"their_valset", "ok", fmt.Sprintf("%d validators", len(theirVals))})
-			}
-		}
-
-		// Check 12: Consensus state + gossip (combined)
-		cs, _, csErr := pc.GetConsensusState(ctx)
-		gossipLag := false
-		if snap != nil {
-			for _, p := range snap.Peers {
-				if p.RemoteIP == ip && p.PeerHeight != "" {
-					var ourView int
-					fmt.Sscanf(p.PeerHeight, "%d", &ourView)
-					if ourView > 0 && nhInt > 0 && ourView < nhInt-10 {
-						gossipLag = true
-						report.Checks = append(report.Checks, DiagCheck{"gossip", "warn", fmt.Sprintf("We see their consensus at h=%d but network is at %s — P2P gossip lag (sentry issue?)", ourView, nh)})
-					} else if ourView > 0 {
-						report.Checks = append(report.Checks, DiagCheck{"gossip", "ok", fmt.Sprintf("We see their consensus at h=%d", ourView)})
-					}
-					break
-				}
-			}
-		}
-
-		if csErr != nil {
-			report.Checks = append(report.Checks, DiagCheck{"consensus", "err", "Cannot fetch: " + csErr.Error()})
-		} else {
-			csInfo := fmt.Sprintf("h=%s r=%s s=%s", cs.Height, cs.Round, cs.Step)
-			var csHInt int
-			fmt.Sscanf(cs.Height, "%d", &csHInt)
-			if nhInt > 0 && csHInt < nhInt-10 {
-				report.Checks = append(report.Checks, DiagCheck{"consensus", "warn", fmt.Sprintf("%s — behind network (%s)", csInfo, nh)})
-			} else if gossipLag {
-				report.Checks = append(report.Checks, DiagCheck{"consensus", "warn", fmt.Sprintf("%s — their RPC ok but our P2P view is stale", csInfo)})
-			} else {
-				report.Checks = append(report.Checks, DiagCheck{"consensus", "ok", csInfo})
-			}
-
-			// Check round age — only warn if THEY are stuck but network is not
-			if cs.RoundStartTime != "" {
-				if t, err := time.Parse(time.RFC3339Nano, cs.RoundStartTime); err == nil {
-					age := time.Since(t).Truncate(time.Second)
-					networkAlsoStuck := false
-					if snap != nil && snap.Consensus != nil && snap.Consensus.RoundStartTime != "" {
-						if nt, err := time.Parse(time.RFC3339Nano, snap.Consensus.RoundStartTime); err == nil {
-							networkAlsoStuck = time.Since(nt) > 30*time.Second
-						}
-					}
-					if age > 30*time.Second && !networkAlsoStuck {
-						report.Checks = append(report.Checks, DiagCheck{"round_age", "warn", fmt.Sprintf("Stuck on round for %s (network is advancing)", age)})
-					} else if age > 30*time.Second {
-						report.Checks = append(report.Checks, DiagCheck{"round_age", "ok", fmt.Sprintf("%s (network also stuck)", age)})
-					} else {
-						report.Checks = append(report.Checks, DiagCheck{"round_age", "ok", age.String()})
-					}
-				}
-			}
+	refresh := func() {
+		if err := s.ASN.EnsureFresh(ctx, time.Now()); err != nil {
+			log.Printf("asn refresh failed: %v", err)
 		}
 	}
+	refresh()
 
-	// Store and broadcast
-	s.diagmu.Lock()
-	s.diagData[ip] = report
-	s.diagmu.Unlock()
-
-	s.broadcastWS(wsMsg{Type: "diagnose", Data: report})
-
-	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("Access-Control-Allow-Origin", "*")
-	json.NewEncoder(w).Encode(report)
-}
-
-func (s *Server) handleDiagnoseList(w http.ResponseWriter, r *http.Request) {
-	s.diagmu.RLock()
-	defer s.diagmu.RUnlock()
-	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("Access-Control-Allow-Origin", "*")
-	json.NewEncoder(w).Encode(s.diagData)
+	ticker := time.NewTicker(geoIPRefreshInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			refresh()
+		}
+	}
 }
 
 // generateID generates a random hex string suitable for use as a subscription ID.
@@ -1412,10 +983,7 @@ func (s *Server) handlePushEntities(w http.ResponseWriter, r *http.Request) {
 	snap := s.getSnapshot()
 	resp := push.EntitiesResponse{
 		ChainStuckSecs:  s.PushManager.ChainStuckSecs(),
-		MissedBlocksPct: s.PushManager.MissedBlocksPct(),
-	}
-	if snap != nil && snap.Signing != nil {
-		resp.WindowSize = snap.Signing.WindowSize
+		MaxMissedInARow: s.PushManager.MaxMissedInARow(),
 	}
 
 	if snap != nil && snap.Consensus != nil {
@@ -1454,107 +1022,102 @@ func (s *Server) handlePushTest(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 }
 
-func (s *Server) handleNotifyChannels(w http.ResponseWriter, r *http.Request) {
+// --- Notify-test API (opt-in, token-gated) ---
+
+// authorizeNotifyTest gates the notify-test endpoints. The feature is disabled
+// (404) unless NotifyTestToken is set; when it is, requests must carry a
+// matching bearer token. Returns the HTTP status to send on failure.
+func (s *Server) authorizeNotifyTest(r *http.Request) (int, bool) {
+	if s.NotifyTestToken == "" {
+		return http.StatusNotFound, false
+	}
+	const prefix = "Bearer "
+	h := r.Header.Get("Authorization")
+	if !strings.HasPrefix(h, prefix) {
+		return http.StatusUnauthorized, false
+	}
+	tok := strings.TrimPrefix(h, prefix)
+	if subtle.ConstantTimeCompare([]byte(tok), []byte(s.NotifyTestToken)) != 1 {
+		return http.StatusUnauthorized, false
+	}
+	return http.StatusOK, true
+}
+
+// handleNotifyTargets lists the configured Shoutrrr notification URLs as
+// redacted metadata (never the raw URLs, which hold secrets).
+func (s *Server) handleNotifyTargets(w http.ResponseWriter, r *http.Request) {
+	if code, ok := s.authorizeNotifyTest(r); !ok {
+		http.Error(w, http.StatusText(code), code)
+		return
+	}
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
 	if s.PushManager == nil {
 		http.Error(w, "notifications not configured", http.StatusServiceUnavailable)
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]interface{}{
-		"channels": s.PushManager.NotifyChannels(),
-	})
+	json.NewEncoder(w).Encode(map[string]any{"targets": s.PushManager.NotifyTargets()})
 }
 
+// handleNotifyTest sends a custom message to one configured Shoutrrr URL,
+// selected by index. The caller can never supply an arbitrary URL.
 func (s *Server) handleNotifyTest(w http.ResponseWriter, r *http.Request) {
-	if s.PushManager == nil {
-		http.Error(w, "notifications not configured", http.StatusServiceUnavailable)
+	if code, ok := s.authorizeNotifyTest(r); !ok {
+		http.Error(w, http.StatusText(code), code)
 		return
 	}
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	var req struct {
-		Channels []int  `json:"channels"`
-		Message  string `json:"message"`
+	if s.PushManager == nil {
+		http.Error(w, "notifications not configured", http.StatusServiceUnavailable)
+		return
 	}
+	var req struct {
+		Index   int    `json:"index"`
+		Message string `json:"message"`
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 64<<10)
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "invalid request body", http.StatusBadRequest)
 		return
 	}
-	results := s.PushManager.SendTestNotify(req.Channels, req.Message)
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]interface{}{
-		"results": results,
-	})
+	if req.Index < 0 || req.Index >= s.PushManager.NotifyTargetCount() {
+		http.Error(w, "notify target index out of range", http.StatusBadRequest)
+		return
+	}
+	msg := req.Message
+	if msg == "" {
+		msg = "gnockpit test notification"
+	}
+	if err := s.PushManager.SendTestNotify(req.Index, msg); err != nil {
+		// The send error embeds the raw notification URL (with its secret), so
+		// it must never reach the client — log it server-side and return a
+		// generic message.
+		log.Printf("notify-test: send to target %d failed: %v", req.Index, err)
+		http.Error(w, "notification delivery failed", http.StatusBadGateway)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // Run starts the web server, publish loop, and log streamer.
-// computeGenesisSHA hashes the local genesis file to avoid hardcoding.
-func (s *Server) computeGenesisSHA() string {
-	candidates := []string{}
-	if s.GenesisPath != "" {
-		candidates = append(candidates, s.GenesisPath)
-	}
-	if s.DataDir != "" {
-		candidates = append(candidates, s.DataDir+"/config/genesis.json")
-	}
-	// Try relative paths
-	entries, _ := os.ReadDir(".")
-	for _, e := range entries {
-		if e.IsDir() {
-			candidates = append(candidates, e.Name()+"/gnoland-data/config/genesis.json")
-		}
-	}
-	for _, p := range candidates {
-		data, err := os.ReadFile(p)
-		if err != nil {
-			continue
-		}
-		h := sha256.Sum256(data)
-		return fmt.Sprintf("%x", h)
-	}
-	return ""
-}
-
-// gnoRootDir tries to find the gno source directory.
-func (s *Server) gnoRootDir() string {
-	// Check GNOROOT env
-	if v := os.Getenv("GNOROOT"); v != "" {
-		return v
-	}
-	// Common locations
-	for _, p := range []string{"/root/gno", "/usr/local/src/gno"} {
-		if fi, err := os.Stat(p); err == nil && fi.IsDir() {
-			return p
-		}
-	}
-	return ""
-}
-
 func (s *Server) Run(ctx context.Context) error {
-	s.genesisSHA = s.computeGenesisSHA()
-	if Version == "" {
-		if out, err := exec.Command("git", "describe", "--tags", "--always", "--dirty").Output(); err == nil {
-			Version = strings.TrimSpace(string(out))
-		}
-	}
 	go s.publishLoop(ctx)
-	go s.logStreamLoop(ctx)
+	go s.valoperRefreshLoop(ctx)
+	go s.geoIPRefreshLoop(ctx)
+	go s.asnRefreshLoop(ctx)
+	go s.statusLinkRefreshLoop(ctx)
+	go s.historyPruneLoop(ctx)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", s.handleIndex)
 	mux.HandleFunc("/api", s.handleAPI)
-	mux.HandleFunc("/api/version", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]string{"version": Version})
-	})
 	mux.HandleFunc("/api/boot", s.handleBootStatus)
-	mux.HandleFunc("/api/reset-cache", s.handleResetCache)
-	mux.HandleFunc("/api/logs", s.handleLogs)
-	mux.HandleFunc("/api/diagnose", s.handleDiagnose)
-	mux.HandleFunc("/api/diagnoses", s.handleDiagnoseList)
-	mux.HandleFunc("/events", s.handleEvents)
 	mux.HandleFunc("/ws", s.handleWS)
 	mux.HandleFunc("/manifest.json", s.handleManifest)
 	mux.HandleFunc("/icon.svg", s.handleIconSVG)
@@ -1567,8 +1130,12 @@ func (s *Server) Run(ctx context.Context) error {
 	mux.HandleFunc("/api/push/subscribe", s.handlePushSubscribe)
 	mux.HandleFunc("/api/push/entities", s.handlePushEntities)
 	mux.HandleFunc("/api/push/test", s.handlePushTest)
-	mux.HandleFunc("/api/notify/channels", s.handleNotifyChannels)
+	mux.HandleFunc("/api/notify/targets", s.handleNotifyTargets)
 	mux.HandleFunc("/api/notify/test", s.handleNotifyTest)
+	mux.HandleFunc("/api/links", s.handleLinks)
+	mux.HandleFunc("/api/status", s.handleStatus)
+	mux.HandleFunc("/api/stats", s.handleStats)
+	mux.HandleFunc("/badge.svg", s.handleBadge)
 
 	srv := &http.Server{
 		Addr:    s.Addr,
@@ -1582,6 +1149,6 @@ func (s *Server) Run(ctx context.Context) error {
 		srv.Shutdown(shutdownCtx)
 	}()
 
-	log.Printf("gnockpit web: http://%s", s.Addr)
+	log.Printf("gnockpit listening on http://%s", s.Addr)
 	return srv.ListenAndServe()
 }

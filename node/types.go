@@ -107,6 +107,9 @@ type Peer struct {
 	NodeID     string `json:"node_id"`
 	Version    string `json:"version,omitempty"`     // software version from net_info
 	P2PAddress string `json:"p2p_address,omitempty"` // nodeID@ip:port
+	// From net_info node_info (advertised identity).
+	ExternalAddress string `json:"external_address,omitempty"` // advertised host from node_info.net_address
+	RPCURL          string `json:"rpc_url,omitempty"`          // peer RPC endpoint that answered, if any
 	// Populated by network/consensus queries
 	CatchingUp bool   `json:"catching_up,omitempty"`
 	ValAddress string `json:"val_address,omitempty"` // validator address if known
@@ -126,6 +129,18 @@ type Peer struct {
 	HasProposal    bool   `json:"has_proposal,omitempty"`
 	PeerPrevotes   string `json:"peer_prevotes,omitempty"`
 	PeerPrecommits string `json:"peer_precommits,omitempty"`
+	// Geolocation from the IP (DB-IP City Lite), for the network map.
+	Lat     float64 `json:"lat,omitempty"`
+	Lon     float64 `json:"lon,omitempty"`
+	City    string  `json:"city,omitempty"`
+	Country string  `json:"country,omitempty"`
+	// Cloud provider from the IP's ASN (DB-IP ASN Lite).
+	ASN      uint   `json:"asn,omitempty"`
+	ASOrg    string `json:"as_org,omitempty"`
+	Provider string `json:"provider,omitempty"`
+	// Source is true when this peer is one of gnockpit's own configured RPC
+	// endpoints (a "source" node), matched by node ID.
+	Source bool `json:"source,omitempty"`
 }
 
 // Validator represents a validator from the validator set.
@@ -179,8 +194,10 @@ type VoteInfo struct {
 	VotingPower string `json:"voting_power,omitempty"`
 	Prevoted    bool   `json:"prevoted"`
 	Precommit   bool   `json:"precommit"`
-	SignRate    int    `json:"sign_rate"`    // signed blocks / window (0-100%)
-	AvgBlockMs  int    `json:"avg_block_ms"` // avg block time when proposing (ms)
+	Missed100   int    `json:"missed_100"`         // blocks missed in the last 100 (only while in the set)
+	Inactive    bool   `json:"inactive,omitempty"` // missing-blocks alert firing (missed the streak threshold)
+	AvgBlockMs  int    `json:"avg_block_ms"`       // avg block time when proposing (ms)
+	Missed24h   int    `json:"missed_24h"`         // blocks missed in the last 24h (0 until history accrues)
 }
 
 // PeerState from dump_consensus_state peer_state (base64-encoded).
@@ -189,34 +206,10 @@ type PeerState struct {
 	Precommits string `json:"precommits"`
 }
 
-// CheckResult represents a verification check.
-type CheckResult struct {
-	Name     string `json:"name"`
-	Status   string `json:"status"` // "ok", "mismatch", "missing", "n/a", "error"
-	Got      string `json:"got,omitempty"`
-	Expected string `json:"expected,omitempty"`
-	Message  string `json:"message,omitempty"`
-}
-
 // SystemInfo holds system resource information.
 type SystemInfo struct {
-	DiskUsed        string `json:"disk_used"`
-	DiskTotal       string `json:"disk_total"`
-	DiskPercent     int    `json:"disk_percent"`
-	LoadAvg         string `json:"load_avg"`
-	NumCPU          int    `json:"num_cpu"`
-	MemUsed         string `json:"mem_used"`
-	MemTotal        string `json:"mem_total"`
-	MemPercent      int    `json:"mem_percent"`
-	GnolandUptime   string `json:"gnoland_uptime"`
-	GnolandMem      string `json:"gnoland_mem"`
-	ChainDataSize   string `json:"chain_data_size"`
-	NodeTime        string `json:"node_time"`
-	GenesisTime     string `json:"genesis_time,omitempty"`
-	GitBranch       string `json:"git_branch,omitempty"`
-	GitSHA          string `json:"git_sha,omitempty"`
-	BinaryHash      string `json:"binary_hash,omitempty"`
-	PersistentPeers string `json:"persistent_peers,omitempty"`
+	NodeTime    string `json:"node_time"`
+	GenesisTime string `json:"genesis_time,omitempty"`
 }
 
 // MissingValidator identifies a validator that did not sign a block.
@@ -235,6 +228,7 @@ type BlockInfo struct {
 	Proposer string             `json:"proposer"` // proposer name
 	BlockMs  int                `json:"block_ms"` // time since previous block in ms; 0 for oldest block in window
 	AppHash  string             `json:"app_hash"`
+	NumTxs   int                `json:"num_txs"` // transactions in this block
 }
 
 // ValidatorPerf tracks per-validator performance metrics.
@@ -246,17 +240,21 @@ type ValidatorPerf struct {
 
 // SigningStats summarizes validator signing activity over recent blocks.
 type SigningStats struct {
-	WindowSize      int                       `json:"window_size"`
-	ActiveCount     int                       `json:"active_count"`      // validators below missed-blocks threshold
-	TotalCount      int                       `json:"total_count"`       // validators in set
-	MissedBlocksPct int                       `json:"missed_blocks_pct"` // threshold used for active count
-	BFTThreshold    int                       `json:"bft_threshold"`     // minimum needed for consensus
-	Margin          int                       `json:"margin"`            // active - threshold (how many can go down)
-	CanAddOne       bool                      `json:"can_add_one"`       // safe to add a validator?
-	AvgBlockMs      int                       `json:"avg_block_ms"`      // average block time across window
-	RecentBlocks    []BlockInfo               `json:"recent_blocks"`
-	ValidatorSigns  map[string]int            `json:"validator_signs"` // addr -> sign count in window
-	ValidatorPerf   map[string]*ValidatorPerf `json:"validator_perf"`  // addr -> perf stats
+	WindowSize       int                       `json:"window_size"`
+	ActiveCount      int                       `json:"active_count"`        // validators currently signing (not in the missed-in-a-row state)
+	TotalCount       int                       `json:"total_count"`         // validators in set
+	MaxMissedInARow  int                       `json:"max_missed_in_a_row"` // consecutive missed/signed blocks that flip a validator down/up
+	BFTThreshold     int                       `json:"bft_threshold"`       // minimum needed for consensus
+	Margin           int                       `json:"margin"`              // active - threshold (how many can go down)
+	CanAddOne        bool                      `json:"can_add_one"`         // safe to add a validator?
+	AvgBlockMs       int                       `json:"avg_block_ms"`        // average block time across window
+	RecentBlocks     []BlockInfo               `json:"recent_blocks"`
+	ValidatorSigning map[string]ValSigning     `json:"validator_signing"` // addr -> signing detail over the window
+	ValidatorPerf    map[string]*ValidatorPerf `json:"validator_perf"`    // addr -> perf stats
+	// Inactive is the set of validator addresses currently flagged down (missed
+	// the streak). Derived from the alert detector and stored on the snapshot so
+	// consumers read it without touching the detector's single-goroutine state.
+	Inactive map[string]bool `json:"-"`
 }
 
 // Snapshot holds all data fetched in one cycle by the background fetcher.
@@ -265,9 +263,7 @@ type Snapshot struct {
 	Consensus      *ConsensusState `json:"consensus,omitempty"`
 	Peers          []Peer          `json:"peers,omitempty"`
 	Validators     []Validator     `json:"validators,omitempty"`
-	GenesisSHA     string          `json:"genesis_sha256"`
 	AppHashLast    string          `json:"apphash_last"`
-	Uptime         string          `json:"uptime,omitempty"`
 	RoundStartTime string          `json:"round_start_time,omitempty"`
 	System         *SystemInfo     `json:"system,omitempty"`
 	Signing        *SigningStats   `json:"signing,omitempty"`
@@ -284,5 +280,6 @@ type VotesReport struct {
 	RoundStartTime string           `json:"round_start_time,omitempty"`
 	Config         *ConsensusConfig `json:"config,omitempty"`
 	Validators     []VoteInfo       `json:"validators"`
+	MissedSince    string           `json:"missed_since,omitempty"` // RFC3339; oldest block still in history (how far back missed counts reach)
 	Timestamp      time.Time        `json:"timestamp"`
 }

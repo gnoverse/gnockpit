@@ -1,0 +1,9 @@
+# Keep the build context small and free of local-only artifacts.
+.git
+.github/
+.ignore/
+.playwright-mcp/
+*.png
+*.md
+Dockerfile
+.dockerignore

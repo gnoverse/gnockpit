@@ -94,6 +94,33 @@ func truncate(s string, n int) string {
 	return s[:n] + "..."
 }
 
+// SeedNamesFromGenesis streams the node's /genesis endpoint to seed the name
+// registry with validator names and the genesis time. Only the head of the
+// (very large) genesis document is read; the download is aborted as soon as the
+// validators array has been parsed, well before the trailing app_state.
+func (c *Client) SeedNamesFromGenesis(ctx context.Context) error {
+	url := c.RPCURL + "/genesis"
+	start := time.Now()
+
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	if err != nil {
+		return err
+	}
+	resp, err := c.HTTP.Do(req)
+	dur := time.Since(start)
+	if err != nil {
+		if c.LogFn != nil {
+			c.LogFn("GET", url, 0, dur, err)
+		}
+		return err
+	}
+	defer resp.Body.Close()
+	if c.LogFn != nil {
+		c.LogFn("GET", url, resp.StatusCode, dur, nil)
+	}
+	return c.Names.SeedFromGenesisStream(resp.Body)
+}
+
 // GetStatus fetches /status.
 func (c *Client) GetStatus(ctx context.Context) (*Status, error) {
 	var result struct {
@@ -131,14 +158,41 @@ func (c *Client) GetNetInfo(ctx context.Context) ([]Peer, error) {
 	}
 	peers := make([]Peer, len(result.Peers))
 	for i, p := range result.Peers {
+		// gno's /net_info leaves node_info.id empty; the node ID is present
+		// only embedded in net_address ("nodeID@host:port").
+		nodeID := p.NodeInfo.ID
+		if nodeID == "" {
+			nodeID = nodeIDFromNetAddress(p.NodeInfo.NetAddress)
+		}
 		peers[i] = Peer{
-			Moniker:  p.NodeInfo.Moniker,
-			RemoteIP: p.RemoteIP,
-			NodeID:   p.NodeInfo.ID,
-			Version:  p.NodeInfo.Version,
+			Moniker:         p.NodeInfo.Moniker,
+			RemoteIP:        p.RemoteIP,
+			NodeID:          nodeID,
+			Version:         p.NodeInfo.Version,
+			ExternalAddress: hostFromNetAddress(p.NodeInfo.NetAddress),
 		}
 	}
 	return peers, nil
+}
+
+// hostFromNetAddress extracts the host from a "nodeID@host:port" net address.
+func hostFromNetAddress(na string) string {
+	if at := strings.Index(na, "@"); at >= 0 {
+		na = na[at+1:]
+	}
+	if c := strings.LastIndex(na, ":"); c > 0 {
+		na = na[:c]
+	}
+	return na
+}
+
+// nodeIDFromNetAddress extracts the node ID from a "nodeID@host:port" net
+// address, or "" if no node ID is present.
+func nodeIDFromNetAddress(na string) string {
+	if at := strings.Index(na, "@"); at > 0 {
+		return na[:at]
+	}
+	return ""
 }
 
 // GetNPeers fetches /net_info and returns just the peer count.
@@ -178,6 +232,25 @@ func (c *Client) GetValidators(ctx context.Context) ([]Validator, error) {
 	return vals, nil
 }
 
+// GetValidatorSetAt returns the set of validator addresses at a given height,
+// used to tell an established-but-down validator (in the set from the window's
+// start) from one that was only added mid-window.
+func (c *Client) GetValidatorSetAt(ctx context.Context, height int) (map[string]bool, error) {
+	var result struct {
+		Validators []struct {
+			Address string `json:"address"`
+		} `json:"validators"`
+	}
+	if err := c.rpcGetJSON(ctx, fmt.Sprintf("/validators?height=%d", height), &result); err != nil {
+		return nil, err
+	}
+	set := make(map[string]bool, len(result.Validators))
+	for _, v := range result.Validators {
+		set[v.Address] = true
+	}
+	return set, nil
+}
+
 // GetBlock fetches /block at a given height.
 func (c *Client) GetBlock(ctx context.Context, height int) (json.RawMessage, error) {
 	path := fmt.Sprintf("/block?height=%d", height)
@@ -207,8 +280,59 @@ func (c *Client) GetBlockAppHash(ctx context.Context, height int) (string, error
 	return block.Block.Header.AppHash, nil
 }
 
-// GetSigningStats fetches the last N blocks and computes validator signing stats.
-func (c *Client) GetSigningStats(ctx context.Context, currentHeight int, window int, missedBlocksPct int) (*SigningStats, error) {
+// CommitInfo holds the header and precommit signatures for a single height,
+// fetched via /commit (lighter than /block — no transaction body).
+type CommitInfo struct {
+	Height          string
+	Time            string
+	ProposerAddress string
+	AppHash         string
+	NumTxs          int
+	// Precommits has one entry per validator slot; "null" means that validator
+	// did not sign. These are the signatures that finalized THIS height.
+	Precommits []json.RawMessage
+}
+
+// GetCommit fetches /commit at a height: the block header plus the precommits
+// that finalized that height. Unlike a block's last_commit (which proves the
+// previous height), /commit?height=H is the signing record for H itself.
+func (c *Client) GetCommit(ctx context.Context, height int) (*CommitInfo, error) {
+	path := fmt.Sprintf("/commit?height=%d", height)
+	var result struct {
+		SignedHeader struct {
+			Header struct {
+				Height          string `json:"height"`
+				Time            string `json:"time"`
+				ProposerAddress string `json:"proposer_address"`
+				AppHash         string `json:"app_hash"`
+				NumTxs          string `json:"num_txs"`
+			} `json:"header"`
+			Commit struct {
+				Precommits []json.RawMessage `json:"precommits"`
+			} `json:"commit"`
+		} `json:"signed_header"`
+	}
+	if err := c.rpcGetJSON(ctx, path, &result); err != nil {
+		return nil, err
+	}
+	h := result.SignedHeader.Header
+	numTxs, _ := strconv.Atoi(h.NumTxs)
+	return &CommitInfo{
+		Height:          h.Height,
+		Time:            h.Time,
+		ProposerAddress: h.ProposerAddress,
+		AppHash:         h.AppHash,
+		NumTxs:          numTxs,
+		Precommits:      result.SignedHeader.Commit.Precommits,
+	}, nil
+}
+
+// GetSigningStats fetches the last `window` blocks (capped at 100) and returns
+// per-validator signing activity, scoped to the blocks each validator was
+// actually in the set for — a newly added validator is not charged for blocks
+// before it joined. Active/inactive state and the BFT margin are derived by the
+// caller from the streaks, since they need cross-cycle hysteresis.
+func (c *Client) GetSigningStats(ctx context.Context, currentHeight int, window int) (*SigningStats, error) {
 	if currentHeight < 2 || window < 1 {
 		return nil, fmt.Errorf("need height >= 2 and window >= 1")
 	}
@@ -219,70 +343,44 @@ func (c *Client) GetSigningStats(ctx context.Context, currentHeight int, window 
 		window = 100
 	}
 
-	// Get validator set for address->name mapping
-	valAddrs := map[string]bool{}
-	if vals, err := c.GetValidators(ctx); err == nil {
-		for _, v := range vals {
-			valAddrs[v.Address] = true
-		}
+	vals, err := c.GetValidators(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("validators: %w", err)
+	}
+	valAddrs := make(map[string]bool, len(vals))
+	for _, v := range vals {
+		valAddrs[v.Address] = true
 	}
 
 	stats := &SigningStats{
-		WindowSize:      window,
-		TotalCount:      len(valAddrs),
-		MissedBlocksPct: missedBlocksPct,
-		ValidatorSigns:  make(map[string]int),
+		WindowSize:   window,
+		TotalCount:   len(valAddrs),
+		BFTThreshold: (len(valAddrs)*2)/3 + 1,
 	}
 
 	startHeight := currentHeight - window + 1
+	// Valset at the window's first block (best-effort): lets computeSigning tell
+	// an established-but-down validator from one only added mid-window. If this
+	// fails (nil), a validator down for the whole window looks never-eligible and
+	// won't be flagged that cycle — it recovers once the lookup succeeds.
+	atStart, _ := c.GetValidatorSetAt(ctx, startHeight)
+
+	// Pass 1: fetch each commit, collecting the ordered per-block signer sets
+	// (oldest first) and block metadata.
+	var signers []map[string]bool
+	var proposers []string
 	for h := startHeight; h <= currentHeight; h++ {
-		raw, err := c.GetBlock(ctx, h)
+		commit, err := c.GetCommit(ctx, h)
 		if err != nil {
 			continue
 		}
-		var block struct {
-			BlockMeta struct {
-				Header struct {
-					Height          string `json:"height"`
-					Time            string `json:"time"`
-					ProposerAddress string `json:"proposer_address"`
-				} `json:"header"`
-			} `json:"block_meta"`
-			Block struct {
-				Header struct {
-					AppHash string `json:"app_hash"`
-				} `json:"header"`
-				LastCommit struct {
-					Precommits []json.RawMessage `json:"precommits"`
-				} `json:"last_commit"`
-			} `json:"block"`
-		}
-		if err := json.Unmarshal(raw, &block); err != nil {
-			continue
-		}
-
-		// Total = precommit slots in this block (actual valset at that height)
-		blockTotal := len(block.Block.LastCommit.Precommits)
+		// Total = precommit slots for this height (the valset at that height).
+		blockTotal := len(commit.Precommits)
 		if blockTotal == 0 {
 			blockTotal = len(valAddrs) // fallback for genesis block
 		}
-		proposerAddr := block.BlockMeta.Header.ProposerAddress
-		proposerName := proposerAddr
-		if c.Names != nil {
-			if n := c.Names.Name(proposerAddr); n != proposerAddr {
-				proposerName = n
-			}
-		}
-		bi := BlockInfo{
-			Height:   block.BlockMeta.Header.Height,
-			Time:     block.BlockMeta.Header.Time,
-			Total:    blockTotal,
-			Proposer: proposerName,
-			AppHash:  block.Block.Header.AppHash,
-		}
-
 		signed := map[string]bool{}
-		for _, pc := range block.Block.LastCommit.Precommits {
+		for _, pc := range commit.Precommits {
 			if string(pc) == "null" {
 				continue
 			}
@@ -291,22 +389,43 @@ func (c *Client) GetSigningStats(ctx context.Context, currentHeight int, window 
 			}
 			if json.Unmarshal(pc, &vote) == nil && vote.ValidatorAddress != "" {
 				signed[vote.ValidatorAddress] = true
-				stats.ValidatorSigns[vote.ValidatorAddress]++
 			}
 		}
-		bi.Signers = len(signed)
+		proposerName := commit.ProposerAddress
+		if c.Names != nil {
+			if n := c.Names.Name(commit.ProposerAddress); n != commit.ProposerAddress {
+				proposerName = n
+			}
+		}
+		stats.RecentBlocks = append(stats.RecentBlocks, BlockInfo{
+			Height:   commit.Height,
+			Time:     commit.Time,
+			Total:    blockTotal,
+			Signers:  len(signed),
+			Proposer: proposerName,
+			AppHash:  commit.AppHash,
+			NumTxs:   commit.NumTxs,
+		})
+		signers = append(signers, signed)
+		proposers = append(proposers, commit.ProposerAddress)
+	}
+
+	stats.ValidatorSigning = computeSigning(signers, atStart, valAddrs)
+
+	// Pass 2: per-block missing set — count a validator only for blocks where it
+	// was in the set (From <= block index).
+	for i := range stats.RecentBlocks {
 		for addr := range valAddrs {
-			if !signed[addr] {
+			if stats.ValidatorSigning[addr].From <= i && !signers[i][addr] {
 				mv := MissingValidator{Address: addr}
 				if c.Names != nil {
 					if n := c.Names.Name(addr); n != addr {
 						mv.Name = n
 					}
 				}
-				bi.Missing = append(bi.Missing, mv)
+				stats.RecentBlocks[i].Missing = append(stats.RecentBlocks[i].Missing, mv)
 			}
 		}
-		stats.RecentBlocks = append(stats.RecentBlocks, bi)
 	}
 
 	// Compute block times and per-proposer perf
@@ -326,27 +445,7 @@ func (c *Client) GetSigningStats(ctx context.Context, currentHeight int, window 
 		stats.RecentBlocks[i].BlockMs = ms
 		totalBlockMs += int64(ms)
 		blockCount++
-		// Track proposer perf — use the proposer address from the block header
-		pAddr := ""
-		for _, blk := range stats.RecentBlocks[i:i+1] {
-			// Find the proposer address (not name)
-			for addr := range valAddrs {
-				if c.Names != nil {
-					n := c.Names.Name(addr)
-					if n == blk.Proposer || addr == blk.Proposer {
-						pAddr = addr
-						break
-					}
-				}
-				if addr == blk.Proposer {
-					pAddr = addr
-					break
-				}
-			}
-		}
-		if pAddr == "" {
-			pAddr = stats.RecentBlocks[i].Proposer
-		}
+		pAddr := proposers[i] // proposer_address from the block header
 		if _, ok := stats.ValidatorPerf[pAddr]; !ok {
 			stats.ValidatorPerf[pAddr] = &ValidatorPerf{}
 		}
@@ -361,25 +460,11 @@ func (c *Client) GetSigningStats(ctx context.Context, currentHeight int, window 
 		if perf.Proposed > 0 {
 			perf.AvgBlockMs = perf.AvgBlockMs / perf.Proposed
 		}
-		perf.Signed = stats.ValidatorSigns[addr]
+		perf.Signed = stats.ValidatorSigning[addr].Signed
 	}
 
-	// Count active (missed fewer than missedBlocksPct% of blocks in window)
-	for addr := range valAddrs {
-		signed := stats.ValidatorSigns[addr]
-		missed := window - signed
-		missedPct := missed * 100 / window
-		if missedPct < missedBlocksPct {
-			stats.ActiveCount++
-		}
-	}
-
-	stats.BFTThreshold = (stats.TotalCount*2)/3 + 1
-	stats.Margin = stats.ActiveCount - stats.BFTThreshold
-	// Can add one if: with total+1 validators, active count still >= new threshold
-	newThreshold := ((stats.TotalCount + 1) * 2 / 3) + 1
-	stats.CanAddOne = stats.ActiveCount >= newThreshold
-
+	// ActiveCount / Margin / CanAddOne depend on the hysteretic up/down state and
+	// are set by the caller after the alert detector runs.
 	return stats, nil
 }
 
@@ -482,12 +567,12 @@ func (c *Client) GetConsensusState(ctx context.Context) (*ConsensusState, []Dump
 		}
 		var ps struct {
 			RoundState struct {
-				Height     string   `json:"height"`
-				Round      string   `json:"round"`
+				Height     string      `json:"height"`
+				Round      string      `json:"round"`
 				Step       json.Number `json:"step"`
-				Proposal   bool     `json:"proposal"`
-				Prevotes   bitArray `json:"prevotes"`
-				Precommits bitArray `json:"precommits"`
+				Proposal   bool        `json:"proposal"`
+				Prevotes   bitArray    `json:"prevotes"`
+				Precommits bitArray    `json:"precommits"`
 			} `json:"round_state"`
 		}
 		if err := json.Unmarshal(decoded, &ps); err == nil {
@@ -497,14 +582,12 @@ func (c *Client) GetConsensusState(ctx context.Context) (*ConsensusState, []Dump
 			dp.Proposal = ps.RoundState.Proposal
 
 			// Format prevotes/precommits as "count/total"
-			pvBits := ps.RoundState.Prevotes.toBitmask()
-			pcBits := ps.RoundState.Precommits.toBitmask()
 			bits, _ := strconv.Atoi(ps.RoundState.Prevotes.Bits)
 			if bits == 0 {
 				bits = valCount
 			}
-			dp.Prevotes = fmt.Sprintf("%d/%d", popcount(pvBits), bits)
-			dp.Precommits = fmt.Sprintf("%d/%d", popcount(pcBits), bits)
+			dp.Prevotes = fmt.Sprintf("%d/%d", ps.RoundState.Prevotes.count(), bits)
+			dp.Precommits = fmt.Sprintf("%d/%d", ps.RoundState.Precommits.count(), bits)
 		}
 
 		dumpPeers = append(dumpPeers, dp)
@@ -546,8 +629,9 @@ func (c *Client) GetConsensusState(ctx context.Context) (*ConsensusState, []Dump
 	// If votes field was empty (common at genesis/stuck consensus),
 	// extract vote info from peer bitmasks
 	if !votesFromField {
-		// Find best bitmask (highest prevote count) across all peers
-		var bestPrevote, bestPrecommit uint64
+		// Find the fullest bit-array (most bits set) across all peers.
+		var bestPrevote, bestPrecommit bitArray
+		bestPVCount, bestPCCount := -1, -1
 		for _, rp := range rawPeers {
 			decoded, err := base64.StdEncoding.DecodeString(rp.PeerState)
 			if err != nil {
@@ -562,21 +646,19 @@ func (c *Client) GetConsensusState(ctx context.Context) (*ConsensusState, []Dump
 			if err := json.Unmarshal(decoded, &ps); err != nil {
 				continue
 			}
-			pv := ps.RoundState.Prevotes.toBitmask()
-			pc := ps.RoundState.Precommits.toBitmask()
-			if popcount(pv) > popcount(bestPrevote) {
-				bestPrevote = pv
+			if n := ps.RoundState.Prevotes.count(); n > bestPVCount {
+				bestPVCount, bestPrevote = n, ps.RoundState.Prevotes
 			}
-			if popcount(pc) > popcount(bestPrecommit) {
-				bestPrecommit = pc
+			if n := ps.RoundState.Precommits.count(); n > bestPCCount {
+				bestPCCount, bestPrecommit = n, ps.RoundState.Precommits
 			}
 		}
 
-		// Apply bitmask to validators
+		// Apply to validators by index (handles sets larger than 64).
 		for i := range cs.Votes {
 			if i < valCount {
-				cs.Votes[i].Prevoted = (bestPrevote & (1 << uint(i))) != 0
-				cs.Votes[i].Precommit = (bestPrecommit & (1 << uint(i))) != 0
+				cs.Votes[i].Prevoted = bestPrevote.bit(i)
+				cs.Votes[i].Precommit = bestPrecommit.bit(i)
 			}
 		}
 	}
@@ -589,12 +671,25 @@ type bitArray struct {
 	Elems []string `json:"elems"`
 }
 
-func (ba bitArray) toBitmask() uint64 {
-	if len(ba.Elems) == 0 {
-		return 0
+// bit reports whether validator index i has its bit set. The bit-array packs
+// bits little-endian across 64-bit words: index i is bit (i%64) of word (i/64).
+func (ba bitArray) bit(i int) bool {
+	w := i / 64
+	if w < 0 || w >= len(ba.Elems) {
+		return false
 	}
-	n, _ := strconv.ParseUint(ba.Elems[0], 10, 64)
-	return n
+	n, _ := strconv.ParseUint(ba.Elems[w], 10, 64)
+	return n&(1<<uint(i%64)) != 0
+}
+
+// count returns the number of set bits across all words.
+func (ba bitArray) count() int {
+	total := 0
+	for _, e := range ba.Elems {
+		n, _ := strconv.ParseUint(e, 10, 64)
+		total += popcount(n)
+	}
+	return total
 }
 
 func popcount(n uint64) int {
@@ -611,28 +706,77 @@ func isVotePresent(vote string) bool {
 	return vote != "" && vote != "nil-Vote"
 }
 
-// PeerClient creates a temporary client for querying a peer's RPC.
-func PeerClient(ip string, port string, timeout time.Duration) *Client {
-	return &Client{
-		RPCURL:  fmt.Sprintf("http://%s:%s", ip, port),
-		HTTP:    &http.Client{Timeout: timeout},
-		Timeout: timeout,
+// MatchDumpPeer resolves the dump_consensus_state peer entry for a connected
+// peer, preferring the unique, cryptographically-verified node ID over the
+// remote IP. IPs can be shared (multiple sentries behind one host) or ephemeral
+// for inbound peers, so matching on IP first misattributes consensus state.
+func MatchDumpPeer(nodeID, ip string, byNodeID, byIP map[string]*DumpPeer) *DumpPeer {
+	if nodeID != "" {
+		if d, ok := byNodeID[nodeID]; ok {
+			return d
+		}
 	}
+	if ip != "" {
+		if d, ok := byIP[ip]; ok {
+			return d
+		}
+	}
+	return nil
 }
 
-// QueryPeerStatus queries a peer's RPC for its status. Returns nil on error.
-func QueryPeerStatus(ctx context.Context, ip, port string, timeout time.Duration, logFn LogFunc) (*Status, error) {
-	pc := PeerClient(ip, port, timeout)
-	pc.LogFn = logFn
-	return pc.GetStatus(ctx)
+// rpcCandidates returns the ordered RPC base URLs to probe for a peer: the
+// default RPC port on the observed IP and on the advertised external host, then
+// HTTPS on 443. Empty and duplicate hosts are skipped.
+func rpcCandidates(remoteIP, externalHost, rpcPort string) []string {
+	var out []string
+	seen := map[string]bool{}
+	add := func(u string) {
+		if u != "" && !seen[u] {
+			seen[u] = true
+			out = append(out, u)
+		}
+	}
+	if remoteIP != "" {
+		add("http://" + remoteIP + ":" + rpcPort)
+	}
+	if externalHost != "" {
+		add("http://" + externalHost + ":" + rpcPort)
+	}
+	if externalHost != "" {
+		add("https://" + externalHost + ":443")
+	}
+	if remoteIP != "" {
+		add("https://" + remoteIP + ":443")
+	}
+	return out
 }
 
-// QueryPeerConsensus queries a peer's RPC for consensus state. Returns nil on error.
-func QueryPeerConsensus(ctx context.Context, ip, port string, timeout time.Duration, logFn LogFunc) (*ConsensusState, error) {
-	pc := PeerClient(ip, port, timeout)
-	pc.LogFn = logFn
-	cs, _, err := pc.GetConsensusState(ctx)
-	return cs, err
+// probePeerStatus tries each candidate RPC URL until one answers /status with a
+// node ID matching expectNodeID (when both are known). Returns the working
+// client and status, or nil if none qualify. Bounded to roughly timeout total.
+func probePeerStatus(ctx context.Context, candidates []string, expectNodeID string, timeout time.Duration, logFn LogFunc) (*Client, *Status) {
+	for _, url := range candidates {
+		if ctx.Err() != nil {
+			break
+		}
+		pc := &Client{RPCURL: url, HTTP: &http.Client{Timeout: timeout}, Timeout: timeout, LogFn: logFn}
+		st, err := pc.GetStatus(ctx)
+		if err != nil {
+			continue
+		}
+		rpcNodeID := st.NodeInfo.ID
+		if rpcNodeID == "" && st.NodeInfo.NetAddress != "" {
+			if at := strings.Index(st.NodeInfo.NetAddress, "@"); at > 0 {
+				rpcNodeID = st.NodeInfo.NetAddress[:at]
+			}
+		}
+		// Reject a response from a different node sharing the IP.
+		if expectNodeID != "" && rpcNodeID != "" && rpcNodeID != expectNodeID {
+			continue
+		}
+		return pc, st
+	}
+	return nil, nil
 }
 
 // QueryAllPeers queries all peers in parallel for their status and optionally consensus state.
@@ -663,14 +807,20 @@ func QueryAllPeers(ctx context.Context, peers []Peer, rpcPort string, timeout ti
 		go func(idx int, peer Peer) {
 			defer wg.Done()
 
-			status, err := QueryPeerStatus(ctx, peer.RemoteIP, rpcPort, timeout, logFn)
-			if err != nil {
+			// Bound all per-peer RPC work (probe + peer count + consensus) to one
+			// timeout budget so a single slow peer can't stall the snapshot.
+			pctx, cancel := context.WithTimeout(ctx, timeout)
+			defer cancel()
+
+			candidates := rpcCandidates(peer.RemoteIP, peer.ExternalAddress, rpcPort)
+			pc, status := probePeerStatus(pctx, candidates, peer.NodeID, timeout, logFn)
+			if pc == nil {
+				// Unreachable on every candidate RPC. Not an error condition —
+				// most peers don't expose a reachable RPC. Best-effort role from
+				// the moniker; the RPC column shows nothing available.
 				results[idx].Height = "timeout"
-				results[idx].Error = err.Error()
-				// Check if moniker matches a validator in the active set
 				if monikerIsVal[peer.Moniker] {
 					results[idx].Role = "val"
-					// Try to resolve the address from known mapping
 					if addr, ok := names.AddrByMoniker(peer.Moniker); ok {
 						results[idx].ValAddress = addr
 					}
@@ -680,42 +830,14 @@ func QueryAllPeers(ctx context.Context, peers []Peer, rpcPort string, timeout ti
 				return
 			}
 
+			// Reachable: node ID was verified inside probePeerStatus.
+			results[idx].RPCURL = pc.RPCURL
 			results[idx].Height = status.SyncInfo.LatestBlockHeight
 			results[idx].CatchingUp = status.SyncInfo.CatchingUp
-
-			// CRITICAL: verify the RPC response belongs to THIS peer.
-			// Extract node-id from the RPC response and compare to the peer's node-id.
-			// On shared IPs (e.g., gnocore), the RPC may return a DIFFERENT node's info.
-			rpcNodeID := ""
-			if na := status.NodeInfo.NetAddress; na != "" {
-				if atIdx := strings.Index(na, "@"); atIdx > 0 {
-					rpcNodeID = na[:atIdx]
-				}
-			}
-			if status.NodeInfo.ID != "" {
-				rpcNodeID = status.NodeInfo.ID
-			}
-
-			rpcMatchesPeer := rpcNodeID == "" || rpcNodeID == peer.NodeID
-			if rpcMatchesPeer {
-				// RPC confirmed to be this peer — safe to register
-				results[idx].ValAddress = status.ValidatorInfo.Address
-				results[idx].ValPubKey = names.PubKey(status.ValidatorInfo.Address)
-				if status.ValidatorInfo.Address != "" && peer.Moniker != "" {
-					names.Register(status.ValidatorInfo.Address, peer.Moniker)
-				}
-			} else {
-				// RPC belongs to a different node on the same IP — register THAT node's mapping
-				// but don't assign it to THIS peer
-				rpcMoniker := status.NodeInfo.Moniker
-				if status.ValidatorInfo.Address != "" && rpcMoniker != "" {
-					names.Register(status.ValidatorInfo.Address, rpcMoniker)
-				}
-				// Try to resolve this peer from known mappings instead
-				if addr, ok := names.AddrByMoniker(peer.Moniker); ok {
-					results[idx].ValAddress = addr
-					results[idx].ValPubKey = names.PubKey(addr)
-				}
+			results[idx].ValAddress = status.ValidatorInfo.Address
+			results[idx].ValPubKey = names.PubKey(status.ValidatorInfo.Address)
+			if status.ValidatorInfo.Address != "" && peer.Moniker != "" {
+				names.Register(status.ValidatorInfo.Address, peer.Moniker)
 			}
 
 			if valAddrs[results[idx].ValAddress] {
@@ -730,22 +852,19 @@ func QueryAllPeers(ctx context.Context, peers []Peer, rpcPort string, timeout ti
 				results[idx].Role = "full"
 			}
 
-			// Fetch peer count from their /net_info
-			pc2 := PeerClient(peer.RemoteIP, rpcPort, timeout)
-			pc2.LogFn = logFn
-			if n, err := pc2.GetNPeers(ctx); err == nil {
+			// Reuse the working client for the peer's own peer count.
+			if n, err := pc.GetNPeers(pctx); err == nil {
 				results[idx].NPeers = n
 			}
 
 			if withConsensus {
-				cs, err := QueryPeerConsensus(ctx, peer.RemoteIP, rpcPort, timeout, logFn)
-				if err != nil {
+				if cs, _, err := pc.GetConsensusState(pctx); err == nil {
+					results[idx].Round = cs.Round
+					results[idx].Step = cs.Step
+				} else {
 					results[idx].Round = "-"
 					results[idx].Step = "-"
-					return
 				}
-				results[idx].Round = cs.Round
-				results[idx].Step = cs.Step
 			}
 		}(i, p)
 	}

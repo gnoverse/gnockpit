@@ -2,18 +2,26 @@
 
 ## What is this?
 
-gnockpit is a real-time monitoring dashboard for gno.land validator nodes. It's a single Go binary that connects to a gnoland node's Tendermint RPC and provides both a web UI and CLI tools.
+gnockpit is a real-time monitoring dashboard for gno.land validator nodes. It's a single Go binary (`gnockpit [flags]`, no subcommands) that connects to one or more gnoland RPC endpoints (`-rpc`, repeatable), consolidates their views, and serves a live web dashboard, with web-push/PWA alerts and external (Shoutrrr) notifications.
 
 ## Architecture
 
 ```
-main.go          — CLI entry point (cobra commands: status, peers, web, etc.)
+main.go          — CLI entry point (single command: starts the web dashboard)
 node/            — RPC client + types (pure data layer, no UI)
   client.go      — HTTP client for Tendermint RPC (/status, /net_info, /validators, etc.)
+  sources.go     — Sources: an ordered set of RPC endpoints polled together; best-source pick for global data + peer union/dedup (MergePeers)
+  ip.go          — public-IP validation (IsPublicIP): only public IPs are ever geolocated or displayed
   types.go       — All data types (Status, Peer, Validator, Snapshot, SigningStats, etc.)
   validators.go  — NameRegistry: maps validator addresses ↔ monikers, persists to JSON
-web/             — Web dashboard
+  geoip.go       — DB-IP City Lite: IP → coordinates + country (auto-downloaded, monthly)
+  asn.go         — DB-IP ASN Lite: IP → ASN + cloud provider (auto-downloaded, monthly)
+history/         — SQLite store of per-block validator signing (shares the push DB handle)
+  store.go       — RecordBlocks / MissedInWindow / MissedByWindows / Prune; missed-block windows
+web/             — Web dashboard + HTTP API
   server.go      — HTTP/WebSocket server, background data fetcher, system info collector
+  status.go      — /api/status: health + curated network state / recent blocks / peer + validator columns
+  stats.go       — /api/stats: missed-block windows, provider/country aggregates, set health, Nakamoto
   index.html     — Single-page dashboard (embedded via go:embed, vanilla JS, no framework)
 ```
 
@@ -21,14 +29,14 @@ web/             — Web dashboard
 
 ### Data Flow
 1. `server.go` runs a **publish loop** every N seconds (default 5s)
-2. Each cycle calls `fetchSnapshot()` which queries the local RPC for status, validators, consensus, peers, block signing stats
+2. Each cycle calls `fetchSnapshot()` which polls every configured source (`node/sources.go: Poll`): global chain data (status, validators, consensus, signing) comes from the freshest reachable source; peers are unioned across all reachable sources and deduped by node ID (`MergePeers`) before their RPCs are probed. All sources down → `snap.Error` drives the "connecting to sources" banner.
 3. The snapshot is broadcast to all connected WebSocket clients as typed messages: `status`, `peers`, `votes`, `checks`, `signing`
 4. `index.html` receives these messages and updates the DOM in-place
-5. Log lines are streamed from `journalctl` via a separate goroutine
+5. Each cycle also geolocates peers (`geoip`) and resolves their cloud provider (`asn`) — using each peer's resolved public IP only (peers with no usable public IP are geolocated to nothing and bucketed "Unknown" on the map) — and records the recent blocks' missing-validator sets into the `history` store (forward-only, deduped by height). This powers the network map, the Country/Provider columns, and per-validator missed-block windows (1h/24h/7d/30d/total). Validators inherit the country/provider of their correlated peer (matched via `ValAddress`), so validators no source is peered with have none.
 
 ### NameRegistry (validators.go)
 Maps validator addresses to human-readable monikers. This is critical because Tendermint RPC only returns addresses, not names. Discovery happens through:
-- **Genesis file** — validator names from genesis.json at startup
+- **Genesis (RPC)** — validator names and the genesis time are seeded at startup by streaming the node's `/genesis` endpoint, parsing only the head (the large `app_state` is never downloaded)
 - **Peer RPC queries** — when we query a peer's `/status`, we get their validator_info.address + moniker
 - **Node-ID verification** — on shared IPs (multiple nodes same IP), the RPC response's node_info.id is checked against the peer's P2P node-id before trusting the mapping
 - **Correlation** — unmatched validators are matched to unmatched peers heuristically
@@ -42,33 +50,30 @@ Fetches the last N blocks (default 100), extracts:
 - Block timestamps → compute per-proposer average block time
 - Sign rate per validator (signed/total as percentage)
 
-### Doctor (index.html: runDoctor)
-Client-side diagnostic checks that run on every data update:
-- Prevote/precommit threshold not reached
-- Vote gossip fragmentation (peers see different vote counts)
-- Split-height deadlock (validators at different consensus heights)
-- Consensus frozen (stuck for >5min or >1h)
-- Old-chain peers (peer height way higher = different genesis)
-- Validators not voting when network is stuck
+This is a live 100-block window. Longer-term **missed-block counts** come from the
+`history` store instead (Data Flow #5): it records each block's missing set forward
+and aggregates over 1h/24h/7d/30d/total via `MissedByWindows`. History is
+forward-only (never backfilled) and pruned past 31 days.
 
-### Diagnose (server.go: handleDiagnose)
-Per-node diagnostics triggered by clicking the 💡 button. Queries the target node's RPC and checks: reachability, height, sync, block time, validator status, chain-id match, version, peer count, consensus state, round age.
+### HTTP API (CORS-open JSON)
+- `/api/status` (status.go) — health summary (retrocompat `status`/`chain`/`height`/`reason`/`time`) plus `network`, `recent_blocks` (last 100), and per-`peers`/`validators` column data.
+- `/api/stats` (stats.go) — per-validator missed-block windows, provider + country aggregates, validator-set health, Nakamoto coefficient.
+- `/api` (server.go) — raw `Snapshot` dump (unstable shape; debugging).
+- Also: `/badge.svg`, `/ws`, `/api/boot`, `/api/push/*`, `/api/notify/*`.
 
 ## Important Patterns
 
 ### No hardcoded values
 Everything is auto-detected or configurable via flags. The tool works on any gno.land chain without code changes:
 - Chain ID → from RPC `/status`
-- Service name → from chain ID + `.service`
-- Genesis path → from `--data-dir` + `/config/genesis.json`
-- Validator names → discovered dynamically from peers
-- Gno source path → from `GNOROOT` env
+- Genesis time + validator names → streamed from RPC `/genesis` (head only)
+- Validator names → also discovered dynamically from peers
 
 ### Single HTML file
 `web/index.html` is a complete SPA with no build step. Vanilla JS, CSS variables for dark theme, no external dependencies. It's embedded in the binary via `go:embed`.
 
 ### WebSocket protocol
-Messages are JSON with `{type: string, data: any}`. Types: `status`, `peers`, `votes`, `checks`, `signing`, `time`, `log`, `diagnose`.
+Messages are JSON with `{type: string, data: any}`. Types: `snapshot` (full state on connect), `update` (batched periodic), and individual `status`, `peers`, `votes`, `checks`, `signing`, `time`.
 
 ### Scroll preservation
 `renderNetwork()` saves `window.scrollY` before DOM updates and restores it after, preventing the page from jumping during live updates.
@@ -84,12 +89,6 @@ Each card has `<h2 data-section="name">` that toggles `.collapsed` class. State 
 3. Call it in `web/server.go: fetchSnapshot()`
 4. Broadcast it in the publish loop
 5. Handle the WebSocket message in `web/index.html`
-
-### Adding a new doctor check
-Add to the `runDoctor()` function in `index.html`. Push to the `items` array with `{level: 'crit'|'warn'|'ok', title: string, detail: string, action: string}`.
-
-### Adding a new diagnose check
-Add to `handleDiagnose()` in `server.go`. Append to `report.Checks` with `DiagCheck{Name, Status, Detail}`.
 
 ### Adding a new peer table column
 1. Add `<th>` in the header row
@@ -110,10 +109,8 @@ Tests are minimal — focused on JSON parsing and name registry logic. The web U
 Typical systemd service:
 ```ini
 [Service]
-ExecStart=/usr/local/bin/gnockpit web \
+ExecStart=/usr/local/bin/gnockpit \
   --rpc http://127.0.0.1:26657 \
-  --data-dir /path/to/gnoland-data \
-  --service chainname.service \
   --port 8080 --addr 127.0.0.1 --interval 5s
 ```
 

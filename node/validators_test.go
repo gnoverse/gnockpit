@@ -1,8 +1,11 @@
 package node
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -25,20 +28,8 @@ func TestNameRegistry(t *testing.T) {
 	if got := r.NameWithUs("g1abc"); got != "node-abc" {
 		t.Errorf("NameWithUs(g1abc) = %q, want node-abc", got)
 	}
-	if !r.IsOurs("g1our") {
-		t.Error("expected IsOurs(g1our) = true")
-	}
-	if r.IsOurs("g1abc") {
-		t.Error("expected IsOurs(g1abc) = false")
-	}
 	if addr, ok := r.AddrByMoniker("node-abc"); !ok || addr != "g1abc" {
 		t.Errorf("AddrByMoniker(node-abc) = %q, %v", addr, ok)
-	}
-	if !r.IsKnownMoniker("node-def") {
-		t.Error("expected IsKnownMoniker(node-def) = true")
-	}
-	if r.IsKnownMoniker("unknown") {
-		t.Error("expected IsKnownMoniker(unknown) = false")
 	}
 }
 
@@ -83,20 +74,17 @@ func TestRegisterDoesNotOverwriteExisting(t *testing.T) {
 }
 
 func TestSeedFromGenesisDoesNotOverwriteExisting(t *testing.T) {
-	dir := t.TempDir()
-	namesPath := filepath.Join(dir, "names.json")
-	genesisPath := filepath.Join(dir, "genesis.json")
+	namesPath := filepath.Join(t.TempDir(), "names.json")
 
 	// User's preferred name in the registry.
 	os.WriteFile(namesPath, []byte(`{"g1abc":"my-custom-alice"}`), 0644)
-	// Genesis says the validator's name is "alice-from-genesis".
-	os.WriteFile(genesisPath, []byte(`{
-		"genesis_time": "2026-01-01T00:00:00Z",
-		"validators": [{"address": "g1abc", "name": "alice-from-genesis"}]
-	}`), 0644)
 
 	r := NewNameRegistryWithPersist(namesPath)
-	if err := r.SeedFromGenesis(genesisPath); err != nil {
+	// Genesis says the validator's name is "alice-from-genesis".
+	stream := strings.NewReader(`{"result":{"genesis":{` +
+		`"genesis_time":"2026-01-01T00:00:00Z",` +
+		`"validators":[{"address":"g1abc","name":"alice-from-genesis"}]}}}`)
+	if err := r.SeedFromGenesisStream(stream); err != nil {
 		t.Fatal(err)
 	}
 
@@ -106,20 +94,14 @@ func TestSeedFromGenesisDoesNotOverwriteExisting(t *testing.T) {
 }
 
 func TestSeedFromGenesisFillsGaps(t *testing.T) {
-	dir := t.TempDir()
-	namesPath := filepath.Join(dir, "names.json")
-	genesisPath := filepath.Join(dir, "genesis.json")
-
+	namesPath := filepath.Join(t.TempDir(), "names.json")
 	os.WriteFile(namesPath, []byte(`{"g1abc":"alice"}`), 0644)
-	os.WriteFile(genesisPath, []byte(`{
-		"validators": [
-			{"address": "g1abc", "name": "alice-from-genesis"},
-			{"address": "g1def", "name": "bob-from-genesis"}
-		]
-	}`), 0644)
 
 	r := NewNameRegistryWithPersist(namesPath)
-	if err := r.SeedFromGenesis(genesisPath); err != nil {
+	stream := strings.NewReader(`{"result":{"genesis":{"validators":[` +
+		`{"address":"g1abc","name":"alice-from-genesis"},` +
+		`{"address":"g1def","name":"bob-from-genesis"}]}}}`)
+	if err := r.SeedFromGenesisStream(stream); err != nil {
 		t.Fatal(err)
 	}
 
@@ -248,22 +230,88 @@ func TestEnsureName_KeepsUnknownValNWithoutCandidate(t *testing.T) {
 }
 
 func TestSeedFromGenesisUpgradesUnknownValN(t *testing.T) {
-	dir := t.TempDir()
-	namesPath := filepath.Join(dir, "names.json")
-	genesisPath := filepath.Join(dir, "genesis.json")
-
+	namesPath := filepath.Join(t.TempDir(), "names.json")
 	os.WriteFile(namesPath, []byte(`{"g1abc":"unknown-val-1"}`), 0644)
-	os.WriteFile(genesisPath, []byte(`{
-		"validators": [{"address": "g1abc", "name": "alice-from-genesis"}]
-	}`), 0644)
 
 	r := NewNameRegistryWithPersist(namesPath)
-	if err := r.SeedFromGenesis(genesisPath); err != nil {
+	stream := strings.NewReader(`{"result":{"genesis":{"validators":[` +
+		`{"address":"g1abc","name":"alice-from-genesis"}]}}}`)
+	if err := r.SeedFromGenesisStream(stream); err != nil {
 		t.Fatal(err)
 	}
 
 	if got := r.Name("g1abc"); got != "alice-from-genesis" {
 		t.Errorf("Name(g1abc) = %q, want alice-from-genesis (genesis must upgrade unknown-val-N)", got)
+	}
+}
+
+func TestSeedFromGenesisStream(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "names.json")
+	// Registry already knows g1abc (custom name) and a placeholder for g1def.
+	os.WriteFile(path, []byte(`{"g1abc":"my-alice","g1def":"unknown-val-1"}`), 0644)
+	r := NewNameRegistryWithPersist(path)
+
+	// An enveloped /genesis response. The app_state after the validators array is
+	// deliberately invalid JSON: a correct streaming parser stops at validators and
+	// never tokenizes app_state, so this must still succeed.
+	stream := strings.NewReader(`{"jsonrpc":"2.0","id":-1,"result":{"genesis":{` +
+		`"genesis_time":"2026-03-16T09:00:00Z",` +
+		`"chain_id":"test-13",` +
+		`"initial_height":"0",` +
+		`"consensus_params":{"block":{"max_tx_bytes":"1000000"}},` +
+		`"validators":[` +
+		`{"address":"g1abc","name":"alice-from-genesis"},` +
+		`{"address":"g1def","name":"bob-from-genesis"},` +
+		`{"address":"g1ghi","name":"carol-from-genesis"}` +
+		`],` +
+		`"app_hash":"",` +
+		`"app_state": @@@ this is deliberately not valid json @@@ }}}`)
+
+	if err := r.SeedFromGenesisStream(stream); err != nil {
+		t.Fatalf("SeedFromGenesisStream: %v", err)
+	}
+
+	if r.GenesisTime != "2026-03-16T09:00:00Z" {
+		t.Errorf("GenesisTime = %q, want 2026-03-16T09:00:00Z", r.GenesisTime)
+	}
+	// Existing real name preserved (registry is gospel).
+	if got := r.Name("g1abc"); got != "my-alice" {
+		t.Errorf("Name(g1abc) = %q, want my-alice (must not overwrite)", got)
+	}
+	// unknown-val-N placeholder upgraded to the real genesis name.
+	if got := r.Name("g1def"); got != "bob-from-genesis" {
+		t.Errorf("Name(g1def) = %q, want bob-from-genesis (placeholder upgrade)", got)
+	}
+	// Brand-new validator filled in.
+	if got := r.Name("g1ghi"); got != "carol-from-genesis" {
+		t.Errorf("Name(g1ghi) = %q, want carol-from-genesis (gap fill)", got)
+	}
+}
+
+func TestSeedFromValopers(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "names.json")
+	os.WriteFile(path, []byte(`{"g1real":"my-custom","g1placeholder":"unknown-val-1"}`), 0644)
+
+	r := NewNameRegistryWithPersist(path)
+	r.SeedFromValopers(map[string]string{
+		"g1real":        "valoper-real", // real name: must NOT be overwritten
+		"g1placeholder": "valoper-up",   // unknown-val-N: must be upgraded
+		"g1new":         "valoper-new",  // unseen: gap fill
+	})
+
+	if got := r.Name("g1real"); got != "my-custom" {
+		t.Errorf("Name(g1real) = %q, want my-custom (must not overwrite)", got)
+	}
+	if got := r.Name("g1placeholder"); got != "valoper-up" {
+		t.Errorf("Name(g1placeholder) = %q, want valoper-up (upgrade unknown-val-N)", got)
+	}
+	if got := r.Name("g1new"); got != "valoper-new" {
+		t.Errorf("Name(g1new) = %q, want valoper-new (gap fill)", got)
+	}
+	// Persisted to disk.
+	r2 := NewNameRegistryWithPersist(path)
+	if got := r2.Name("g1new"); got != "valoper-new" {
+		t.Errorf("after reload Name(g1new) = %q, want valoper-new", got)
 	}
 }
 
@@ -275,11 +323,10 @@ func TestSetOursPreservesRealName(t *testing.T) {
 	// Gnoland self-reports a different moniker — file must win.
 	r.SetOurs("g1us", "node1-from-gnoland")
 
-	if got := r.Name("g1us"); got != "my-custom-name" {
-		t.Errorf("Name(g1us) = %q, want my-custom-name", got)
-	}
-	if !r.IsOurs("g1us") {
-		t.Error("expected IsOurs(g1us) = true (tracking must still work)")
+	// NameWithUs verifies both that the custom name is preserved and that
+	// ours-tracking still works (the "(us)" suffix).
+	if got := r.NameWithUs("g1us"); got != "my-custom-name (us)" {
+		t.Errorf("NameWithUs(g1us) = %q, want my-custom-name (us)", got)
 	}
 }
 
@@ -311,20 +358,56 @@ func TestSetOursFillsGap(t *testing.T) {
 	}
 }
 
-func TestBitArrayToBitmask(t *testing.T) {
+func TestNameRegistryConcurrentSave(t *testing.T) {
+	// Persist path makes Register() call save(); many goroutines registering at
+	// once must not race the map read inside save(). Run under -race to verify.
+	path := filepath.Join(t.TempDir(), "names.json")
+	r := NewNameRegistryWithPersist(path)
+	var wg sync.WaitGroup
+	for i := 0; i < 64; i++ {
+		wg.Add(1)
+		go func(n int) {
+			defer wg.Done()
+			r.Register(fmt.Sprintf("g1addr%02d", n), fmt.Sprintf("node-%02d", n))
+		}(i)
+	}
+	wg.Wait()
+	if got := r.Name("g1addr00"); got != "node-00" {
+		t.Errorf("Name(g1addr00) = %q, want node-00", got)
+	}
+}
+
+func TestBitArrayCount(t *testing.T) {
 	tests := []struct {
 		ba   bitArray
-		want uint64
+		want int
 	}{
-		{bitArray{Bits: "6", Elems: []string{"35"}}, 35},
-		{bitArray{Bits: "6", Elems: []string{"0"}}, 0},
-		{bitArray{Bits: "7", Elems: []string{"107"}}, 107},
-		{bitArray{}, 0},
+		{bitArray{Bits: "6", Elems: []string{"35"}}, 3},  // 0b100011
+		{bitArray{Bits: "6", Elems: []string{"0"}}, 0},   // none
+		{bitArray{Bits: "7", Elems: []string{"107"}}, 5}, // 0b1101011
+		{bitArray{}, 0}, // empty
+		{bitArray{Bits: "65", Elems: []string{"5", "1"}}, 3}, // bits 0,2 in word0 + bit 0 of word1 (index 64)
 	}
 	for _, tt := range tests {
-		if got := tt.ba.toBitmask(); got != tt.want {
-			t.Errorf("bitArray{%v}.toBitmask() = %d, want %d", tt.ba.Elems, got, tt.want)
+		if got := tt.ba.count(); got != tt.want {
+			t.Errorf("bitArray{%v}.count() = %d, want %d", tt.ba.Elems, got, tt.want)
 		}
+	}
+}
+
+func TestBitArrayBit(t *testing.T) {
+	// Two 64-bit words: word0 = 5 (bits 0,2), word1 = 1 (bit 0 => validator index 64).
+	// Exercises the >64-validator path that the old single-word decoder dropped.
+	ba := bitArray{Bits: "66", Elems: []string{"5", "1"}}
+	want := map[int]bool{0: true, 1: false, 2: true, 3: false, 63: false, 64: true, 65: false}
+	for i, w := range want {
+		if got := ba.bit(i); got != w {
+			t.Errorf("bit(%d) = %v, want %v", i, got, w)
+		}
+	}
+	// Out-of-range index must be false, not panic.
+	if ba.bit(999) {
+		t.Error("bit(999) = true, want false (out of range)")
 	}
 }
 
