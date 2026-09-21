@@ -54,6 +54,33 @@ appear for the same peer, the earlier `-rpc` in flag order wins.
 | `--asn-db` | `/tmp/gnockpit-asn.mmdb` | DB-IP ASN Lite mmdb powering cloud-provider detection; auto-downloaded and refreshed monthly. Empty disables it. |
 | `--hide-sources` | false | Hide the configured source nodes from the peers list |
 | `--chain-name` | (chain-id) | Display name for the chain in titles and the app icon; defaults to the chain-id (e.g. `test13` for chain-id `test-13`) |
+| `--analytics` | (off) | Load a third-party analytics script in the dashboard; only `simple-analytics` is supported. See Analytics. |
+
+## Analytics
+
+gnockpit ships with **no analytics and no third-party origins at all**. The
+dashboard is a single self-contained HTML file: nothing about your node, your
+peers or your visitors leaves the browser unless you turn it on.
+
+`--analytics simple-analytics` injects the [Simple Analytics](https://www.simpleanalytics.com)
+snippet at the end of `<body>`:
+
+```bash
+gnockpit --analytics simple-analytics
+```
+
+That loads `scripts.simpleanalyticscdn.com/latest.js` (async, so it never blocks
+first paint) plus the `queue.simpleanalyticscdn.com/noscript.gif` fallback pixel
+for visitors without JavaScript. Simple Analytics is cookie-free and collects no
+personal data, so the dashboard still needs no consent banner. Pageviews land
+under whatever hostname the browser is on, so add that hostname in the Simple
+Analytics dashboard.
+
+This is off by default on purpose: a gnockpit usually watches its operator's own
+validator, and a private infrastructure dashboard should not report to a third
+party that the operator did not choose. Only enable it on an instance you publish.
+
+An unknown provider name is rejected at startup rather than silently ignored.
 
 ## Name Registry
 
