@@ -54,6 +54,8 @@ appear for the same peer, the earlier `-rpc` in flag order wins.
 | `--asn-db` | `/tmp/gnockpit-asn.mmdb` | DB-IP ASN Lite mmdb powering cloud-provider detection; auto-downloaded and refreshed monthly. Empty disables it. |
 | `--hide-sources` | false | Hide the configured source nodes from the peers list |
 | `--chain-name` | (chain-id) | Display name for the chain in titles and the app icon; defaults to the chain-id (e.g. `test13` for chain-id `test-13`) |
+| `--link` | (none) | Extra header link button, `"Title\|URL"`; repeatable |
+| `--status-link` | (none) | Header link with a live status dot, `"Title\|URL"`; repeatable. BetterStack status pages only for now: the dot reflects `<URL>/index.json` |
 | `--analytics` | (off) | Load a third-party analytics script in the dashboard; only `simple-analytics` is supported. See Analytics. |
 
 ## Analytics
