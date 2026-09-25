@@ -38,6 +38,7 @@ var (
 	flagStatusLinks     stringSlice
 	flagHideSources     bool
 	flagChainName       string
+	flagAnalytics       string
 )
 
 // stringSlice is a flag.Value that accumulates one entry per occurrence,
@@ -83,6 +84,7 @@ func main() {
 	flag.Var(&flagStatusLinks, "status-link", `header link with a live status dot, "Title|URL" (BetterStack status pages only for now — the dot reflects <URL>/index.json), repeatable`)
 	flag.BoolVar(&flagHideSources, "hide-sources", false, "hide the configured source nodes from the peers list")
 	flag.StringVar(&flagChainName, "chain-name", "", "display name for the chain in titles and the app icon; defaults to the chain-id (e.g. \"test13\" for chain-id \"test-13\")")
+	flag.StringVar(&flagAnalytics, "analytics", "", "load a third-party analytics script in the dashboard; only \"simple-analytics\" is supported. Off by default: a self-hosted dashboard reports to nobody unless you ask it to.")
 
 	flag.Parse()
 	if flag.NArg() > 0 {
@@ -100,6 +102,13 @@ func main() {
 func run() error {
 	ctx, cancel := newContext()
 	defer cancel()
+
+	// Validated before anything is opened or polled, so a typo fails at
+	// startup rather than silently collecting nothing.
+	analytics, err := web.ParseAnalytics(flagAnalytics)
+	if err != nil {
+		return err
+	}
 
 	sources := newSources(ctx)
 	addr := fmt.Sprintf("%s:%d", flagWebAddr, flagWebPort)
@@ -135,6 +144,7 @@ func run() error {
 	srv.ChainStuckSecs = flagChainStuckSecs
 	srv.HideSources = flagHideSources
 	srv.ChainName = flagChainName
+	srv.Analytics = analytics
 	srv.PushManager = pushMgr
 
 	for _, spec := range flagLinks {

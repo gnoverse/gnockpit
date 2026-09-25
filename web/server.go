@@ -88,6 +88,7 @@ type Server struct {
 	StatusLinks     []*StatusLink  // header links with a live BetterStack status dot
 	HideSources     bool           // hide the configured source nodes from the peers list
 	ChainName       string         // display name for the chain; defaults to the chain-id when empty
+	Analytics       Analytics      // third-party analytics snippet injected into the dashboard (zero value = none)
 }
 
 // NewServer creates a new web server.
@@ -319,7 +320,7 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
-	w.Write(data)
+	w.Write(s.Analytics.inject(data))
 }
 
 func (s *Server) handleIconSVG(w http.ResponseWriter, r *http.Request) {
