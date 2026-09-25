@@ -72,7 +72,7 @@ func ChainColor(chain string) Color {
 	// djb2 hash
 	h := uint32(5381)
 	for i := 0; i < len(chain); i++ {
-		h = (h*33) ^ uint32(chain[i])
+		h = (h * 33) ^ uint32(chain[i])
 	}
 	hue := int(h % 360)
 	return Color{

@@ -1,0 +1,55 @@
+name: test
+
+# A pull request used to get zero checks: release.yml fires only on the
+# refactor/slim-down branch and on v* tags, so statusCheckRollup on #8 was
+# literally empty when it merged. The tests already existed and simply never ran
+# on anyone else's machine, which matters most for the dependabot pull requests,
+# since nothing was verifying the bumps they propose.
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  # A superseded run on the same ref is wasted work; cancel it. Unlike release,
+  # nothing here publishes, so cancelling mid-flight loses nothing.
+  group: test-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+
+      # Pinned by SHA like every action in release.yml: a mutable tag on a
+      # workflow that runs against pull request code is a supply-chain hole.
+      - name: Set up Go
+        uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: go test
+        run: go test -race ./...
+
+      # gofmt is not in `go vet`, and an unformatted file is the cheapest
+      # review comment there is. -l prints offenders and exits 0, so the
+      # failure has to be made explicit.
+      - name: gofmt
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "these files are not gofmt'd:"
+            echo "$unformatted"
+            exit 1
+          fi

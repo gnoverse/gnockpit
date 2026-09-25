@@ -22,6 +22,7 @@ web/             — Web dashboard + HTTP API
   server.go      — HTTP/WebSocket server, background data fetcher, system info collector
   status.go      — /api/status: health + curated network state / recent blocks / peer + validator columns
   stats.go       — /api/stats: missed-block windows, provider/country aggregates, set health, Nakamoto
+  analytics.go   — Optional third-party analytics snippet (--analytics), injected before </body>; off by default
   index.html     — Single-page dashboard (embedded via go:embed, vanilla JS, no framework)
 ```
 
@@ -71,6 +72,12 @@ Everything is auto-detected or configurable via flags. The tool works on any gno
 
 ### Single HTML file
 `web/index.html` is a complete SPA with no build step. Vanilla JS, CSS variables for dark theme, no external dependencies. It's embedded in the binary via `go:embed`.
+
+The **only** thing that may add an external origin to that page is `--analytics`
+(`web/analytics.go`), which splices a provider snippet in just above `</body>` as the page is
+served. It is off by default and must stay that way: most gnockpits watch their operator's own
+validator, so the default dashboard has to report to nobody. Keep the page self-contained
+otherwise.
 
 ### WebSocket protocol
 Messages are JSON with `{type: string, data: any}`. Types: `snapshot` (full state on connect), `update` (batched periodic), and individual `status`, `peers`, `votes`, `checks`, `signing`, `time`.
