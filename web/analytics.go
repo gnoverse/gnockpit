@@ -14,8 +14,10 @@ const (
 	simpleAnalyticsPixelHost  = "queue.simpleanalyticscdn.com"
 )
 
-// hostnameRE matches a bare DNS hostname of at least two labels: no scheme,
-// path, port or empty label, each label free of a leading or trailing hyphen.
+// hostnameRE matches a bare DNS hostname of at least two labels, lowercased by
+// its caller: no scheme, path, port or empty label (a trailing dot is one), each
+// label free of a leading or trailing hyphen. Its character class is also what
+// keeps a quote or a bracket out of the HTML attribute the host is spliced into.
 var hostnameRE = regexp.MustCompile(`^([a-z0-9]([a-z0-9-]*[a-z0-9])?\.)+[a-z0-9]([a-z0-9-]*[a-z0-9])?$`)
 
 // simpleAnalyticsSnippet returns the embed documented at

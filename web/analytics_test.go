@@ -1,6 +1,7 @@
 package web
 
 import (
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -29,7 +30,8 @@ func TestParseAnalytics(t *testing.T) {
 		{spec: "simple-analytics", domain: "   ", provider: "simple-analytics"},
 		// A domain with no provider would collect nothing: refused, not ignored.
 		{spec: "", domain: "sa.example.com", wantErr: true},
-		// A bare hostname only: no scheme, path, port, spaces or empty labels.
+		// A bare hostname only: no scheme, path, port, spaces, empty label (a
+		// trailing dot is one) or label-edge hyphen.
 		{spec: "simple-analytics", domain: "https://sa.example.com", wantErr: true},
 		{spec: "simple-analytics", domain: "sa.example.com/latest.js", wantErr: true},
 		{spec: "simple-analytics", domain: "sa.example.com:443", wantErr: true},
@@ -38,24 +40,27 @@ func TestParseAnalytics(t *testing.T) {
 		{spec: "simple-analytics", domain: ".example.com", wantErr: true},
 		{spec: "simple-analytics", domain: "sa..example.com", wantErr: true},
 		{spec: "simple-analytics", domain: "-sa.example.com", wantErr: true},
+		{spec: "simple-analytics", domain: "sa-.example.com", wantErr: true},
+		{spec: "simple-analytics", domain: "sa.example.com.", wantErr: true},
 	} {
-		got, err := ParseAnalytics(tc.spec, tc.domain)
-		if tc.wantErr {
-			if err == nil {
-				t.Errorf("ParseAnalytics(%q, %q) should have errored", tc.spec, tc.domain)
+		t.Run(fmt.Sprintf("%q/%q", tc.spec, tc.domain), func(t *testing.T) {
+			got, err := ParseAnalytics(tc.spec, tc.domain)
+			if tc.wantErr {
+				if err == nil {
+					t.Errorf("ParseAnalytics(%q, %q) should have errored", tc.spec, tc.domain)
+				}
+				return
 			}
-			continue
-		}
-		if err != nil {
-			t.Errorf("ParseAnalytics(%q, %q): %v", tc.spec, tc.domain, err)
-			continue
-		}
-		if got.Provider != tc.provider {
-			t.Errorf("ParseAnalytics(%q, %q).Provider = %q, want %q", tc.spec, tc.domain, got.Provider, tc.provider)
-		}
-		if got.Enabled() != (tc.provider != "") {
-			t.Errorf("ParseAnalytics(%q, %q).Enabled() = %v", tc.spec, tc.domain, got.Enabled())
-		}
+			if err != nil {
+				t.Fatalf("ParseAnalytics(%q, %q): %v", tc.spec, tc.domain, err)
+			}
+			if got.Provider != tc.provider {
+				t.Errorf("ParseAnalytics(%q, %q).Provider = %q, want %q", tc.spec, tc.domain, got.Provider, tc.provider)
+			}
+			if got.Enabled() != (tc.provider != "") {
+				t.Errorf("ParseAnalytics(%q, %q).Enabled() = %v", tc.spec, tc.domain, got.Enabled())
+			}
+		})
 	}
 }
 
