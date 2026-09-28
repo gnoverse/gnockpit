@@ -1,10 +1,9 @@
 name: test
 
-# A pull request used to get zero checks: release.yml fires only on the
-# refactor/slim-down branch and on v* tags, so statusCheckRollup on #8 was
-# literally empty when it merged. The tests already existed and simply never ran
-# on anyone else's machine, which matters most for the dependabot pull requests,
-# since nothing was verifying the bumps they propose.
+# The tests on every pull request and every push to main. release.yml builds
+# and publishes the image but runs no test, so this is the one check a pull
+# request gets before it merges, the dependabot bumps above all, since nothing
+# else verifies what they propose.
 on:
   pull_request:
   push:

@@ -1,13 +1,12 @@
 name: release
 
-# Builds and publishes the container image to GHCR. Triggers on pushes to the
-# refactor/slim-down branch and on v* tags, so the branch can be published
-# without merging to main (workflow_dispatch is intentionally not used — it
-# only appears when the workflow lives on the default branch).
+# Builds and publishes the container image to GHCR on every push to main
+# (tags main and sha-<short>) and on v* tags (the semver tags as well), so a
+# merged change always has an image to pin and a release has a name.
 on:
   push:
     branches:
-      - refactor/slim-down
+      - main
     tags:
       - 'v*'
 
@@ -40,7 +39,8 @@ jobs:
         uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5.10.0
         with:
           images: ghcr.io/${{ github.repository }}
-          # latest=false: a feature branch must not claim the :latest tag.
+          # latest=false: consumers pin a digest or a version, never a tag
+          # that moves under them.
           flavor: latest=false
           tags: |
             type=ref,event=branch
