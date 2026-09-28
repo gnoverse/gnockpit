@@ -3,17 +3,34 @@ package web
 import (
 	"bytes"
 	"fmt"
+	"regexp"
 	"strings"
 )
 
-// simpleAnalyticsSnippet is the embed documented at
-// https://docs.simpleanalytics.com/script. The script is async so it never
-// blocks first paint, and the no-JS fallback is an <img>, which is why the
-// whole snippet goes at the end of <body> rather than in <head>: a <noscript>
-// inside <head> may only hold link, style and meta.
-const simpleAnalyticsSnippet = `<!-- Simple Analytics: privacy-first, no cookies, no personal data. -->
-<script async src="https://scripts.simpleanalyticscdn.com/latest.js"></script>
-<noscript><img src="https://queue.simpleanalyticscdn.com/noscript.gif" alt="" referrerpolicy="no-referrer-when-downgrade" /></noscript>`
+// Simple Analytics' own hosts: the script is served from one and the no-JS
+// pixel from the other. A custom domain (--analytics-domain) serves both.
+const (
+	simpleAnalyticsScriptHost = "scripts.simpleanalyticscdn.com"
+	simpleAnalyticsPixelHost  = "queue.simpleanalyticscdn.com"
+)
+
+// hostnameRE matches a bare DNS hostname of at least two labels, lowercased by
+// its caller: no scheme, path, port or empty label (a trailing dot is one), each
+// label free of a leading or trailing hyphen. Its character class is also what
+// keeps a quote or a bracket out of the HTML attribute the host is spliced into.
+var hostnameRE = regexp.MustCompile(`^([a-z0-9]([a-z0-9-]*[a-z0-9])?\.)+[a-z0-9]([a-z0-9-]*[a-z0-9])?$`)
+
+// simpleAnalyticsSnippet returns the embed documented at
+// https://docs.simpleanalytics.com/script, its script and pixel served from the
+// given hosts. The script is async so it never blocks first paint, and the
+// no-JS fallback is an <img>, which is why the whole snippet goes at the end of
+// <body> rather than in <head>: a <noscript> inside <head> may only hold link,
+// style and meta.
+func simpleAnalyticsSnippet(scriptHost, pixelHost string) string {
+	return `<!-- Simple Analytics: privacy-first, no cookies, no personal data. -->
+<script async src="https://` + scriptHost + `/latest.js"></script>
+<noscript><img src="https://` + pixelHost + `/noscript.gif" alt="" referrerpolicy="no-referrer-when-downgrade" /></noscript>`
+}
 
 // Analytics is a third-party analytics snippet spliced into the dashboard HTML
 // as it is served.
@@ -28,15 +45,30 @@ type Analytics struct {
 	snippet string
 }
 
-// ParseAnalytics parses an --analytics flag value. An empty spec disables
-// analytics and yields the zero Analytics; an unrecognised one is an error, so
-// a typo fails at startup instead of quietly collecting nothing.
-func ParseAnalytics(spec string) (Analytics, error) {
+// ParseAnalytics parses the --analytics and --analytics-domain flag values. An
+// empty spec disables analytics and yields the zero Analytics; an unrecognised
+// one is an error, so a typo fails at startup instead of quietly collecting
+// nothing. A non-empty domain is a custom domain that serves the provider's
+// script and pixel itself (Simple Analytics' ad-blocker bypass); it must be a
+// bare hostname, and it is refused without a provider, which would ignore it.
+func ParseAnalytics(spec, domain string) (Analytics, error) {
+	domain = strings.ToLower(strings.TrimSpace(domain))
+	if domain != "" && !hostnameRE.MatchString(domain) {
+		return Analytics{}, fmt.Errorf("analytics domain %q: want a bare hostname such as sa.example.com", domain)
+	}
+
 	switch strings.ToLower(strings.TrimSpace(spec)) {
 	case "":
+		if domain != "" {
+			return Analytics{}, fmt.Errorf("analytics domain %q set without an analytics provider", domain)
+		}
 		return Analytics{}, nil
 	case "simple-analytics", "simpleanalytics":
-		return Analytics{Provider: "simple-analytics", snippet: simpleAnalyticsSnippet}, nil
+		scriptHost, pixelHost := simpleAnalyticsScriptHost, simpleAnalyticsPixelHost
+		if domain != "" {
+			scriptHost, pixelHost = domain, domain
+		}
+		return Analytics{Provider: "simple-analytics", snippet: simpleAnalyticsSnippet(scriptHost, pixelHost)}, nil
 	}
 	return Analytics{}, fmt.Errorf("unknown analytics provider %q: want \"simple-analytics\"", spec)
 }

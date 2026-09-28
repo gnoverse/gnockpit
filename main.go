@@ -39,6 +39,7 @@ var (
 	flagHideSources     bool
 	flagChainName       string
 	flagAnalytics       string
+	flagAnalyticsDomain string
 )
 
 // stringSlice is a flag.Value that accumulates one entry per occurrence,
@@ -85,6 +86,7 @@ func main() {
 	flag.BoolVar(&flagHideSources, "hide-sources", false, "hide the configured source nodes from the peers list")
 	flag.StringVar(&flagChainName, "chain-name", "", "display name for the chain in titles and the app icon; defaults to the chain-id (e.g. \"test13\" for chain-id \"test-13\")")
 	flag.StringVar(&flagAnalytics, "analytics", "", "load a third-party analytics script in the dashboard; only \"simple-analytics\" is supported. Off by default: a self-hosted dashboard reports to nobody unless you ask it to.")
+	flag.StringVar(&flagAnalyticsDomain, "analytics-domain", "", "serve the analytics script and its no-JS pixel from this custom domain (e.g. sa.example.com) instead of the provider's own hosts, which ad blockers list; needs --analytics")
 
 	flag.Parse()
 	if flag.NArg() > 0 {
@@ -105,7 +107,7 @@ func run() error {
 
 	// Validated before anything is opened or polled, so a typo fails at
 	// startup rather than silently collecting nothing.
-	analytics, err := web.ParseAnalytics(flagAnalytics)
+	analytics, err := web.ParseAnalytics(flagAnalytics, flagAnalyticsDomain)
 	if err != nil {
 		return err
 	}

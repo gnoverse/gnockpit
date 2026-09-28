@@ -76,8 +76,9 @@ Everything is auto-detected or configurable via flags. The tool works on any gno
 The **only** thing that may add an external origin to that page is `--analytics`
 (`web/analytics.go`), which splices a provider snippet in just above `</body>` as the page is
 served. It is off by default and must stay that way: most gnockpits watch their operator's own
-validator, so the default dashboard has to report to nobody. Keep the page self-contained
-otherwise.
+validator, so the default dashboard has to report to nobody. `--analytics-domain` moves that
+provider's script and pixel to a custom domain and adds no origin of its own. Keep the page
+self-contained otherwise.
 
 ### WebSocket protocol
 Messages are JSON with `{type: string, data: any}`. Types: `snapshot` (full state on connect), `update` (batched periodic), and individual `status`, `peers`, `votes`, `checks`, `signing`, `time`.
