@@ -57,6 +57,7 @@ appear for the same peer, the earlier `-rpc` in flag order wins.
 | `--link` | (none) | Extra header link button, `"Title\|URL"`; repeatable |
 | `--status-link` | (none) | Header link with a live status dot, `"Title\|URL"`; repeatable. BetterStack status pages only for now: the dot reflects `<URL>/index.json` |
 | `--analytics` | (off) | Load a third-party analytics script in the dashboard; only `simple-analytics` is supported. See Analytics. |
+| `--analytics-domain` | (none) | Serve the analytics script and its no-JS pixel from a custom domain (e.g. `sa.example.com`) instead of the provider's own hosts; needs `--analytics`. See Analytics. |
 
 ## Analytics
 
@@ -83,6 +84,22 @@ validator, and a private infrastructure dashboard should not report to a third
 party that the operator did not choose. Only enable it on an instance you publish.
 
 An unknown provider name is rejected at startup rather than silently ignored.
+
+### A custom domain
+
+Ad blockers list Simple Analytics' own hosts, so a visitor running one is never
+counted. With a [custom domain](https://docs.simpleanalytics.com/bypass-ad-blockers)
+set up in Simple Analytics, `--analytics-domain` serves the script and the pixel
+from it instead:
+
+```bash
+gnockpit --analytics simple-analytics --analytics-domain sa.example.com
+```
+
+That loads `https://sa.example.com/latest.js` and
+`https://sa.example.com/noscript.gif`. The value is a bare hostname: no scheme,
+path or port. `--analytics-domain` without `--analytics` is rejected at startup,
+since it would collect nothing.
 
 ## Name Registry
 

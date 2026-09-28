@@ -10,6 +10,7 @@ import (
 func TestParseAnalytics(t *testing.T) {
 	for _, tc := range []struct {
 		spec     string
+		domain   string
 		wantErr  bool
 		provider string
 	}{
@@ -21,29 +22,66 @@ func TestParseAnalytics(t *testing.T) {
 		{spec: "plausible", wantErr: true},
 		{spec: "simple analytics", wantErr: true},
 		{spec: "https://scripts.simpleanalyticscdn.com/latest.js", wantErr: true},
+
+		// A custom domain serves the provider's script and pixel itself.
+		{spec: "simple-analytics", domain: "sa.example.com", provider: "simple-analytics"},
+		{spec: "simple-analytics", domain: "  SA.Example.COM  ", provider: "simple-analytics"},
+		{spec: "simple-analytics", domain: "   ", provider: "simple-analytics"},
+		// A domain with no provider would collect nothing: refused, not ignored.
+		{spec: "", domain: "sa.example.com", wantErr: true},
+		// A bare hostname only: no scheme, path, port, spaces or empty labels.
+		{spec: "simple-analytics", domain: "https://sa.example.com", wantErr: true},
+		{spec: "simple-analytics", domain: "sa.example.com/latest.js", wantErr: true},
+		{spec: "simple-analytics", domain: "sa.example.com:443", wantErr: true},
+		{spec: "simple-analytics", domain: "sa example.com", wantErr: true},
+		{spec: "simple-analytics", domain: "localhost", wantErr: true},
+		{spec: "simple-analytics", domain: ".example.com", wantErr: true},
+		{spec: "simple-analytics", domain: "sa..example.com", wantErr: true},
+		{spec: "simple-analytics", domain: "-sa.example.com", wantErr: true},
 	} {
-		got, err := ParseAnalytics(tc.spec)
+		got, err := ParseAnalytics(tc.spec, tc.domain)
 		if tc.wantErr {
 			if err == nil {
-				t.Errorf("ParseAnalytics(%q) should have errored", tc.spec)
+				t.Errorf("ParseAnalytics(%q, %q) should have errored", tc.spec, tc.domain)
 			}
 			continue
 		}
 		if err != nil {
-			t.Errorf("ParseAnalytics(%q): %v", tc.spec, err)
+			t.Errorf("ParseAnalytics(%q, %q): %v", tc.spec, tc.domain, err)
 			continue
 		}
 		if got.Provider != tc.provider {
-			t.Errorf("ParseAnalytics(%q).Provider = %q, want %q", tc.spec, got.Provider, tc.provider)
+			t.Errorf("ParseAnalytics(%q, %q).Provider = %q, want %q", tc.spec, tc.domain, got.Provider, tc.provider)
 		}
 		if got.Enabled() != (tc.provider != "") {
-			t.Errorf("ParseAnalytics(%q).Enabled() = %v", tc.spec, got.Enabled())
+			t.Errorf("ParseAnalytics(%q, %q).Enabled() = %v", tc.spec, tc.domain, got.Enabled())
 		}
 	}
 }
 
+func TestAnalyticsCustomDomain(t *testing.T) {
+	sa, err := ParseAnalytics("simple-analytics", "  SA.Example.COM  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := string(sa.inject([]byte("<html><body><p>hi</p></body></html>")))
+	for _, want := range []string{
+		`<script async src="https://sa.example.com/latest.js"></script>`,
+		`<img src="https://sa.example.com/noscript.gif"`,
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("custom-domain inject = %q, want it to contain %q", out, want)
+		}
+	}
+	// Every provider URL moves to the custom domain: none is left on the
+	// provider's own hosts, which ad blockers list.
+	if strings.Contains(out, "simpleanalyticscdn.com") {
+		t.Errorf("custom-domain inject still names the provider's hosts: %q", out)
+	}
+}
+
 func TestAnalyticsInject(t *testing.T) {
-	sa, err := ParseAnalytics("simple-analytics")
+	sa, err := ParseAnalytics("simple-analytics", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -83,7 +121,7 @@ func TestAnalyticsInject(t *testing.T) {
 }
 
 func TestAnalyticsInjectIndent(t *testing.T) {
-	sa, err := ParseAnalytics("simple-analytics")
+	sa, err := ParseAnalytics("simple-analytics", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -124,7 +162,7 @@ func TestHandleIndexAnalytics(t *testing.T) {
 		t.Error("analytics served without --analytics")
 	}
 
-	sa, err := ParseAnalytics("simple-analytics")
+	sa, err := ParseAnalytics("simple-analytics", "")
 	if err != nil {
 		t.Fatal(err)
 	}
