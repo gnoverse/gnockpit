@@ -43,7 +43,7 @@ func (m *Manager) SendTestNotify(index int, message string) error {
 		return fmt.Errorf("notify target index %d out of range (%d configured)", index, len(m.notifyURLs))
 	}
 	if err := shoutrrr.Send(m.notifyURLs[index], message); err != nil {
-		return fmt.Errorf("send test notification: %w", err)
+		return fmt.Errorf("send test notification: %s", m.notifyErrorText(err, m.notifyURLs))
 	}
 	return nil
 }

@@ -2,6 +2,7 @@ package push
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -30,6 +31,7 @@ type Manager struct {
 	notifier        *router.ServiceRouter
 	notifyURLs      []string
 	publicURL       string
+	redactSecrets   bool
 }
 
 // NewManager creates a Manager, loading or auto-generating VAPID keys.
@@ -80,12 +82,27 @@ func (m *Manager) DB() *DB { return m.db }
 // SetPublicURL sets the public-facing URL appended to Shoutrrr alert messages.
 func (m *Manager) SetPublicURL(url string) { m.publicURL = url }
 
+// SetRedactSecrets sets whether the Shoutrrr errors the Manager logs or returns
+// are stripped of notification URL secrets (see redactNotifySecrets); when off,
+// they are kept verbatim. Call before SetNotifyURLs, whose error it also
+// covers.
+func (m *Manager) SetRedactSecrets(on bool) { m.redactSecrets = on }
+
+// notifyErrorText returns the text of err, a Shoutrrr error, stripped of the
+// secrets of urls when secret redaction is on.
+func (m *Manager) notifyErrorText(err error, urls []string) string {
+	if !m.redactSecrets {
+		return err.Error()
+	}
+	return redactNotifySecrets(err.Error(), urls)
+}
+
 // SetNotifyURLs configures external notification delivery via Shoutrrr service URLs.
 // Pass nil or empty to disable. Call before the publish loop starts.
 func (m *Manager) SetNotifyURLs(urls []string) error {
 	r, err := NewNotifier(urls)
 	if err != nil {
-		return err
+		return errors.New(m.notifyErrorText(err, urls))
 	}
 	m.notifier = r
 	m.notifyURLs = urls
@@ -121,7 +138,7 @@ func (m *Manager) NotifyAlert(a Alert) {
 		if errs := m.notifier.Send(msg, nil); len(errs) > 0 {
 			for _, err := range errs {
 				if err != nil {
-					log.Printf("notify: %v", err)
+					log.Printf("notify: %s", m.notifyErrorText(err, m.notifyURLs))
 				}
 			}
 		}

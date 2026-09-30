@@ -38,26 +38,27 @@ appear for the same peer, the earlier `-rpc` in flag order wins.
 
 ## Flags
 
-| Flag | Default | Description |
-|------|---------|-------------|
-| `-rpc` | `http://127.0.0.1:26657` | Tendermint RPC endpoint; repeatable to consolidate several sources (flag order = precedence) |
-| `-names` | `/tmp/gnockpit-names.json` | Persistent name registry |
-| `-port` | `8080` | Web server port |
-| `-addr` | `0.0.0.0` | Bind address |
-| `-interval` | `5s` | Dashboard refresh interval |
-| `-v` | false | Verbose HTTP logging |
-| `--db-path` | `/tmp/gnockpit.db` | SQLite database for push notifications (see Push Notifications) |
-| `--chain-stuck-secs` | `30` | Seconds without a new block before the chain-stuck alert fires |
-| `--notify` | (none) | Shoutrrr notification URL (repeatable); see External Notifications |
-| `--max-missed-in-a-row` | `10` | Consecutive blocks a validator must miss to be flagged down (alert fires + counted inactive); it recovers after signing that many in a row |
-| `--geoip-db` | `/tmp/gnockpit-geoip.mmdb` | DB-IP City Lite mmdb powering the network map + country columns; auto-downloaded and refreshed monthly. Empty disables it. |
-| `--asn-db` | `/tmp/gnockpit-asn.mmdb` | DB-IP ASN Lite mmdb powering cloud-provider detection; auto-downloaded and refreshed monthly. Empty disables it. |
-| `--hide-sources` | false | Hide the configured source nodes from the peers list |
-| `--chain-name` | (chain-id) | Display name for the chain in titles and the app icon; defaults to the chain-id (e.g. `test13` for chain-id `test-13`) |
-| `--link` | (none) | Extra header link button, `"Title\|URL"`; repeatable |
-| `--status-link` | (none) | Header link with a live status dot, `"Title\|URL"`; repeatable. BetterStack status pages only for now: the dot reflects `<URL>/index.json` |
-| `--analytics` | (off) | Load a third-party analytics script in the dashboard; only `simple-analytics` is supported. See Analytics. |
-| `--analytics-domain` | (none) | Serve the analytics script and its no-JS pixel from a custom domain (e.g. `sa.example.com`) instead of the provider's own hosts; needs `--analytics`. See Analytics. |
+| Flag                    | Default                    | Description                                                                                                                                                          |
+| ----------------------- | -------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `-rpc`                  | `http://127.0.0.1:26657`   | Tendermint RPC endpoint; repeatable to consolidate several sources (flag order = precedence)                                                                         |
+| `-names`                | `/tmp/gnockpit-names.json` | Persistent name registry                                                                                                                                             |
+| `-port`                 | `8080`                     | Web server port                                                                                                                                                      |
+| `-addr`                 | `0.0.0.0`                  | Bind address                                                                                                                                                         |
+| `-interval`             | `5s`                       | Dashboard refresh interval                                                                                                                                           |
+| `-v`                    | false                      | Verbose HTTP logging                                                                                                                                                 |
+| `--db-path`             | `/tmp/gnockpit.db`         | SQLite database for push notifications (see Push Notifications)                                                                                                      |
+| `--chain-stuck-secs`    | `30`                       | Seconds without a new block before the chain-stuck alert fires                                                                                                       |
+| `--notify`              | (none)                     | Shoutrrr notification URL (repeatable); see External Notifications                                                                                                   |
+| `--redact-secret`       | false                      | Strip notification URL secrets from logged Shoutrrr errors; see External Notifications                                                                               |
+| `--max-missed-in-a-row` | `10`                       | Consecutive blocks a validator must miss to be flagged down (alert fires + counted inactive); it recovers after signing that many in a row                           |
+| `--geoip-db`            | `/tmp/gnockpit-geoip.mmdb` | DB-IP City Lite mmdb powering the network map + country columns; auto-downloaded and refreshed monthly. Empty disables it.                                           |
+| `--asn-db`              | `/tmp/gnockpit-asn.mmdb`   | DB-IP ASN Lite mmdb powering cloud-provider detection; auto-downloaded and refreshed monthly. Empty disables it.                                                     |
+| `--hide-sources`        | false                      | Hide the configured source nodes from the peers list                                                                                                                 |
+| `--chain-name`          | (chain-id)                 | Display name for the chain in titles and the app icon; defaults to the chain-id (e.g. `test13` for chain-id `test-13`)                                               |
+| `--link`                | (none)                     | Extra header link button, `"Title\|URL"`; repeatable                                                                                                                 |
+| `--status-link`         | (none)                     | Header link with a live status dot, `"Title\|URL"`; repeatable. BetterStack status pages only for now: the dot reflects `<URL>/index.json`                           |
+| `--analytics`           | (off)                      | Load a third-party analytics script in the dashboard; only `simple-analytics` is supported. See Analytics.                                                           |
+| `--analytics-domain`    | (none)                     | Serve the analytics script and its no-JS pixel from a custom domain (e.g. `sa.example.com`) instead of the provider's own hosts; needs `--analytics`. See Analytics. |
 
 ## Analytics
 
@@ -114,8 +115,8 @@ You can also pre-populate or edit the file manually to assign names to validator
 
 ```json
 {
-  "g1a1b2c3d4e5f6...": "my-validator",
-  "g1x9y8z7w6v5u4...": "peer-node-alpha"
+    "g1a1b2c3d4e5f6...": "my-validator",
+    "g1x9y8z7w6v5u4...": "peer-node-alpha"
 }
 ```
 
@@ -151,15 +152,17 @@ gnockpit \
 
 Alerts are sent to all configured URLs whenever a state transition occurs (firing or recovery). The same alerts that trigger browser push notifications also trigger external notifications.
 
+A failed send is logged with Shoutrrr's error, which can hold the URL's secrets: a network failure quotes the service's request URL (Discord: `https://discord.com/api/webhooks/<id>/<token>`), and some services echo a malformed token. `--redact-secret` strips them before they are logged or returned. Each configured URL becomes `<scheme>:<fingerprint>`, as in `/api/notify/targets`, and every other URL keeps only its scheme. Every piece of 6+ characters of a configured URL becomes `[redacted]` wherever it appears. That also blanks the URL's hostnames in DNS errors, and any word that matches a piece, e.g. `telegram` in `invalid [redacted] token`. It is off by default, which keeps errors verbatim.
+
 **Common Shoutrrr URL formats:**
 
-| Service | URL Format |
-|---------|------------|
-| Discord | `discord://token@webhookid` |
-| Telegram | `telegram://token@telegram?chats=@channel,chatid` |
-| Slack | `slack://token-a/token-b/token-c` |
-| Email | `smtp://user:pass@host:port/?from=X&to=Y` |
-| Generic webhook | `generic+https://example.com/webhook` |
+| Service         | URL Format                                        |
+| --------------- | ------------------------------------------------- |
+| Discord         | `discord://token@webhookid`                       |
+| Telegram        | `telegram://token@telegram?chats=@channel,chatid` |
+| Slack           | `slack://token-a/token-b/token-c`                 |
+| Email           | `smtp://user:pass@host:port/?from=X&to=Y`         |
+| Generic webhook | `generic+https://example.com/webhook`             |
 
 See the [Shoutrrr documentation](https://containrrr.dev/shoutrrr/latest/) for the full list of supported services and URL formats.
 
@@ -198,12 +201,12 @@ so consumers know the coverage.
 
 All endpoints are CORS-open JSON, for building external badges/dashboards.
 
-| Endpoint | Description |
-|----------|-------------|
+| Endpoint      | Description                                                                                                                                                            |
+| ------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `/api/status` | Health summary (`status`/`chain`/`height`/`reason`/`time`) plus live network state, the last 100 blocks with signing status, and per-peer / per-validator column data. |
-| `/api/stats` | Aggregate stats: per-validator missed-block windows, cloud-provider and country aggregates, validator-set health, and the Nakamoto coefficient. |
-| `/api` | Raw internal snapshot dump (unstable shape; for debugging). |
-| `/badge.svg` | SVG status badge. |
+| `/api/stats`  | Aggregate stats: per-validator missed-block windows, cloud-provider and country aggregates, validator-set health, and the Nakamoto coefficient.                        |
+| `/api`        | Raw internal snapshot dump (unstable shape; for debugging).                                                                                                            |
+| `/badge.svg`  | SVG status badge.                                                                                                                                                      |
 
 ## Features
 

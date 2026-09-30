@@ -31,6 +31,7 @@ var (
 	flagMaxMissedInARow int
 	flagNamesPath       string
 	flagNotifyURLs      stringSlice
+	flagRedactSecret    bool
 	flagPublicURL       string
 	flagGeoIPPath       string
 	flagASNPath         string
@@ -78,6 +79,7 @@ func main() {
 	flag.IntVar(&flagChainStuckSecs, "chain-stuck-secs", 30, "seconds without a new block before the chain-stuck alert fires")
 	flag.IntVar(&flagMaxMissedInARow, "max-missed-in-a-row", 10, "consecutive blocks a validator must miss to be flagged down (alert fires + counted inactive) and must then sign to recover")
 	flag.Var(&flagNotifyURLs, "notify", "Shoutrrr notification URL, repeatable (e.g. discord://token@id)")
+	flag.BoolVar(&flagRedactSecret, "redact-secret", false, "strip notification URL secrets (tokens, webhook IDs) from logged Shoutrrr errors; off by default: errors are logged verbatim")
 	flag.StringVar(&flagPublicURL, "public-url", "", "public URL of this gnockpit instance, appended to external notification messages")
 	flag.StringVar(&flagGeoIPPath, "geoip-db", "/tmp/gnockpit-geoip.mmdb", "path for the DB-IP City Lite mmdb powering the network map; auto-downloaded and refreshed monthly. Empty disables the map.")
 	flag.StringVar(&flagASNPath, "asn-db", "/tmp/gnockpit-asn.mmdb", "path for the DB-IP ASN Lite mmdb powering cloud-provider detection; auto-downloaded and refreshed monthly. Empty disables it.")
@@ -134,6 +136,7 @@ func run() error {
 	if err != nil {
 		return fmt.Errorf("init push manager: %w", err)
 	}
+	pushMgr.SetRedactSecrets(flagRedactSecret)
 	if len(flagNotifyURLs) > 0 {
 		if err := pushMgr.SetNotifyURLs(flagNotifyURLs); err != nil {
 			return fmt.Errorf("invalid notify URL: %w", err)
