@@ -110,21 +110,19 @@ func TestNotifyTestHandler_SendsWithToken(t *testing.T) {
 }
 
 // A send failure must not echo the raw notify URL (which holds the secret) in
-// the response body or the server-side log.
+// the response body.
 func TestNotifyTestHandler_SendErrorDoesNotLeakURL(t *testing.T) {
 	srv, mgr := newSrvWithPush(t)
 	srv.NotifyTestToken = "s3cret"
 	const secret = "SUPERSECRETTOKEN"
 	const host = "nonexistent.invalid.example"
 
-	// Capture server-side logs to assert the failure is recorded without the
-	// secret.
+	// Capture server-side logs (they legitimately contain the URL) so they don't
+	// print the secret to test output, and to assert the failure is recorded.
 	var logBuf bytes.Buffer
-	prevLog := log.Writer()
 	log.SetOutput(&logBuf)
-	defer log.SetOutput(prevLog)
+	defer log.SetOutput(io.Discard)
 
-	mgr.SetRedactSecrets(true)
 	if err := mgr.SetNotifyURLs([]string{"generic+https://" + host + "/webhook/" + secret}); err != nil {
 		t.Fatal(err)
 	}
@@ -142,6 +140,36 @@ func TestNotifyTestHandler_SendErrorDoesNotLeakURL(t *testing.T) {
 		t.Errorf("response leaked the raw notify URL/secret: %q", body)
 	}
 	// The operator still gets the detail server-side.
+	if !strings.Contains(logBuf.String(), "send to target 0 failed") {
+		t.Errorf("server-side log should record the send failure, got: %q", logBuf.String())
+	}
+}
+
+// With secret redaction on, the server-side log records a send failure
+// without the notify URL's secret.
+func TestNotifyTestHandler_SendErrorLogIsRedacted(t *testing.T) {
+	srv, mgr := newSrvWithPush(t)
+	srv.NotifyTestToken = "s3cret"
+	const secret = "SUPERSECRETTOKEN"
+
+	var logBuf bytes.Buffer
+	prevLog := log.Writer()
+	log.SetOutput(&logBuf)
+	defer log.SetOutput(prevLog)
+
+	mgr.SetRedactSecrets(true)
+	if err := mgr.SetNotifyURLs([]string{"generic+https://nonexistent.invalid.example/webhook/" + secret}); err != nil {
+		t.Fatal(err)
+	}
+
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/notify/test", strings.NewReader(`{"index":0,"message":"x"}`))
+	req.Header.Set("Authorization", "Bearer s3cret")
+	srv.handleNotifyTest(w, req)
+
+	if w.Code != http.StatusBadGateway {
+		t.Fatalf("send to unreachable host: got %d, want 502", w.Code)
+	}
 	if !strings.Contains(logBuf.String(), "send to target 0 failed") {
 		t.Errorf("server-side log should record the send failure, got: %q", logBuf.String())
 	}

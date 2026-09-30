@@ -11,12 +11,16 @@ import (
 	"testing"
 )
 
-// discordURL is a Discord notification URL whose webhook token and ID stand
-// in for real secrets; with secret redaction on, neither may reach an error or
-// a log.
-const discordURL = "discord://SECRETTOKEN@123456789"
-
-var discordSecrets = []string{"SECRETTOKEN", "123456789"}
+// Notification URLs whose secrets stand in for real ones. discordURL fails
+// only on the network (see failNetwork). gotifyURL carries a malformed token
+// (Gotify's are 15 characters), which Shoutrrr accepts at startup and echoes,
+// outside any URL, on every send. malformedDiscordURL does not parse, so
+// Shoutrrr quotes it whole at startup.
+const (
+	discordURL          = "discord://SECRETTOKEN@123456789"
+	gotifyURL           = "gotify://gotify.example.invalid/AGOTIFYTOKENXXXX"
+	malformedDiscordURL = "discord://SECRET TOKEN@123456789"
+)
 
 // failNetwork makes every outgoing HTTP connection fail at dial time, as a DNS
 // or TCP failure does, for the duration of the test. Shoutrrr's Discord
@@ -34,11 +38,54 @@ func failNetwork(t *testing.T) {
 	t.Cleanup(func() { http.DefaultTransport = prev })
 }
 
+// captureLog sends the standard logger's output to the returned buffer until
+// the test ends.
+func captureLog(t *testing.T) *bytes.Buffer {
+	t.Helper()
+	var buf bytes.Buffer
+	prev := log.Writer()
+	log.SetOutput(&buf)
+	t.Cleanup(func() { log.SetOutput(prev) })
+	return &buf
+}
+
+// newTestManager returns a Manager on an in-memory database, with secret
+// redaction on when redact is set and left at its default otherwise.
+func newTestManager(t *testing.T, redact bool) *Manager {
+	t.Helper()
+	db, err := OpenDB(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := db.Close(); err != nil {
+			t.Errorf("close db: %v", err)
+		}
+	})
+	m, err := NewManager(db, 30, 5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if redact {
+		m.SetRedactSecrets(true)
+	}
+	return m
+}
+
 func assertNoSecret(t *testing.T, where, text string, secrets []string) {
 	t.Helper()
 	for _, s := range secrets {
 		if strings.Contains(text, s) {
 			t.Errorf("%s leaks secret %q: %q", where, s, text)
+		}
+	}
+}
+
+func assertContainsAll(t *testing.T, where, text string, wants []string) {
+	t.Helper()
+	for _, w := range wants {
+		if !strings.Contains(text, w) {
+			t.Errorf("%s = %q, want it to contain %q", where, text, w)
 		}
 	}
 }
@@ -125,75 +172,76 @@ func TestRedactNotifySecrets(t *testing.T) {
 	}
 }
 
-func TestManagerSetNotifyURLs_InvalidURLErrorIsRedacted(t *testing.T) {
-	m := &Manager{}
-	m.SetRedactSecrets(true)
-	err := m.SetNotifyURLs([]string{"discord://SECRET TOKEN@123456789"})
-	if err == nil {
-		t.Fatal("expected error for a malformed URL")
+// TestManager_ShoutrrrErrors covers every path by which a Manager emits a
+// Shoutrrr error. With secret redaction on, no secret remains but the cause
+// does; by default, the error is Shoutrrr's verbatim.
+func TestManager_ShoutrrrErrors(t *testing.T) {
+	sendSecrets := []string{"SECRETTOKEN", "123456789", "AGOTIFYTOKENXXXX"}
+	sendCauses := []string{"network is down", "invalid gotify token"}
+	sites := []struct {
+		name    string
+		emit    func(t *testing.T, m *Manager) string
+		secrets []string
+		causes  []string
+	}{
+		{
+			name: "SetNotifyURLs error",
+			emit: func(t *testing.T, m *Manager) string {
+				err := m.SetNotifyURLs([]string{malformedDiscordURL})
+				if err == nil {
+					t.Fatal("SetNotifyURLs: expected error for a malformed URL")
+				}
+				return err.Error()
+			},
+			secrets: []string{"SECRET", "TOKEN", "123456789"},
+			causes:  []string{"invalid userinfo"},
+		},
+		{
+			name: "NotifyAlert log",
+			emit: func(t *testing.T, m *Manager) string {
+				logBuf := captureLog(t)
+				if err := m.SetNotifyURLs([]string{discordURL, gotifyURL}); err != nil {
+					t.Fatalf("SetNotifyURLs: %v", err)
+				}
+				failNetwork(t)
+				m.NotifyAlert(Alert{Type: AlertChainStuck, Firing: true, Title: "Chain stuck", Body: "test"})
+				return logBuf.String()
+			},
+			secrets: sendSecrets,
+			causes:  sendCauses,
+		},
+		{
+			name: "SendTestNotify errors",
+			emit: func(t *testing.T, m *Manager) string {
+				captureLog(t) // keeps SetNotifyURLs's log line out of the test output
+				if err := m.SetNotifyURLs([]string{discordURL, gotifyURL}); err != nil {
+					t.Fatalf("SetNotifyURLs: %v", err)
+				}
+				failNetwork(t)
+				var texts []string
+				for i := range 2 {
+					err := m.SendTestNotify(i, "hi")
+					if err == nil {
+						t.Fatalf("SendTestNotify(%d, ...): expected error", i)
+					}
+					texts = append(texts, err.Error())
+				}
+				return strings.Join(texts, "\n")
+			},
+			secrets: sendSecrets,
+			causes:  sendCauses,
+		},
 	}
-	assertNoSecret(t, "SetNotifyURLs error", err.Error(), []string{"SECRET", "TOKEN", "123456789"})
-	if !strings.Contains(err.Error(), "discord:88bd72a7") {
-		t.Errorf("SetNotifyURLs error = %q, want it to name the target as discord:88bd72a7", err)
-	}
-}
-
-func TestManagerNotifyAlert_NetworkErrorLogIsRedacted(t *testing.T) {
-	db, err := OpenDB(":memory:")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() {
-		if err := db.Close(); err != nil {
-			t.Errorf("close db: %v", err)
-		}
-	})
-	mgr, err := NewManager(db, 30, 5)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var logBuf bytes.Buffer
-	prevLog := log.Writer()
-	log.SetOutput(&logBuf)
-	t.Cleanup(func() { log.SetOutput(prevLog) })
-	mgr.SetRedactSecrets(true)
-	if err := mgr.SetNotifyURLs([]string{discordURL}); err != nil {
-		t.Fatalf("SetNotifyURLs: %v", err)
-	}
-	failNetwork(t)
-
-	mgr.NotifyAlert(Alert{Type: AlertChainStuck, Firing: true, Title: "Chain stuck", Body: "test"})
-
-	logged := logBuf.String()
-	if !strings.Contains(logged, "network is down") {
-		t.Fatalf("log should record the network failure, got: %q", logged)
-	}
-	assertNoSecret(t, "notify log", logged, discordSecrets)
-}
-
-func TestManager_SendTestNotify_NetworkErrorIsRedacted(t *testing.T) {
-	failNetwork(t)
-	m := &Manager{notifyURLs: []string{discordURL}}
-	m.SetRedactSecrets(true)
-	err := m.SendTestNotify(0, "hi")
-	if err == nil {
-		t.Fatal("expected error when the network is down")
-	}
-	if !strings.Contains(err.Error(), "network is down") {
-		t.Errorf("SendTestNotify error = %q, want it to keep the network failure", err)
-	}
-	assertNoSecret(t, "SendTestNotify error", err.Error(), discordSecrets)
-}
-
-func TestManager_SendTestNotify_NetworkErrorIsVerbatimByDefault(t *testing.T) {
-	failNetwork(t)
-	m := &Manager{notifyURLs: []string{discordURL}}
-	err := m.SendTestNotify(0, "hi")
-	if err == nil {
-		t.Fatal("expected error when the network is down")
-	}
-	const requestURL = "https://discord.com/api/webhooks/123456789/SECRETTOKEN"
-	if !strings.Contains(err.Error(), requestURL) {
-		t.Errorf("SendTestNotify error = %q, want Shoutrrr's error verbatim, with %s", err, requestURL)
+	for _, s := range sites {
+		t.Run(s.name+"/redaction on", func(t *testing.T) {
+			text := s.emit(t, newTestManager(t, true))
+			assertNoSecret(t, s.name, text, s.secrets)
+			assertContainsAll(t, s.name, text, s.causes)
+		})
+		t.Run(s.name+"/default", func(t *testing.T) {
+			text := s.emit(t, newTestManager(t, false))
+			assertContainsAll(t, s.name, text, s.secrets)
+			assertContainsAll(t, s.name, text, s.causes)
+		})
 	}
 }
