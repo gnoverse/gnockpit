@@ -61,6 +61,33 @@ func TestManager_SendTestNotify_OutOfRange(t *testing.T) {
 	}
 }
 
+func TestManager_SendTestNotify_NetworkErrorIsRedacted(t *testing.T) {
+	failNetwork(t)
+	m := &Manager{notifyURLs: []string{discordURL}}
+	m.SetRedactSecrets(true)
+	err := m.SendTestNotify(0, "hi")
+	if err == nil {
+		t.Fatal("expected error when the network is down")
+	}
+	if !strings.Contains(err.Error(), "network is down") {
+		t.Errorf("SendTestNotify error = %q, want it to keep the network failure", err)
+	}
+	assertNoSecret(t, "SendTestNotify error", err.Error(), discordSecrets)
+}
+
+func TestManager_SendTestNotify_NetworkErrorIsVerbatimByDefault(t *testing.T) {
+	failNetwork(t)
+	m := &Manager{notifyURLs: []string{discordURL}}
+	err := m.SendTestNotify(0, "hi")
+	if err == nil {
+		t.Fatal("expected error when the network is down")
+	}
+	const requestURL = "https://discord.com/api/webhooks/123456789/SECRETTOKEN"
+	if !strings.Contains(err.Error(), requestURL) {
+		t.Errorf("SendTestNotify error = %q, want Shoutrrr's error verbatim, with %s", err, requestURL)
+	}
+}
+
 func TestManager_SendTestNotify_Sends(t *testing.T) {
 	var gotMethod, gotBody string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

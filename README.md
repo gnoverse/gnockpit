@@ -49,6 +49,7 @@ appear for the same peer, the earlier `-rpc` in flag order wins.
 | `--db-path`             | `/tmp/gnockpit.db`         | SQLite database for push notifications (see Push Notifications)                                                                                                      |
 | `--chain-stuck-secs`    | `30`                       | Seconds without a new block before the chain-stuck alert fires                                                                                                       |
 | `--notify`              | (none)                     | Shoutrrr notification URL (repeatable); see External Notifications                                                                                                   |
+| `--redact-secret`       | false                      | Strip notification URL secrets from logged Shoutrrr errors; see External Notifications                                                                               |
 | `--max-missed-in-a-row` | `10`                       | Consecutive blocks a validator must miss to be flagged down (alert fires + counted inactive); it recovers after signing that many in a row                           |
 | `--geoip-db`            | `/tmp/gnockpit-geoip.mmdb` | DB-IP City Lite mmdb powering the network map + country columns; auto-downloaded and refreshed monthly. Empty disables it.                                           |
 | `--asn-db`              | `/tmp/gnockpit-asn.mmdb`   | DB-IP ASN Lite mmdb powering cloud-provider detection; auto-downloaded and refreshed monthly. Empty disables it.                                                     |
@@ -150,6 +151,8 @@ gnockpit \
 ```
 
 Alerts are sent to all configured URLs whenever a state transition occurs (firing or recovery). The same alerts that trigger browser push notifications also trigger external notifications.
+
+A failed send is logged with Shoutrrr's error, which can hold the URL's secrets: a network failure quotes the service's request URL (Discord: `https://discord.com/api/webhooks/<id>/<token>`), and some services echo a malformed token. `--redact-secret` strips them before they are logged or returned. Each configured URL becomes `<scheme>:<fingerprint>`, as in `/api/notify/targets`, and every other URL keeps only its scheme. Every piece of 6+ characters of a configured URL becomes `[redacted]`, so its hostnames also vanish from DNS errors. It is off by default, which keeps errors verbatim.
 
 **Common Shoutrrr URL formats:**
 
