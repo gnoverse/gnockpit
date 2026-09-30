@@ -83,7 +83,7 @@ func (m *Manager) DB() *DB { return m.db }
 func (m *Manager) SetPublicURL(url string) { m.publicURL = url }
 
 // SetRedactSecrets sets whether the Shoutrrr errors the Manager logs or returns
-// are stripped of notification URL secrets (see redactNotifyURLs); when off,
+// are stripped of notification URL secrets (see redactNotifySecrets); when off,
 // they are kept verbatim. Call before SetNotifyURLs, whose error it also
 // covers.
 func (m *Manager) SetRedactSecrets(on bool) { m.redactSecrets = on }
@@ -94,7 +94,7 @@ func (m *Manager) notifyErrorText(err error, urls []string) string {
 	if !m.redactSecrets {
 		return err.Error()
 	}
-	return redactNotifyURLs(err.Error(), urls)
+	return redactNotifySecrets(err.Error(), urls)
 }
 
 // SetNotifyURLs configures external notification delivery via Shoutrrr service URLs.
