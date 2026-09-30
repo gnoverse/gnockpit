@@ -152,7 +152,7 @@ gnockpit \
 
 Alerts are sent to all configured URLs whenever a state transition occurs (firing or recovery). The same alerts that trigger browser push notifications also trigger external notifications.
 
-A failed send is logged with Shoutrrr's error, which can hold the URL's secrets: a network failure quotes the service's request URL (Discord: `https://discord.com/api/webhooks/<id>/<token>`), and some services echo a malformed token. `--redact-secret` strips them before they are logged or returned. Each configured URL becomes `<scheme>:<fingerprint>`, as in `/api/notify/targets`, and every other URL keeps only its scheme. Every piece of 6+ characters of a configured URL becomes `[redacted]`, so its hostnames also vanish from DNS errors. It is off by default, which keeps errors verbatim.
+A failed send is logged with Shoutrrr's error, which can hold the URL's secrets: a network failure quotes the service's request URL (Discord: `https://discord.com/api/webhooks/<id>/<token>`), and some services echo a malformed token. `--redact-secret` strips them before they are logged or returned. Each configured URL becomes `<scheme>:<fingerprint>`, as in `/api/notify/targets`, and every other URL keeps only its scheme. Every piece of 6+ characters of a configured URL becomes `[redacted]` wherever it appears. That also blanks the URL's hostnames in DNS errors, and any word that matches a piece, e.g. `telegram` in `invalid [redacted] token`. It is off by default, which keeps errors verbatim.
 
 **Common Shoutrrr URL formats:**
 

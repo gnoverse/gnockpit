@@ -1096,9 +1096,9 @@ func (s *Server) handleNotifyTest(w http.ResponseWriter, r *http.Request) {
 		msg = "gnockpit test notification"
 	}
 	if err := s.PushManager.SendTestNotify(req.Index, msg); err != nil {
-		// The send error carries delivery detail meant for the operator, and
-		// may carry the notification URL's secrets unless secret redaction is
-		// on, so it is logged server-side and the client gets a generic message.
+		// The send error carries delivery detail meant for the operator and,
+		// without secret redaction, may carry the notification URL's secrets,
+		// so it is logged server-side and the client gets a generic message.
 		log.Printf("notify-test: send to target %d failed: %v", req.Index, err)
 		http.Error(w, "notification delivery failed", http.StatusBadGateway)
 		return
