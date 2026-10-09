@@ -64,34 +64,42 @@ type NetworkState struct {
 	CatchingUp bool   `json:"catching_up"`
 }
 
+// nodeLocation is where a node runs, resolved from its public IP: geolocation
+// and cloud provider. Embedded in StatusPeer and StatusValidator, its fields
+// serialize inline; unknown ones are omitted.
+type nodeLocation struct {
+	Country  string  `json:"country,omitempty"`
+	City     string  `json:"city,omitempty"`
+	Lat      float64 `json:"lat,omitempty"`
+	Lon      float64 `json:"lon,omitempty"`
+	Provider string  `json:"provider,omitempty"`
+}
+
+// locationOf returns the location resolved for peer p.
+func locationOf(p node.Peer) nodeLocation {
+	return nodeLocation{Country: p.Country, City: p.City, Lat: p.Lat, Lon: p.Lon, Provider: p.Provider}
+}
+
 // StatusPeer is a peer's column data in the public status payload.
 type StatusPeer struct {
-	Name      string  `json:"name,omitempty"`
-	NodeID    string  `json:"node_id,omitempty"`
-	Country   string  `json:"country,omitempty"`
-	City      string  `json:"city,omitempty"`
-	Lat       float64 `json:"lat,omitempty"`
-	Lon       float64 `json:"lon,omitempty"`
-	Provider  string  `json:"provider,omitempty"`
-	NPeers    int     `json:"n_peers,omitempty"`
-	Reachable bool    `json:"reachable"`
+	Name   string `json:"name,omitempty"`
+	NodeID string `json:"node_id,omitempty"`
+	nodeLocation
+	NPeers    int  `json:"n_peers,omitempty"`
+	Reachable bool `json:"reachable"`
 }
 
 // StatusValidator is a validator's column data in the public status payload.
 type StatusValidator struct {
-	Name        string  `json:"name,omitempty"`
-	Address     string  `json:"address"`
-	Country     string  `json:"country,omitempty"`
-	City        string  `json:"city,omitempty"`
-	Lat         float64 `json:"lat,omitempty"`
-	Lon         float64 `json:"lon,omitempty"`
-	Provider    string  `json:"provider,omitempty"`
-	VotingPower string  `json:"voting_power,omitempty"`
-	SPOF        bool    `json:"spof"`
-	Inactive    bool    `json:"inactive,omitempty"`
-	Missed100   int     `json:"missed_100"`
-	Missed24h   int     `json:"missed_24h"`
-	AvgBlockMs  int     `json:"avg_block_ms"`
+	Name    string `json:"name,omitempty"`
+	Address string `json:"address"`
+	nodeLocation
+	VotingPower string `json:"voting_power,omitempty"`
+	SPOF        bool   `json:"spof"`
+	Inactive    bool   `json:"inactive,omitempty"`
+	Missed100   int    `json:"missed_100"`
+	Missed24h   int    `json:"missed_24h"`
+	AvgBlockMs  int    `json:"avg_block_ms"`
 }
 
 // StatusReport is the public /api/status payload: the retrocompat health summary
@@ -116,7 +124,7 @@ func isSPOF(vp, totalVP int) bool {
 }
 
 // peersByValAddr indexes peers by the validator address they've been correlated
-// to, for looking up a validator's country/provider.
+// to, for looking up a validator's location.
 func peersByValAddr(peers []node.Peer) map[string]node.Peer {
 	m := make(map[string]node.Peer)
 	for _, p := range peers {
@@ -140,15 +148,11 @@ func (s *Server) buildStatusReport(snap *node.Snapshot, now time.Time) StatusRep
 	rep.Peers = make([]StatusPeer, 0, len(snap.Peers))
 	for _, p := range snap.Peers {
 		rep.Peers = append(rep.Peers, StatusPeer{
-			Name:      p.Moniker,
-			NodeID:    p.NodeID,
-			Country:   p.Country,
-			City:      p.City,
-			Lat:       p.Lat,
-			Lon:       p.Lon,
-			Provider:  p.Provider,
-			NPeers:    p.NPeers,
-			Reachable: p.RPCURL != "",
+			Name:         p.Moniker,
+			NodeID:       p.NodeID,
+			nodeLocation: locationOf(p),
+			NPeers:       p.NPeers,
+			Reachable:    p.RPCURL != "",
 		})
 	}
 	votes := s.buildVotesReport(snap)
@@ -181,9 +185,7 @@ func (s *Server) buildStatusReport(snap *node.Snapshot, now time.Time) StatusRep
 				SPOF:        isSPOF(vpByAddr[vi.Address], totalVP),
 			}
 			if p, ok := byAddr[vi.Address]; ok {
-				sv.Country = p.Country
-				sv.City, sv.Lat, sv.Lon = p.City, p.Lat, p.Lon
-				sv.Provider = p.Provider
+				sv.nodeLocation = locationOf(p)
 			}
 			rep.Validators = append(rep.Validators, sv)
 		}
