@@ -116,44 +116,46 @@ func TestBuildStatusReport(t *testing.T) {
 
 	// City and coordinates: on a geolocated peer and on the validator matched
 	// to it; omitted where unknown.
-	var payload struct {
-		Peers      []map[string]any `json:"peers"`
-		Validators []map[string]any `json:"validators"`
-	}
-	if err := json.Unmarshal(body, &payload); err != nil {
-		t.Fatalf("unmarshal: %v", err)
-	}
-	rowWith := func(rows []map[string]any, key, val string) map[string]any {
-		t.Helper()
-		for _, r := range rows {
-			if r[key] == val {
-				return r
+	t.Run("geo", func(t *testing.T) {
+		var payload struct {
+			Peers      []map[string]any `json:"peers"`
+			Validators []map[string]any `json:"validators"`
+		}
+		if err := json.Unmarshal(body, &payload); err != nil {
+			t.Fatalf("unmarshal: %v", err)
+		}
+		rowWith := func(rows []map[string]any, key, val string) map[string]any {
+			t.Helper()
+			for _, r := range rows {
+				if r[key] == val {
+					return r
+				}
+			}
+			t.Fatalf("no row with %s=%q in %v", key, val, rows)
+			return nil
+		}
+		wantGeo := map[string]any{"city": "Ashburn", "lat": 39.0438, "lon": -77.4874}
+		for _, row := range []map[string]any{
+			rowWith(payload.Peers, "node_id", "n1"),
+			rowWith(payload.Validators, "address", "g1a"),
+		} {
+			for k, want := range wantGeo {
+				if row[k] != want {
+					t.Errorf("%v: %s = %v, want %v", row, k, row[k], want)
+				}
 			}
 		}
-		t.Fatalf("no row with %s=%q in %v", key, val, rows)
-		return nil
-	}
-	wantGeo := map[string]any{"city": "Ashburn", "lat": 39.0438, "lon": -77.4874}
-	for _, row := range []map[string]any{
-		rowWith(payload.Peers, "node_id", "n1"),
-		rowWith(payload.Validators, "address", "g1a"),
-	} {
-		for k, want := range wantGeo {
-			if row[k] != want {
-				t.Errorf("%v: %s = %v, want %v", row, k, row[k], want)
+		for _, row := range []map[string]any{
+			rowWith(payload.Peers, "node_id", "n2"),
+			rowWith(payload.Validators, "address", "g1b"),
+		} {
+			for k := range wantGeo {
+				if v, ok := row[k]; ok {
+					t.Errorf("%v: %s = %v, want it omitted", row, k, v)
+				}
 			}
 		}
-	}
-	for _, row := range []map[string]any{
-		rowWith(payload.Peers, "node_id", "n2"),
-		rowWith(payload.Validators, "address", "g1b"),
-	} {
-		for k := range wantGeo {
-			if v, ok := row[k]; ok {
-				t.Errorf("%v: %s = %v, want it omitted", row, k, v)
-			}
-		}
-	}
+	})
 }
 
 func snapAt(blockTime string, catchingUp bool) *node.Snapshot {
