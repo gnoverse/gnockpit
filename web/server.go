@@ -721,10 +721,36 @@ func (s *Server) recordHistory(ctx context.Context, snap *node.Snapshot) {
 	if s.History == nil || snap == nil || snap.Signing == nil {
 		return
 	}
+	// Never persist the newest block in the window.
+	//
+	// /commit at the chain tip returns canonical:false and only the precommits
+	// THIS node has received so far, so a validator whose vote is still in
+	// flight reads as absent. The live windows heal themselves, because the
+	// same height is complete the next time it is read; the history store does
+	// not, since it records forward and never backfills. So a transient
+	// in-flight vote becomes a permanent missed block in missed_24h.
+	//
+	// Measured on gnoland-1, 2026-10-02: /commit at the tip returned 4/5
+	// precommits on ten consecutive samples, the same heights read 5/5 one block
+	// later, and WHICH validator looked absent tracked how far it sat from the
+	// observing node. Over the same period an operator's exhaustive scan of 7717
+	// finalized blocks found zero incomplete commits while missed_24h climbed.
+	//
+	// Deliberately narrow: the display semantics the signing tests assert are
+	// unchanged, only what reaches the permanent store.
+	var newest int64
+	for _, b := range snap.Signing.RecentBlocks {
+		if h, err := strconv.ParseInt(b.Height, 10, 64); err == nil && h > newest {
+			newest = h
+		}
+	}
 	blocks := make([]history.Block, 0, len(snap.Signing.RecentBlocks))
 	for _, b := range snap.Signing.RecentBlocks {
 		h, err := strconv.ParseInt(b.Height, 10, 64)
 		if err != nil {
+			continue
+		}
+		if h == newest {
 			continue
 		}
 		t, err := time.Parse(time.RFC3339Nano, b.Time)
