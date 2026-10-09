@@ -65,7 +65,7 @@ func TestBuildStatusReport(t *testing.T) {
 	rep := s.buildStatusReport(snap, now)
 
 	// Retrocompat: status/chain/height/time must serialize at the top level via
-	// the embedded StatusInfo, alongside the new sections.
+	// the embedded StatusInfo, alongside the other sections.
 	body, err := json.Marshal(rep)
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
