@@ -114,9 +114,9 @@ func TestBuildStatusReport(t *testing.T) {
 		t.Error("g1b should not be SPOF (1 of 11 total VP)")
 	}
 
-	// City and coordinates: on a geolocated peer and on the validator matched
-	// to it; omitted where unknown.
-	t.Run("geo", func(t *testing.T) {
+	// Location (country, city, coordinates, provider): on a geolocated peer and
+	// on the validator matched to it; omitted where unknown.
+	t.Run("location", func(t *testing.T) {
 		var payload struct {
 			Peers      []map[string]any `json:"peers"`
 			Validators []map[string]any `json:"validators"`
@@ -134,12 +134,14 @@ func TestBuildStatusReport(t *testing.T) {
 			t.Fatalf("no row with %s=%q in %v", key, val, rows)
 			return nil
 		}
-		wantGeo := map[string]any{"city": "Ashburn", "lat": 39.0438, "lon": -77.4874}
+		wantLoc := map[string]any{
+			"country": "US", "city": "Ashburn", "lat": 39.0438, "lon": -77.4874, "provider": "AWS",
+		}
 		for _, row := range []map[string]any{
 			rowWith(payload.Peers, "node_id", "n1"),
 			rowWith(payload.Validators, "address", "g1a"),
 		} {
-			for k, want := range wantGeo {
+			for k, want := range wantLoc {
 				if row[k] != want {
 					t.Errorf("%v: %s = %v, want %v", row, k, row[k], want)
 				}
@@ -149,7 +151,7 @@ func TestBuildStatusReport(t *testing.T) {
 			rowWith(payload.Peers, "node_id", "n2"),
 			rowWith(payload.Validators, "address", "g1b"),
 		} {
-			for k := range wantGeo {
+			for k := range wantLoc {
 				if v, ok := row[k]; ok {
 					t.Errorf("%v: %s = %v, want it omitted", row, k, v)
 				}
