@@ -80,7 +80,8 @@ func locationOf(p node.Peer) nodeLocation {
 	return nodeLocation{Country: p.Country, City: p.City, Lat: p.Lat, Lon: p.Lon, Provider: p.Provider}
 }
 
-// StatusPeer is a peer's column data in the public status payload.
+// StatusPeer is a peer's column data in the public status payload. Its
+// location fields come from the embedded nodeLocation.
 type StatusPeer struct {
 	Name   string `json:"name,omitempty"`
 	NodeID string `json:"node_id,omitempty"`
@@ -90,6 +91,8 @@ type StatusPeer struct {
 }
 
 // StatusValidator is a validator's column data in the public status payload.
+// Its location fields come from the embedded nodeLocation, copied from the
+// peer matched to its address.
 type StatusValidator struct {
 	Name    string `json:"name,omitempty"`
 	Address string `json:"address"`
