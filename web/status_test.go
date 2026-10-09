@@ -50,7 +50,13 @@ func TestBuildStatusReport(t *testing.T) {
 			{Address: "g1a", VotingPower: "10"},
 			{Address: "g1b", VotingPower: "1"},
 		},
-		Peers: []node.Peer{{ValAddress: "g1a", Country: "US", Provider: "AWS", RPCURL: "http://x"}},
+		Peers: []node.Peer{
+			{
+				NodeID: "n1", ValAddress: "g1a", RPCURL: "http://x", Provider: "AWS",
+				Country: "US", City: "Ashburn", Lat: 39.0438, Lon: -77.4874,
+			},
+			{NodeID: "n2"}, // not geolocated
+		},
 		Signing: &node.SigningStats{WindowSize: 100, ValidatorSigning: map[string]node.ValSigning{
 			"g1a": {Signed: 100, Eligible: 100, SignedInARow: 100},
 			"g1b": {Signed: 100, Eligible: 100, SignedInARow: 100},
@@ -106,6 +112,47 @@ func TestBuildStatusReport(t *testing.T) {
 	}
 	if b.SPOF {
 		t.Error("g1b should not be SPOF (1 of 11 total VP)")
+	}
+
+	// City and coordinates: on a geolocated peer and on the validator matched
+	// to it; omitted where unknown.
+	var payload struct {
+		Peers      []map[string]any `json:"peers"`
+		Validators []map[string]any `json:"validators"`
+	}
+	if err := json.Unmarshal(body, &payload); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	rowWith := func(rows []map[string]any, key, val string) map[string]any {
+		t.Helper()
+		for _, r := range rows {
+			if r[key] == val {
+				return r
+			}
+		}
+		t.Fatalf("no row with %s=%q in %v", key, val, rows)
+		return nil
+	}
+	wantGeo := map[string]any{"city": "Ashburn", "lat": 39.0438, "lon": -77.4874}
+	for _, row := range []map[string]any{
+		rowWith(payload.Peers, "node_id", "n1"),
+		rowWith(payload.Validators, "address", "g1a"),
+	} {
+		for k, want := range wantGeo {
+			if row[k] != want {
+				t.Errorf("%v: %s = %v, want %v", row, k, row[k], want)
+			}
+		}
+	}
+	for _, row := range []map[string]any{
+		rowWith(payload.Peers, "node_id", "n2"),
+		rowWith(payload.Validators, "address", "g1b"),
+	} {
+		for k := range wantGeo {
+			if v, ok := row[k]; ok {
+				t.Errorf("%v: %s = %v, want it omitted", row, k, v)
+			}
+		}
 	}
 }
 

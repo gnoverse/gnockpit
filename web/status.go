@@ -66,26 +66,32 @@ type NetworkState struct {
 
 // StatusPeer is a peer's column data in the public status payload.
 type StatusPeer struct {
-	Name      string `json:"name,omitempty"`
-	NodeID    string `json:"node_id,omitempty"`
-	Country   string `json:"country,omitempty"`
-	Provider  string `json:"provider,omitempty"`
-	NPeers    int    `json:"n_peers,omitempty"`
-	Reachable bool   `json:"reachable"`
+	Name      string  `json:"name,omitempty"`
+	NodeID    string  `json:"node_id,omitempty"`
+	Country   string  `json:"country,omitempty"`
+	City      string  `json:"city,omitempty"`
+	Lat       float64 `json:"lat,omitempty"`
+	Lon       float64 `json:"lon,omitempty"`
+	Provider  string  `json:"provider,omitempty"`
+	NPeers    int     `json:"n_peers,omitempty"`
+	Reachable bool    `json:"reachable"`
 }
 
 // StatusValidator is a validator's column data in the public status payload.
 type StatusValidator struct {
-	Name        string `json:"name,omitempty"`
-	Address     string `json:"address"`
-	Country     string `json:"country,omitempty"`
-	Provider    string `json:"provider,omitempty"`
-	VotingPower string `json:"voting_power,omitempty"`
-	SPOF        bool   `json:"spof"`
-	Inactive    bool   `json:"inactive,omitempty"`
-	Missed100   int    `json:"missed_100"`
-	Missed24h   int    `json:"missed_24h"`
-	AvgBlockMs  int    `json:"avg_block_ms"`
+	Name        string  `json:"name,omitempty"`
+	Address     string  `json:"address"`
+	Country     string  `json:"country,omitempty"`
+	City        string  `json:"city,omitempty"`
+	Lat         float64 `json:"lat,omitempty"`
+	Lon         float64 `json:"lon,omitempty"`
+	Provider    string  `json:"provider,omitempty"`
+	VotingPower string  `json:"voting_power,omitempty"`
+	SPOF        bool    `json:"spof"`
+	Inactive    bool    `json:"inactive,omitempty"`
+	Missed100   int     `json:"missed_100"`
+	Missed24h   int     `json:"missed_24h"`
+	AvgBlockMs  int     `json:"avg_block_ms"`
 }
 
 // StatusReport is the public /api/status payload: the retrocompat health summary
@@ -137,6 +143,9 @@ func (s *Server) buildStatusReport(snap *node.Snapshot, now time.Time) StatusRep
 			Name:      p.Moniker,
 			NodeID:    p.NodeID,
 			Country:   p.Country,
+			City:      p.City,
+			Lat:       p.Lat,
+			Lon:       p.Lon,
 			Provider:  p.Provider,
 			NPeers:    p.NPeers,
 			Reachable: p.RPCURL != "",
@@ -173,6 +182,7 @@ func (s *Server) buildStatusReport(snap *node.Snapshot, now time.Time) StatusRep
 			}
 			if p, ok := byAddr[vi.Address]; ok {
 				sv.Country = p.Country
+				sv.City, sv.Lat, sv.Lon = p.City, p.Lat, p.Lon
 				sv.Provider = p.Provider
 			}
 			rep.Validators = append(rep.Validators, sv)
