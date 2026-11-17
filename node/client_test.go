@@ -751,3 +751,22 @@ func TestHaltParams(t *testing.T) {
 		})
 	}
 }
+
+func TestChainHead(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `{"jsonrpc":"2.0","result":{
+			"node_info":{"moniker":"m","network":"gnoland-1","id":"abc"},
+			"sync_info":{"latest_block_height":"1627838","latest_block_time":"2026-11-17T14:06:59.418337027Z","catching_up":false}
+		}}`)
+	}))
+	defer srv.Close()
+
+	got, err := NewClient(srv.URL, 5*time.Second).ChainHead(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := ChainHead{ChainID: "gnoland-1", Height: 1627838, Time: time.Date(2026, 11, 17, 14, 6, 59, 418337027, time.UTC)}
+	if got.ChainID != want.ChainID || got.Height != want.Height || !got.Time.Equal(want.Time) {
+		t.Errorf("ChainHead() = %+v, want %+v", got, want)
+	}
+}

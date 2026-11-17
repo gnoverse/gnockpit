@@ -201,6 +201,29 @@ func (c *Client) GetStatus(ctx context.Context) (*Status, error) {
 	}, nil
 }
 
+// ChainHead is a chain's id and its newest block.
+type ChainHead struct {
+	ChainID string
+	Height  int64
+	Time    time.Time
+}
+
+// ChainHead reads the chain id and the newest block from /status.
+func (c *Client) ChainHead(ctx context.Context) (ChainHead, error) {
+	st, err := c.GetStatus(ctx)
+	if err != nil {
+		return ChainHead{}, err
+	}
+	h := ChainHead{ChainID: st.NodeInfo.Network}
+	if h.Height, err = strconv.ParseInt(st.SyncInfo.LatestBlockHeight, 10, 64); err != nil {
+		return ChainHead{}, fmt.Errorf("latest block height %q: %w", st.SyncInfo.LatestBlockHeight, err)
+	}
+	if h.Time, err = time.Parse(time.RFC3339Nano, st.SyncInfo.LatestBlockTime); err != nil {
+		return ChainHead{}, fmt.Errorf("latest block time %q: %w", st.SyncInfo.LatestBlockTime, err)
+	}
+	return h, nil
+}
+
 // GetNetInfo fetches /net_info and returns the peer list.
 func (c *Client) GetNetInfo(ctx context.Context) ([]Peer, error) {
 	var result struct {
