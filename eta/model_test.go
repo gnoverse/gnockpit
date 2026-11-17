@@ -276,4 +276,8 @@ func TestPaceDuration(t *testing.T) {
 	if got := (Pace{SecondsPerBlock: 3.5}).Duration(24_000); got != 84_000*time.Second {
 		t.Errorf("Duration(24000) at 3.5 s/block = %v, want 84000s", got)
 	}
+	// Beyond what a time.Duration holds, it saturates instead of wrapping.
+	if got := (Pace{SecondsPerBlock: 500}).Duration(1e9); got != math.MaxInt64 {
+		t.Errorf("Duration(1e9) at 500 s/block = %v, want the longest duration", got)
+	}
 }

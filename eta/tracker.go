@@ -200,11 +200,12 @@ func (t *Tracker) backfill(ctx context.Context, head node.ChainHead) (more bool,
 			}
 		}
 		bt, ferr := t.blockTime(ctx, h)
-		// A node refusing a height just below ones it served has reached
-		// the oldest block it keeps. Refusing any other height (a node
-		// behind the one that gave the head) may pass on a retry.
+		// A node refusing a height just below ones it served, and well below
+		// the head, has reached the oldest block it keeps. Refusing a height
+		// near the head comes from a node behind the one that gave the head
+		// (a load balancer's lagging backend), and may pass on a retry.
 		servedAbove := t.have[h+Stride] || (len(batch) > 0 && batch[len(batch)-1].Height == h+Stride)
-		if node.IsRefusal(ferr) && servedAbove {
+		if node.IsRefusal(ferr) && servedAbove && head.Height-h > paceBlocks {
 			if err := t.store.SetFloor(ctx, h+Stride); err != nil {
 				return false, err
 			}

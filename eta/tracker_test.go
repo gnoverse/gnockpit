@@ -398,3 +398,33 @@ func TestTrackerReport(t *testing.T) {
 		t.Errorf("logs = %q, want %q", *logs, want)
 	}
 }
+
+func TestTrackerRefusalNearTheHeadIsTransient(t *testing.T) {
+	// Behind a load balancer, a backend lagging the others refuses a height
+	// just below one they served: too close to the head to be the node's
+	// oldest block.
+	chain := newFakeChain(5042)
+	chain.fail[4900] = []error{&node.RPCError{Code: -32603, Message: "Internal error", Data: "min height 4900 can't be greater than max height 4850"}}
+	tr, _, _ := testTracker(t, chain)
+
+	if _, err := tr.syncPass(context.Background()); err == nil {
+		t.Fatal("syncPass() error = nil, want the refusal reported")
+	}
+	if floor, _ := tr.store.Floor(context.Background()); floor != 0 {
+		t.Errorf("Floor() = %d, want none", floor)
+	}
+}
+
+func TestTrackerFloorAcrossPasses(t *testing.T) {
+	// The height above the refused one was stored by an earlier pass.
+	chain := newFakeChain(5042)
+	chain.floor = 1000
+	tr, _, _ := testTracker(t, chain)
+	tr.perPass = len(gridHeights(1000, 5000))
+
+	syncAll(t, tr)
+
+	if floor, _ := tr.store.Floor(context.Background()); floor != 1000 {
+		t.Errorf("Floor() = %d, want 1000", floor)
+	}
+}

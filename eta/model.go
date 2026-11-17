@@ -35,7 +35,8 @@ type Pace struct {
 	OverBlocks      int64
 }
 
-// Duration returns how long blocks take at this pace.
+// Duration returns how long blocks take at this pace, saturating at the
+// longest time.Duration.
 func (p Pace) Duration(blocks int64) time.Duration {
 	return seconds(p.SecondsPerBlock * float64(blocks))
 }
@@ -316,4 +317,16 @@ func paceBetween(from, to Sample) Pace {
 	return Pace{SecondsPerBlock: to.Time.Sub(from.Time).Seconds() / float64(n), OverBlocks: n}
 }
 
-func seconds(s float64) time.Duration { return time.Duration(s * float64(time.Second)) }
+// seconds converts s seconds to a duration, saturating at the longest and
+// shortest time.Duration: converting an out-of-range float is undefined in Go
+// and wraps on some platforms.
+func seconds(s float64) time.Duration {
+	ns := s * float64(time.Second)
+	switch {
+	case ns >= math.MaxInt64:
+		return math.MaxInt64
+	case ns <= math.MinInt64:
+		return math.MinInt64
+	}
+	return time.Duration(ns)
+}
