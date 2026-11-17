@@ -53,8 +53,14 @@ func etaServer(t *testing.T, tip int64, halt *eta.ScheduledHalt) *Server {
 // tipHeight is 40 days of 3.5 s blocks, plus a few off the sample grid.
 const tipHeight = 987_642
 
+// etaReply is an /api/eta answer: a report, or an error.
+type etaReply struct {
+	etaReport
+	Error string `json:"error"`
+}
+
 // getETA queries /api/eta at the tip's block time and decodes the answer.
-func getETA(t *testing.T, s *Server, query string) (int, etaReport, map[string]json.RawMessage) {
+func getETA(t *testing.T, s *Server, query string) (int, etaReply, map[string]json.RawMessage) {
 	t.Helper()
 	w := httptest.NewRecorder()
 	s.serveETA(w, httptest.NewRequest(http.MethodGet, "/api/eta?"+query, nil), etaBlockTime(tipHeight))
@@ -64,7 +70,7 @@ func getETA(t *testing.T, s *Server, query string) (int, etaReport, map[string]j
 	if o := w.Header().Get("Access-Control-Allow-Origin"); o != "*" {
 		t.Errorf("Access-Control-Allow-Origin = %q, want *", o)
 	}
-	var rep etaReport
+	var rep etaReply
 	var keys map[string]json.RawMessage
 	if err := json.Unmarshal(w.Body.Bytes(), &rep); err != nil {
 		t.Fatalf("decode %s: %v", w.Body, err)
@@ -230,9 +236,12 @@ func TestETABadRequests(t *testing.T) {
 		fmt.Sprintf("height=%d&since=%s", tipHeight+10, rfc(tip.Add(time.Hour))),
 		fmt.Sprintf("time=%s&since=%s", rfc(tip.Add(time.Hour)), rfc(tip.Add(-time.Hour))),
 	} {
-		code, rep, _ := getETA(t, s, q)
+		code, rep, keys := getETA(t, s, q)
 		if code != http.StatusBadRequest || rep.Error == "" {
 			t.Errorf("?%s: status %d, error %q; want 400 with a reason", q, code, rep.Error)
+		}
+		if len(keys) != 1 {
+			t.Errorf("?%s: keys %v, want only error", q, keys)
 		}
 	}
 }

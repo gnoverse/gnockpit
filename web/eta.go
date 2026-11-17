@@ -44,9 +44,8 @@ var etaScenarioSpans = []struct {
 // halt) fills target and the eta fields; time mode (?time=) fills estimate.
 // Times are RFC 3339 UTC, to the second.
 type etaReport struct {
-	Error       string             `json:"error,omitempty"`
-	Chain       string             `json:"chain,omitempty"`
-	Now         *etaBlock          `json:"now,omitempty"`
+	Chain       string             `json:"chain"`
+	Now         *etaBlock          `json:"now"`
 	Target      *etaTarget         `json:"target,omitempty"`
 	ETA         string             `json:"eta,omitempty"`
 	SecondsLeft *int64             `json:"seconds_left,omitempty"`
@@ -134,6 +133,11 @@ type etaHistory struct {
 	Complete bool   `json:"complete"`
 }
 
+// etaErrorBody is the /api/eta payload for a request it cannot answer.
+type etaErrorBody struct {
+	Error string `json:"error"`
+}
+
 // etaError is a request /api/eta cannot answer, with its HTTP status.
 type etaError struct {
 	status int
@@ -163,17 +167,19 @@ func (s *Server) serveETA(w http.ResponseWriter, r *http.Request, now time.Time)
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Access-Control-Allow-Origin", "*")
 	w.Header().Set("Cache-Control", "no-cache")
-	rep, err := s.etaReport(r.Context(), r.URL.Query(), now)
+	var payload any
 	status := http.StatusOK
+	rep, err := s.etaReport(r.Context(), r.URL.Query(), now)
+	payload = rep
 	if err != nil {
 		status = http.StatusInternalServerError
 		var ee *etaError
 		if errors.As(err, &ee) {
 			status = ee.status
 		}
-		rep = etaReport{Error: err.Error()}
+		payload = etaErrorBody{Error: err.Error()}
 	}
-	body, err := json.MarshalIndent(rep, "", "  ")
+	body, err := json.MarshalIndent(payload, "", "  ")
 	if err != nil {
 		log.Printf("eta: encode: %v", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
