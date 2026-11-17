@@ -46,7 +46,7 @@ appear for the same peer, the earlier `-rpc` in flag order wins.
 | `-addr`                 | `0.0.0.0`                  | Bind address                                                                                                                                                         |
 | `-interval`             | `5s`                       | Dashboard refresh interval                                                                                                                                           |
 | `-v`                    | false                      | Verbose HTTP logging                                                                                                                                                 |
-| `--db-path`             | `/tmp/gnockpit.db`         | SQLite database for push notifications (see Push Notifications)                                                                                                      |
+| `--db-path`             | `/tmp/gnockpit.db`         | SQLite database for push notifications, missed-block history and block-ETA history (see Push Notifications, Block ETA)                                               |
 | `--chain-stuck-secs`    | `30`                       | Seconds without a new block before the chain-stuck alert fires                                                                                                       |
 | `--notify`              | (none)                     | Shoutrrr notification URL (repeatable); see External Notifications                                                                                                   |
 | `--redact-secret`       | false                      | Strip notification URL secrets from logged Shoutrrr errors; see External Notifications                                                                               |
@@ -197,6 +197,36 @@ table and `/api/stats`). History older than 31 days is pruned. Windows only
 cover data recorded since gnockpit started; `/api/stats` exposes `recorded_since`
 so consumers know the coverage.
 
+## Block ETA
+
+gnockpit estimates when a block height will be produced, and which height the
+chain will reach at a given time, with a margin and the drift from the first
+estimate. It is built for coordinated upgrades: picking a halt height for a
+target time, then counting down to it.
+
+- **Dashboard.** **⏱ Block ETA** in the header opens a planner (height → time or
+  time → height). **Show countdown** puts the target in the page link
+  (`/?eta=<height>&since=<RFC 3339 time>&label=<text>`), and anyone opening the
+  link sees the same card: countdown, ETA in UTC and local time, 80% and 95%
+  ranges, drift from the original estimate, the ETA over time, and the ETA at the
+  pace of the last hour, 24 h, 7 days, 30 days and the whole history. Nothing is
+  stored server-side; ✕ removes the target from the link.
+- **Scheduled halt.** gnockpit reads the halt governance sets on chain
+  (`node:p:halt_height` and `node:p:halt_min_version`; a params query, answered
+  even with `rpc.allow_code_execution = false`). While a halt is ahead of the
+  chain, a **Next halt** card shows it to every visitor, with the estimate from
+  when gnockpit first saw the halt as the original.
+- **Estimate.** The ETA extrapolates the pace of the last 3,000 blocks. The
+  ranges are where the actual time fell for 80% and 95% of the predictions this
+  method made over the last 30 days at the same distance ahead: they widen with
+  the distance, and lean late when the chain tends to slow down. An estimate past
+  a scheduled halt does not include the upgrade downtime, and says so.
+- **History.** The time of every 100th block is backfilled into `--db-path` from
+  the first `-rpc`, newest first, at about four requests a second, pausing on HTTP
+  429 for as long as `Retry-After` asks; a chain of 1.6M blocks takes about an
+  hour. The ranges appear once enough history is in. Pointing gnockpit at another
+  chain drops the stored history.
+
 ## HTTP API
 
 All endpoints are CORS-open JSON, for building external badges/dashboards.
@@ -205,8 +235,31 @@ All endpoints are CORS-open JSON, for building external badges/dashboards.
 | ------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `/api/status` | Health summary (`status`/`chain`/`height`/`reason`/`time`) plus live network state, the last 100 blocks with signing status, and per-peer / per-validator column data, including `name`, `country`, `city`, `lat`/`lon` and cloud `provider`. A validator's location and provider are its matched peer's. Unknown fields are omitted; when only one of `lat`/`lon` is present, the other is 0. |
 | `/api/stats`  | Aggregate stats: per-validator missed-block windows, cloud-provider and country aggregates, validator-set health, and the Nakamoto coefficient.                                                                                                                                                                                                                                                |
+| `/api/eta`    | Block ETAs: when a height is expected, which height a time reaches, or the scheduled halt (see below).                                                                                                                                                                                                                                                                                         |
 | `/api`        | Raw internal snapshot dump (unstable shape; for debugging).                                                                                                                                                                                                                                                                                                                                    |
 | `/badge.svg`  | SVG status badge.                                                                                                                                                                                                                                                                                                                                                                              |
+
+### `/api/eta`
+
+| Query               | Answer                                                                                                                                                                                                     |
+| ------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `?height=H`         | When block H is expected: `eta`, `seconds_left`, `range_80` and `range_95` (`from`/`to`), `pace`, `scenarios` (the ETA at other paces) and `target.blocks_left`. Once H is produced: `reached_at` instead. |
+| `?height=H&since=T` | The same, plus `original` (the estimate as of T: `as_of`, `height`, `eta`, `drift_seconds`) and `trail` (the estimate over time since T).                                                                  |
+| `?time=T`           | Which height the chain reaches at T, a future time: `estimate.height` with `estimate.range_80` and `range_95`, and the height at other paces in `scenarios`.                                               |
+| none                | The halt scheduled on chain, answered as `?height=<halt>&since=<first seen>`; `"halt": null` and the current `pace` when none is.                                                                          |
+
+Every answer carries `chain`, `now` (`height`, `block_time`), `halt` and `history`
+(`from`, `samples`, `complete`); `warning` flags a scheduled halt before the
+target. Times are RFC 3339 UTC. The ranges are omitted while the history is too
+short, and `original` when T predates it. Errors come as `{"error": "…"}`: 400 for
+a malformed query, a time not in the future or a `since` in the future, 503 until
+gnockpit has a chain status and enough history for a pace, 502 when the RPC
+cannot give a produced block's time.
+
+```bash
+curl -s 'http://localhost:8080/api/eta?height=1651200&since=2026-11-16T13:47:26Z'
+curl -s 'http://localhost:8080/api/eta?time=2026-11-18T13:00:00Z'
+```
 
 ## Features
 
@@ -216,7 +269,8 @@ All endpoints are CORS-open JSON, for building external badges/dashboards.
 - Peer management — validator detection, health status, RPC reachability
 - Network map — IP-geolocated peers, per-country list, Country + cloud-Provider columns
 - Signing stats — per-validator blocks missed in the last 100 + proposer speed, and missed-block counts over 1h/24h/7d/30d/total
-- HTTP API — CORS-open `/api/status` and `/api/stats` for external badges/dashboards
+- Block ETA — when a height will be produced (or which height at a given time), with 80%/95% ranges and drift from the original estimate; countdown cards for shared links and for the halt scheduled on chain
+- HTTP API — CORS-open `/api/status`, `/api/stats` and `/api/eta` for external badges, dashboards and scripts
 - Alerts — browser push (PWA) and external notifications (Discord, Telegram, …) for chain-stuck and missed-blocks
 - Block history — recent blocks with signing visualization
 
