@@ -35,6 +35,11 @@ type Pace struct {
 	OverBlocks      int64
 }
 
+// Duration returns how long blocks take at this pace.
+func (p Pace) Duration(blocks int64) time.Duration {
+	return seconds(p.SecondsPerBlock * float64(blocks))
+}
+
 // TimeRange is the interval a time falls in with a given probability.
 type TimeRange struct {
 	From, To time.Time
@@ -146,7 +151,7 @@ func (m *Model) Estimate(from Sample, target int64) (Estimate, bool) {
 		return Estimate{}, false
 	}
 	e := Estimate{From: from, Target: target, Pace: p}
-	e.ETA = from.Time.Add(seconds(p.SecondsPerBlock * float64(blocks)))
+	e.ETA = from.Time.Add(p.Duration(blocks))
 	if q, ok := m.quantiles(blocks); ok {
 		e.Range80 = &TimeRange{From: e.ETA.Add(seconds(q[1])), To: e.ETA.Add(seconds(q[3]))}
 		e.Range95 = &TimeRange{From: e.ETA.Add(seconds(q[0])), To: e.ETA.Add(seconds(q[4]))}

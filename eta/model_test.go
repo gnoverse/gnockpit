@@ -247,3 +247,33 @@ func TestQuantilesInterpolate(t *testing.T) {
 		t.Error("quantiles() without horizons is ok, want not ok")
 	}
 }
+
+func TestHeightRangesOnAnIrregularChain(t *testing.T) {
+	samples := series(t0, 40*stridesPerDay, func(i int) float64 {
+		if (i/30)%2 == 0 {
+			return 3.0
+		}
+		return 4.0
+	})
+	m := NewModel(samples)
+	tip := samples[len(samples)-1]
+	for _, d := range []time.Duration{time.Hour, 24 * time.Hour} {
+		h, ok := m.HeightAt(tip, tip.Time.Add(d))
+		if !ok || h.Range80 == nil || h.Range95 == nil {
+			t.Fatalf("HeightAt(+%v) = %+v, %v; want ranges", d, h, ok)
+		}
+		r80, r95 := *h.Range80, *h.Range95
+		if r80.From > h.Height || h.Height > r80.To || r80.From == r80.To {
+			t.Errorf("+%v: 80%% range %+v does not hold %d with a width", d, r80, h.Height)
+		}
+		if r95.From > r80.From || r95.To < r80.To {
+			t.Errorf("+%v: 95%% range %+v does not contain the 80%% range %+v", d, r95, r80)
+		}
+	}
+}
+
+func TestPaceDuration(t *testing.T) {
+	if got := (Pace{SecondsPerBlock: 3.5}).Duration(24_000); got != 84_000*time.Second {
+		t.Errorf("Duration(24000) at 3.5 s/block = %v, want 84000s", got)
+	}
+}
