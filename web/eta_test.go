@@ -7,7 +7,6 @@ import (
 	"log"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -295,8 +294,9 @@ func TestETAReachedBlockTimeIsCached(t *testing.T) {
 func TestETAReachedBlockTimeFailures(t *testing.T) {
 	t.Run("RPC error", func(t *testing.T) {
 		var logs bytes.Buffer
+		prev := log.Writer()
 		log.SetOutput(&logs)
-		t.Cleanup(func() { log.SetOutput(os.Stderr) })
+		t.Cleanup(func() { log.SetOutput(prev) })
 		s := etaServerWithRPC(t, tipHeight, nil, func(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusInternalServerError)
 		})
@@ -334,8 +334,12 @@ func TestETATimeWarnsOfAHalt(t *testing.T) {
 }
 
 func TestETAHeightTooFarAhead(t *testing.T) {
+	// The bound is a century at the current pace (3.5 s/block here).
 	s := etaServer(t, tipHeight, nil)
-	if code, rep, _ := getETA(t, s, "height=2000000000000"); code != http.StatusBadRequest || rep.Error == "" {
-		t.Errorf("status %d, error %q; want 400 with a reason", code, rep.Error)
+	if code, _, _ := getETA(t, s, fmt.Sprintf("height=%d", tipHeight+200_000_000)); code != http.StatusOK {
+		t.Errorf("22 years ahead: status %d, want 200", code)
+	}
+	if code, rep, _ := getETA(t, s, fmt.Sprintf("height=%d", tipHeight+1_000_000_000)); code != http.StatusBadRequest || rep.Error == "" {
+		t.Errorf("111 years ahead: status %d, error %q; want 400 with a reason", code, rep.Error)
 	}
 }

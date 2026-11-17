@@ -27,9 +27,9 @@ type ETAView interface {
 // by a viewer whose clock runs fast.
 const sinceSkew = time.Minute
 
-// maxBlocksAhead bounds how far ahead a height may be asked about: about a
-// decade of blocks, well inside what a time.Duration can hold.
-const maxBlocksAhead = 100_000_000
+// maxAhead bounds how far ahead, at the current pace, a height may be asked
+// about.
+const maxAhead = 100 * 365 * 24 * time.Hour
 
 // etaScenarioSpans are the look-back spans the scenarios take the pace over;
 // a zero span means the whole history.
@@ -289,8 +289,8 @@ type etaInput struct {
 // since since when it is set.
 func (s *Server) fillETAHeight(ctx context.Context, rep *etaReport, in etaInput, target int64, since time.Time) error {
 	v, tip := in.view, in.tip
-	if target-tip.Height > maxBlocksAhead {
-		return badETARequest("height %d is more than %d blocks ahead", target, maxBlocksAhead)
+	if p, ok := v.Model.Pace(tip); ok && p.Duration(target-tip.Height) > maxAhead {
+		return badETARequest("height %d is more than 100 years ahead at the current pace", target)
 	}
 	rep.Target = &etaTarget{Height: target, BlocksLeft: max(0, target-tip.Height)}
 	if v.Halt != nil && target > v.Halt.Height {
@@ -300,13 +300,13 @@ func (s *Server) fillETAHeight(ctx context.Context, rep *etaReport, in etaInput,
 	if target <= tip.Height {
 		at, err := s.reachedBlockTime(ctx, target)
 		if node.IsRefusal(err) {
-			// The RPC is behind the source that gave the newest block.
-			return etaUnavailable(fmt.Sprintf("block #%d is not served by the RPC yet", target))
+			return etaUnavailable(fmt.Sprintf("the RPC does not serve block #%d: it may be behind, or not keep blocks that old", target))
 		}
 		if err != nil {
 			// The error names the RPC, whose address may carry credentials:
-			// keep it in the log.
-			log.Printf("eta: time of block #%d: %v", target, err)
+			// keep it in the log, once per distinct failure while polling
+			// cards repeat the request.
+			s.etaBlockTimes.logOnce(fmt.Sprintf("eta: time of block #%d: %v", target, err))
 			return &etaError{http.StatusBadGateway, fmt.Sprintf("the RPC could not give the time of block #%d", target)}
 		}
 		outcome = at
@@ -392,10 +392,23 @@ func etaScenarios(m *eta.Model, tip eta.Sample, answer func(eta.Pace) etaScenari
 }
 
 // blockTimeCache remembers the time of reached blocks, which never changes,
-// so cards polling a reached target do not query the RPC each time.
+// so cards polling a reached target do not query the RPC each time. lastLog
+// is the last failure logged.
 type blockTimeCache struct {
-	mu sync.Mutex
-	m  map[int64]time.Time
+	mu      sync.Mutex
+	m       map[int64]time.Time
+	lastLog string
+}
+
+// logOnce logs msg unless it is the last one logged.
+func (c *blockTimeCache) logOnce(msg string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if msg == c.lastLog {
+		return
+	}
+	c.lastLog = msg
+	log.Print(msg)
 }
 
 // maxCachedBlockTimes bounds the cache; it starts over when full.
