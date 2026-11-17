@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -603,4 +604,63 @@ func TestPubKeyBech32(t *testing.T) {
 	if got := pk2.Bech32(); got != want {
 		t.Errorf("PubKey{AminoType}.Bech32() = %q, want %q", got, want)
 	}
+}
+
+// ---- RPC errors
+
+func TestRPCErrorsSurface(t *testing.T) {
+	// The body gno writes for a JSON-RPC error, whatever the HTTP status.
+	rpcErrorBody := func(data string) string {
+		d, _ := json.Marshal(data)
+		return `{"jsonrpc":"2.0","id":"","error":{"code":-32603,"message":"Internal error","data":` + string(d) + `}}`
+	}
+	t.Run("rate limited", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Retry-After", "236")
+			w.WriteHeader(http.StatusTooManyRequests)
+		}))
+		defer srv.Close()
+
+		_, err := NewClient(srv.URL, 5*time.Second).GetStatus(context.Background())
+		var se *HTTPStatusError
+		if !errors.As(err, &se) {
+			t.Fatalf("GetStatus() error = %v, want an *HTTPStatusError", err)
+		}
+		if se.StatusCode != http.StatusTooManyRequests || se.RetryAfter != 236*time.Second {
+			t.Errorf("HTTPStatusError = {%d, %v}, want {429, 236s}", se.StatusCode, se.RetryAfter)
+		}
+	})
+	t.Run("error envelope with HTTP 200", func(t *testing.T) {
+		const data = "min height 99999999 can't be greater than max height 1628915"
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			fmt.Fprint(w, rpcErrorBody(data))
+		}))
+		defer srv.Close()
+
+		_, err := NewClient(srv.URL, 5*time.Second).GetStatus(context.Background())
+		var re *RPCError
+		if !errors.As(err, &re) {
+			t.Fatalf("GetStatus() error = %v, want an *RPCError", err)
+		}
+		if re.Code != -32603 || re.Data != data {
+			t.Errorf("RPCError = {%d, %q}, want {-32603, %q}", re.Code, re.Data, data)
+		}
+		if !strings.Contains(err.Error(), data) {
+			t.Errorf("error text %q does not carry the node's reason %q", err, data)
+		}
+	})
+	t.Run("code-running query refused", func(t *testing.T) {
+		// gno with rpc.allow_code_execution = false: HTTP 403 plus a JSON-RPC error.
+		const data = `query "vm/qrender" runs code, which this node does not allow over RPC (rpc.allow_code_execution = false)`
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusForbidden)
+			fmt.Fprint(w, rpcErrorBody(data))
+		}))
+		defer srv.Close()
+
+		_, err := NewClient(srv.URL, 5*time.Second).FetchValoperNames(context.Background())
+		if err == nil || !strings.Contains(err.Error(), "rpc.allow_code_execution = false") {
+			t.Errorf("FetchValoperNames() error = %v, want the node's refusal", err)
+		}
+	})
 }

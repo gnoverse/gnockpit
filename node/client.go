@@ -66,15 +66,75 @@ func (c *Client) rpcGet(ctx context.Context, path string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
+	if resp.StatusCode < 200 || resp.StatusCode > 299 {
+		return nil, newHTTPStatusError(url, resp, body)
+	}
 	return body, nil
 }
 
-// rpcResult wraps the JSON-RPC result envelope.
-type rpcResult struct {
-	Result json.RawMessage `json:"result"`
+// HTTPStatusError is a non-2xx answer from an RPC endpoint. RetryAfter is the
+// wait the endpoint asked for in its Retry-After header, zero when absent. RPC
+// holds the JSON-RPC error the body carried, if any (gno answers a refused
+// query with HTTP 403 and the reason in a JSON-RPC error).
+type HTTPStatusError struct {
+	URL        string
+	StatusCode int
+	RetryAfter time.Duration
+	RPC        *RPCError
 }
 
-// rpcGetJSON fetches a path and unmarshals .result into dest.
+func newHTTPStatusError(url string, resp *http.Response, body []byte) *HTTPStatusError {
+	e := &HTTPStatusError{URL: url, StatusCode: resp.StatusCode}
+	if secs, err := strconv.Atoi(resp.Header.Get("Retry-After")); err == nil && secs > 0 {
+		e.RetryAfter = time.Duration(secs) * time.Second
+	}
+	var envelope rpcResult
+	if json.Unmarshal(body, &envelope) == nil {
+		e.RPC = envelope.Error
+	}
+	return e
+}
+
+func (e *HTTPStatusError) Error() string {
+	msg := fmt.Sprintf("GET %s: HTTP %d %s", e.URL, e.StatusCode, http.StatusText(e.StatusCode))
+	if e.RPC != nil {
+		msg += ": " + e.RPC.Error()
+	}
+	return msg
+}
+
+// Unwrap exposes the JSON-RPC error the body carried, so errors.As finds it.
+func (e *HTTPStatusError) Unwrap() error {
+	if e.RPC == nil {
+		return nil
+	}
+	return e.RPC
+}
+
+// RPCError is the error member of a JSON-RPC response: the node answered but
+// could not serve the call. gno sends it with HTTP 200 for most failures, such
+// as a height out of range.
+type RPCError struct {
+	Code    int    `json:"code"`
+	Message string `json:"message"`
+	Data    string `json:"data"`
+}
+
+func (e *RPCError) Error() string {
+	if e.Data == "" {
+		return fmt.Sprintf("rpc error %d: %s", e.Code, e.Message)
+	}
+	return fmt.Sprintf("rpc error %d: %s: %s", e.Code, e.Message, e.Data)
+}
+
+// rpcResult wraps the JSON-RPC response envelope.
+type rpcResult struct {
+	Result json.RawMessage `json:"result"`
+	Error  *RPCError       `json:"error"`
+}
+
+// rpcGetJSON fetches a path and unmarshals .result into dest. A JSON-RPC
+// error in the response is returned as an *RPCError.
 func (c *Client) rpcGetJSON(ctx context.Context, path string, dest interface{}) error {
 	body, err := c.rpcGet(ctx, path)
 	if err != nil {
@@ -83,6 +143,9 @@ func (c *Client) rpcGetJSON(ctx context.Context, path string, dest interface{}) 
 	var envelope rpcResult
 	if err := json.Unmarshal(body, &envelope); err != nil {
 		return fmt.Errorf("unmarshal envelope: %w (body: %s)", err, truncate(string(body), 200))
+	}
+	if envelope.Error != nil {
+		return fmt.Errorf("%s: %w", path, envelope.Error)
 	}
 	return json.Unmarshal(envelope.Result, dest)
 }
@@ -470,15 +533,11 @@ func (c *Client) GetSigningStats(ctx context.Context, currentHeight int, window 
 
 // DumpConsensusState fetches /dump_consensus_state.
 func (c *Client) DumpConsensusState(ctx context.Context) (json.RawMessage, error) {
-	body, err := c.rpcGet(ctx, "/dump_consensus_state")
-	if err != nil {
+	var result json.RawMessage
+	if err := c.rpcGetJSON(ctx, "/dump_consensus_state", &result); err != nil {
 		return nil, err
 	}
-	var envelope rpcResult
-	if err := json.Unmarshal(body, &envelope); err != nil {
-		return nil, err
-	}
-	return envelope.Result, nil
+	return result, nil
 }
 
 // GetConsensusState parses the dump_consensus_state into structured data.

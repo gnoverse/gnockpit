@@ -20,27 +20,21 @@ func (c *Client) abciQuery(ctx context.Context, abciPath, data string) ([]byte, 
 	q := neturl.Values{}
 	q.Set("path", `"`+abciPath+`"`)
 	q.Set("data", `"`+base64.StdEncoding.EncodeToString([]byte(data))+`"`)
-	body, err := c.rpcGet(ctx, "/abci_query?"+q.Encode())
-	if err != nil {
-		return nil, err
+	var res struct {
+		Response struct {
+			ResponseBase struct {
+				Error json.RawMessage `json:"Error"`
+				Data  []byte          `json:"Data"` // base64 in JSON → bytes
+			} `json:"ResponseBase"`
+		} `json:"response"`
 	}
-	var env struct {
-		Result struct {
-			Response struct {
-				ResponseBase struct {
-					Error json.RawMessage `json:"Error"`
-					Data  []byte          `json:"Data"` // base64 in JSON → bytes
-				} `json:"ResponseBase"`
-			} `json:"response"`
-		} `json:"result"`
-	}
-	if err := json.Unmarshal(body, &env); err != nil {
+	if err := c.rpcGetJSON(ctx, "/abci_query?"+q.Encode(), &res); err != nil {
 		return nil, fmt.Errorf("abci_query %s: %w", abciPath, err)
 	}
-	if e := env.Result.Response.ResponseBase.Error; len(e) > 0 && string(e) != "null" {
+	if e := res.Response.ResponseBase.Error; len(e) > 0 && string(e) != "null" {
 		return nil, fmt.Errorf("abci_query %s: %s", abciPath, e)
 	}
-	return env.Result.Response.ResponseBase.Data, nil
+	return res.Response.ResponseBase.Data, nil
 }
 
 // qrender calls vm/qrender for "<pkgPath>:<renderPath>".
