@@ -770,3 +770,14 @@ func TestChainHead(t *testing.T) {
 		t.Errorf("ChainHead() = %+v, want %+v", got, want)
 	}
 }
+
+func TestStatusHeadUnparsable(t *testing.T) {
+	for _, si := range []SyncInfo{
+		{LatestBlockHeight: "", LatestBlockTime: "2026-11-17T14:06:59Z"},
+		{LatestBlockHeight: "12", LatestBlockTime: "not a time"},
+	} {
+		if _, err := (&Status{SyncInfo: si}).Head(); err == nil {
+			t.Errorf("Head() of %+v = nil error, want one", si)
+		}
+	}
+}
