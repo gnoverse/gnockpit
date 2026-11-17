@@ -78,7 +78,7 @@ Everything is auto-detected or configurable via flags. The tool works on any gno
 - Validator names → also discovered dynamically from peers
 
 ### RPC errors
-`rpcGet` returns a `*node.HTTPStatusError` (with `RetryAfter`) for a non-2xx answer; `rpcGetJSON` wraps a `*node.RPCError` for a JSON-RPC `error` envelope, which gno sends with HTTP 200 (e.g. a height out of range). An `HTTPStatusError` whose body held a JSON-RPC error unwraps to it too (gno's 403 refusal), so test for `HTTPStatusError` first when telling "refused" from "failed" (see `eta.refused`). Decode RPC results through `rpcGetJSON` so neither passes silently.
+`rpcGet` returns a `*node.HTTPStatusError` (with `RetryAfter`) for a non-2xx answer; `rpcGetJSON` wraps a `*node.RPCError` for a JSON-RPC `error` envelope, which gno sends with HTTP 200 (e.g. a height out of range). `node.IsRefusal` tells a node refusing a call (JSON-RPC error) from one failing to answer (transport error, HTTP error status). Decode RPC results through `rpcGetJSON` so neither passes silently.
 
 ### Single HTML file
 `web/index.html` is a complete SPA with no build step. Vanilla JS, CSS variables for dark theme, no external dependencies. It's embedded in the binary via `go:embed`.

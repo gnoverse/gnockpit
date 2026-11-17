@@ -270,9 +270,11 @@ then measures the drift of the actual time. Every successful answer also carries
 `complete`: the backfill reached the first block the node serves); `warning`
 flags a scheduled halt before the target. The ranges are left out while the
 history is too short, and `original` and `trail` when T predates it. Errors come
-as `{"error": "…"}`: 400 for a malformed query, a time not after the newest
-block, or a `since` in the future; 503 until gnockpit has a chain status and
-enough history for a pace; 502 when the RPC cannot give a produced block's time.
+as `{"error": "…"}`: 400 for a malformed query, a height more than 100,000,000
+blocks ahead, a time not after the newest block, or a `since` in the future; 503
+until gnockpit has a chain status and enough history for a pace, or while the
+first `-rpc` has yet to serve a produced block; 502 when that RPC cannot give a
+produced block's time.
 
 ```bash
 curl -s 'http://localhost:8080/api/eta?height=1651200&since=2026-11-16T13:47:26Z'
