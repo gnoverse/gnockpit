@@ -232,10 +232,10 @@ func TestQuantilesInterpolate(t *testing.T) {
 		blocks int64
 		want   [5]float64
 	}{
-		{500, [5]float64{-5, -2, 0, 2, 5}},        // below the first horizon: scaled
-		{2000, [5]float64{-20, -8, 0, 6, 20}},     // between: linear
-		{6000, [5]float64{-60, -24, 0, 16, 60}},   // beyond the last: scaled
-		{3000, [5]float64{-30, -12, 0, 8, 30}},    // on a horizon
+		{500, [5]float64{-5, -2, 0, 2, 5}},      // below the first horizon: scaled
+		{2000, [5]float64{-20, -8, 0, 6, 20}},   // between: linear
+		{6000, [5]float64{-60, -24, 0, 16, 60}}, // beyond the last: scaled
+		{3000, [5]float64{-30, -12, 0, 8, 30}},  // on a horizon
 	}
 	for _, tc := range tests {
 		got, ok := m.quantiles(tc.blocks)

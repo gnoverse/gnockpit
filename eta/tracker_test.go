@@ -29,7 +29,9 @@ func newFakeChain(head int64) *fakeChain {
 	return &fakeChain{chainID: "gnoland-1", head: head, fail: map[int64][]error{}}
 }
 
-func (c *fakeChain) timeOf(h int64) time.Time { return t0.Add(time.Duration(h) * 3500 * time.Millisecond) }
+func (c *fakeChain) timeOf(h int64) time.Time {
+	return t0.Add(time.Duration(h) * 3500 * time.Millisecond)
+}
 
 func (c *fakeChain) ChainHead(context.Context) (node.ChainHead, error) {
 	c.mu.Lock()
