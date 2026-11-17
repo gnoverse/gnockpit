@@ -664,3 +664,90 @@ func TestRPCErrorsSurface(t *testing.T) {
 		}
 	})
 }
+
+// ---- Block times and halt params
+
+func TestBlockTime(t *testing.T) {
+	// Recorded from gnoland-1's /blockchain?minHeight=1600000&maxHeight=1600000.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.URL.RawQuery; got != "minHeight=1600000&maxHeight=1600000" {
+			t.Errorf("query = %q, want the single height 1600000", got)
+		}
+		fmt.Fprint(w, `{"jsonrpc":"2.0","id":"","result":{"last_height":"1628985","block_metas":[{
+			"block_id":{"hash":"x"},
+			"header":{"chain_id":"gnoland-1","height":"1600000","time":"2026-11-16T10:51:11.208138936Z"}}]}}`)
+	}))
+	defer srv.Close()
+
+	got, err := NewClient(srv.URL, 5*time.Second).BlockTime(context.Background(), 1600000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := time.Date(2026, 11, 16, 10, 51, 11, 208138936, time.UTC); !got.Equal(want) {
+		t.Errorf("BlockTime(1600000) = %v, want %v", got, want)
+	}
+}
+
+func TestBlockTimeNoBlock(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `{"jsonrpc":"2.0","id":"","result":{"last_height":"5","block_metas":[]}}`)
+	}))
+	defer srv.Close()
+
+	if _, err := NewClient(srv.URL, 5*time.Second).BlockTime(context.Background(), 9); err == nil {
+		t.Error("BlockTime(9) with no block returned = nil error, want one")
+	}
+}
+
+func TestHaltParams(t *testing.T) {
+	// abci_query answers recorded from gnoland-1: the param value is amino JSON
+	// (an int64 as a quoted string), base64-encoded in Data; an unset param has
+	// a null Data.
+	abci := func(data string) string {
+		return `{"jsonrpc":"2.0","id":"","result":{"response":{"ResponseBase":{"Error":null,"Data":` + data +
+			`,"Events":null,"Log":"","Info":""},"Key":null,"Value":null,"Proof":null,"Height":"0"}}}`
+	}
+	tests := []struct {
+		name    string
+		answers map[string]string // abci path -> Data JSON
+		want    Halt
+	}{
+		{
+			name: "set",
+			answers: map[string]string{
+				"params/node:p:halt_height":      `"IjExODMwMDAi"`, // "1183000"
+				"params/node:p:halt_min_version": `"InYxLjcuMCI="`, // "v1.7.0"
+			},
+			want: Halt{Height: 1183000, MinVersion: "v1.7.0"},
+		},
+		{
+			name: "unset",
+			answers: map[string]string{
+				"params/node:p:halt_height":      `null`,
+				"params/node:p:halt_min_version": `null`,
+			},
+			want: Halt{},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				path := strings.Trim(r.URL.Query().Get("path"), `"`)
+				data, ok := tc.answers[path]
+				if !ok {
+					t.Errorf("unexpected abci path %q", path)
+				}
+				fmt.Fprint(w, abci(data))
+			}))
+			defer srv.Close()
+
+			got, err := NewClient(srv.URL, 5*time.Second).HaltParams(context.Background())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got != tc.want {
+				t.Errorf("HaltParams() = %+v, want %+v", got, tc.want)
+			}
+		})
+	}
+}

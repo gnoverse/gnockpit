@@ -315,6 +315,26 @@ func (c *Client) GetValidatorSetAt(ctx context.Context, height int) (map[string]
 }
 
 // GetBlock fetches /block at a given height.
+// BlockTime returns the time of the block at height, read from its header via
+// /blockchain (one header, no transactions).
+func (c *Client) BlockTime(ctx context.Context, height int64) (time.Time, error) {
+	var res struct {
+		BlockMetas []struct {
+			Header struct {
+				Time time.Time `json:"time"`
+			} `json:"header"`
+		} `json:"block_metas"`
+	}
+	path := fmt.Sprintf("/blockchain?minHeight=%d&maxHeight=%d", height, height)
+	if err := c.rpcGetJSON(ctx, path, &res); err != nil {
+		return time.Time{}, err
+	}
+	if len(res.BlockMetas) != 1 {
+		return time.Time{}, fmt.Errorf("%s: %d block headers, want 1", path, len(res.BlockMetas))
+	}
+	return res.BlockMetas[0].Header.Time, nil
+}
+
 func (c *Client) GetBlock(ctx context.Context, height int) (json.RawMessage, error) {
 	path := fmt.Sprintf("/block?height=%d", height)
 	var result json.RawMessage

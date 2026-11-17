@@ -46,6 +46,49 @@ func (c *Client) qrender(ctx context.Context, pkgPath, renderPath string) (strin
 	return string(data), nil
 }
 
+// Halt is the coordinated halt governance set on chain: the height the chain
+// stops at and the minimum release allowed to resume it. Height 0 means no halt
+// was ever set; the params keep their value after the halt, so a Height at or
+// below the chain's height is a past halt.
+type Halt struct {
+	Height     int64
+	MinVersion string
+}
+
+// HaltParams reads the node:p:halt_height and node:p:halt_min_version chain
+// params. A params query runs no code, so nodes with rpc.allow_code_execution
+// set to false still answer it.
+func (c *Client) HaltParams(ctx context.Context) (Halt, error) {
+	var h Halt
+	height, err := c.paramString(ctx, "node:p:halt_height")
+	if err != nil {
+		return h, err
+	}
+	if height != "" {
+		if h.Height, err = strconv.ParseInt(height, 10, 64); err != nil {
+			return h, fmt.Errorf("node:p:halt_height %q: %w", height, err)
+		}
+	}
+	if h.MinVersion, err = c.paramString(ctx, "node:p:halt_min_version"); err != nil {
+		return h, err
+	}
+	return h, nil
+}
+
+// paramString reads a chain param whose amino-JSON value is a string (amino
+// writes an int64 as a quoted string too); an unset param reads as "".
+func (c *Client) paramString(ctx context.Context, key string) (string, error) {
+	data, err := c.abciQuery(ctx, "params/"+key, "")
+	if err != nil || len(data) == 0 {
+		return "", err
+	}
+	var s string
+	if err := json.Unmarshal(data, &s); err != nil {
+		return "", fmt.Errorf("param %s: %w", key, err)
+	}
+	return s, nil
+}
+
 var (
 	// Home render: "* [Moniker](/r/gnops/valopers:g1<operator>) - [profile](...)".
 	valoperListRe = regexp.MustCompile(`\[([^\]]+)\]\(/r/gnops/valopers:(g1[a-z0-9]+)\)`)
