@@ -70,7 +70,6 @@
                 content: '\25b8 ';
                 font-size: 10px;
             }
-            .card h2.collapsed + .section-body,
             .card .card-header-row:has(h2.collapsed) ~ .section-body {
                 display: none;
             }
@@ -906,9 +905,6 @@
             .eta-hdr-btn:hover {
                 border-color: var(--fg2);
             }
-            .eta-card .card-header-row {
-                justify-content: space-between;
-            }
             .eta-actions {
                 display: flex;
                 gap: 8px;
@@ -945,6 +941,7 @@
                 border: 1px solid var(--blue);
                 color: var(--blue);
                 font-size: 11px;
+                overflow-wrap: anywhere;
             }
             .eta-tag.halt {
                 border-color: var(--yellow);
@@ -1208,6 +1205,14 @@
             .eta-card.compact .section-body {
                 display: none;
             }
+            .eta-card.eta-failed .eta-chart,
+            .eta-card.eta-failed .eta-scen-title,
+            .eta-card.eta-failed .eta-legend,
+            .eta-card.eta-failed .eta-progress,
+            .eta-card.eta-failed .eta-mini,
+            .eta-card.eta-reached .eta-scen-title {
+                display: none;
+            }
             .eta-modal {
                 display: none;
                 position: fixed;
@@ -1391,6 +1396,7 @@
                     id="eta-btn"
                     class="eta-hdr-btn"
                     title="When will a block be produced, or which block at a given time"
+                    aria-label="Block ETA"
                     onclick="openEtaModal()"
                 >
                     ⏱<span class="txt"> Block ETA</span>
@@ -1514,10 +1520,15 @@
                         <button
                             class="eta-copy"
                             title="Copy the link to this countdown"
+                            aria-label="Copy the link to this countdown"
                         >
                             ⧉ link
                         </button>
-                        <button class="eta-close" title="Remove this countdown">
+                        <button
+                            class="eta-close"
+                            title="Remove this countdown"
+                            aria-label="Remove this countdown"
+                        >
                             ✕
                         </button>
                     </span>
@@ -5079,19 +5090,30 @@
             </div>
         </div>
         <div id="eta-modal" class="eta-modal">
-            <div class="eta-modal-inner">
+            <div
+                class="eta-modal-inner"
+                role="dialog"
+                aria-modal="true"
+                aria-labelledby="eta-modal-title"
+            >
                 <div class="eta-modal-head">
-                    <h2>Block ETA</h2>
+                    <h2 id="eta-modal-title">Block ETA</h2>
                     <button aria-label="Close" onclick="closeEtaModal()">
                         &times;
                     </button>
                 </div>
                 <div class="eta-field">
                     <div class="eta-seg">
-                        <button data-mode="height" class="on">
+                        <button
+                            data-mode="height"
+                            class="on"
+                            aria-pressed="true"
+                        >
                             height → time
                         </button>
-                        <button data-mode="time">time → height</button>
+                        <button data-mode="time" aria-pressed="false">
+                            time → height
+                        </button>
                     </div>
                 </div>
                 <div class="eta-field">
@@ -5124,9 +5146,10 @@
             </div>
         </div>
         <script>
-            // ---- Block ETA: countdown cards and the planner. The cards poll
-            // /api/eta; between polls the countdown ticks down locally from
-            // the server's seconds_left, so the viewer's clock does not matter.
+            // ---- Block ETA
+            // Countdown cards and the planner. The cards poll /api/eta; between
+            // polls the countdown ticks down locally from the server's
+            // seconds_left, so the viewer's clock does not matter.
             ;(function () {
                 var ETA_POLL_MS = 10000
                 var DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
@@ -5228,7 +5251,17 @@
                     var a = Math.abs(s)
                     var sign = s > 0 ? '+' : s < 0 ? '−' : '±'
                     if (a < 60) return sign + a + 's'
-                    return sign + Math.floor(a / 60) + 'm ' + pad(a % 60) + 's'
+                    if (a < 3600)
+                        return (
+                            sign + Math.floor(a / 60) + 'm ' + pad(a % 60) + 's'
+                        )
+                    return (
+                        sign +
+                        Math.floor(a / 3600) +
+                        'h ' +
+                        pad(Math.floor((a % 3600) / 60)) +
+                        'm'
+                    )
                 }
                 function chip(sec) {
                     var cls =
@@ -5245,12 +5278,22 @@
                     return hm(ms(r.from)) + '–' + hm(ms(r.to))
                 }
 
+                // getETA queries /api/eta; a failure to reach or read it comes
+                // back as an answer with an error, like the server's own.
                 async function getETA(query) {
-                    var r = await fetch('/api/eta' + (query ? '?' + query : ''))
-                    var rep = {}
+                    var r
                     try {
-                        rep = await r.json()
-                    } catch (e) {}
+                        r = await fetch('/api/eta' + (query ? '?' + query : ''))
+                    } catch (e) {
+                        return { error: 'gnockpit is unreachable' }
+                    }
+                    try {
+                        var rep = await r.json()
+                    } catch (e) {
+                        return {
+                            error: 'unreadable answer (HTTP ' + r.status + ')',
+                        }
+                    }
                     if (!r.ok && !rep.error) rep.error = 'HTTP ' + r.status
                     return rep
                 }
@@ -5290,6 +5333,9 @@
                     var rep = null
                     var fetchedAt = 0
                     var label = ''
+                    // stale is the error of the latest poll while an earlier
+                    // answer stays on screen.
+                    var stale = ''
 
                     var cb = q('.eta-compact-cb')
                     var compactKey = 'eta-compact-' + kind
@@ -5319,16 +5365,22 @@
                     }
 
                     function show(r, l) {
-                        rep = r
-                        fetchedAt = Date.now()
                         label = l || ''
                         el.style.display = ''
+                        if (r.error && rep && !rep.error) {
+                            stale = r.error
+                        } else {
+                            rep = r
+                            fetchedAt = Date.now()
+                            stale = ''
+                        }
                         render()
                         tick()
                     }
                     function hide() {
                         el.style.display = 'none'
                         rep = null
+                        stale = ''
                     }
 
                     function render() {
@@ -5345,12 +5397,14 @@
                         parts.forEach(function (sel) {
                             q(sel).innerHTML = ''
                         })
+                        // A card without any answer yet shows only the error;
+                        // a produced target has no pace scenarios.
+                        el.classList.toggle('eta-failed', !!rep.error)
+                        el.classList.toggle('eta-reached', !!rep.reached_at)
                         if (rep.error) {
                             q('.eta-count').textContent = '–'
                             q('.eta-meta').textContent = rep.error
                             q('.eta-inline').textContent = rep.error
-                            q('.eta-legend').style.display = 'none'
-                            q('svg').innerHTML = ''
                             return
                         }
                         var t = rep.target
@@ -5428,7 +5482,13 @@
                         }
                         q('.eta-legend').style.display =
                             rep.range_80 && !rep.reached_at ? '' : 'none'
-                        q('.eta-warn').textContent = rep.warning || ''
+                        q('.eta-warn').textContent = [
+                            rep.warning,
+                            stale &&
+                                '⚠ ' + stale + '; showing the last answer',
+                        ]
+                            .filter(Boolean)
+                            .join(' · ')
                         var span = o ? t.height - o.height : 0
                         var pct =
                             span > 0
@@ -5443,6 +5503,8 @@
                                 : 0
                         q('.eta-progress').style.display =
                             span > 0 ? '' : 'none'
+                        q('.eta-mini').style.visibility =
+                            span > 0 ? '' : 'hidden'
                         q('.eta-progress > div').style.width = pct + '%'
                         q('.eta-mini > div').style.width = pct + '%'
                         drawChart()
@@ -5530,7 +5592,7 @@
                                       : 'blue'
                             chips.push({
                                 k:
-                                    (PACE_OF[s.pace_of] || s.pace_of) +
+                                    esc(PACE_OF[s.pace_of] || s.pace_of) +
                                     ' · ' +
                                     s.seconds_per_block.toFixed(3) +
                                     ' s',
@@ -5563,9 +5625,10 @@
                     // to the ETA where the range closes.
                     function drawChart() {
                         var svg = q('svg')
-                        if (!rep || rep.error || !svg.clientWidth) return
-                        var W = svg.clientWidth
-                        var H = svg.clientHeight || 170
+                        var box = svg.getBoundingClientRect()
+                        if (!rep || rep.error || !box.width) return
+                        var W = box.width
+                        var H = box.height || 170
                         var L = 40
                         var R = 8
                         var T = 8
@@ -5613,6 +5676,32 @@
                                 'm'
                             )
                         }
+                        // yLabel marks an offset on the left axis, unless it
+                        // would overlap the original's label.
+                        function yLabel(v) {
+                            if (Math.abs(Y(v) - Y(0)) < 12) return ''
+                            return (
+                                '<text x="' +
+                                (L - 4) +
+                                '" y="' +
+                                (Y(v) + 3) +
+                                '" text-anchor="end">' +
+                                mins(v) +
+                                '</text>'
+                            )
+                        }
+                        // The "now" label goes left of its line near the edge.
+                        var nearEdge = X(now) > W - R - 50
+                        var nowLabel =
+                            '<text x="' +
+                            (X(now) + (nearEdge ? -4 : 4)) +
+                            '" y="' +
+                            (T + 9) +
+                            '"' +
+                            (nearEdge ? ' text-anchor="end"' : '') +
+                            '>' +
+                            (rep.reached_at ? 'reached' : 'now') +
+                            '</text>'
                         var band = pts
                             .map(function (p) {
                                 return X(p.t) + ',' + Y(p.hi - ref)
@@ -5688,20 +5777,8 @@
                             '" y2="' +
                             (H - B) +
                             '"/>' +
-                            '<text x="' +
-                            (X(now) + 4) +
-                            '" y="' +
-                            (T + 9) +
-                            '">' +
-                            (rep.reached_at ? 'reached' : 'now') +
-                            '</text>' +
-                            '<text x="' +
-                            (L - 4) +
-                            '" y="' +
-                            (Y(y1 - yp) + 3) +
-                            '" text-anchor="end">' +
-                            mins(y1 - yp) +
-                            '</text>' +
+                            nowLabel +
+                            yLabel(y1 - yp) +
                             '<text class="orig" x="' +
                             (L - 4) +
                             '" y="' +
@@ -5709,13 +5786,7 @@
                             '" text-anchor="end">' +
                             (rep.original ? 'orig' : 'ETA') +
                             '</text>' +
-                            '<text x="' +
-                            (L - 4) +
-                            '" y="' +
-                            (Y(y0 + yp) + 3) +
-                            '" text-anchor="end">' +
-                            mins(y0 + yp) +
-                            '</text>' +
+                            yLabel(y0 + yp) +
                             '<text x="' +
                             L +
                             '" y="' +
@@ -5756,11 +5827,17 @@
                         }
                         var left =
                             rep.seconds_left - (Date.now() - fetchedAt) / 1000
+                        // Past the ETA, the block is late: say so rather than
+                        // freeze at zero until the next poll moves the ETA.
+                        var count = left > 0 ? countdown(left) : 'due'
                         q('.eta-count').innerHTML =
-                            countdown(left) + '<small>until ETA</small>'
+                            count +
+                            (left > 0
+                                ? '<small>until ETA</small>'
+                                : '<small>ETA passed, waiting for the block</small>')
                         q('.eta-inline').innerHTML =
                             '<b>' +
-                            countdown(left) +
+                            count +
                             '</b> → <span class="w">' +
                             head +
                             '</span> · ETA ' +
@@ -5792,7 +5869,8 @@
                     return {
                         height: p.get('eta'),
                         since: p.get('since') || '',
-                        label: p.get('label') || '',
+                        // Capped like the planner's input: a link can carry more.
+                        label: (p.get('label') || '').slice(0, 40),
                     }
                 }
                 function setLinkTarget(t) {
@@ -5814,28 +5892,40 @@
                     pollETA()
                 }
 
-                // pollETA refreshes both cards; a failed fetch keeps the last
-                // answer on screen.
+                // haltError is why the halt status is unknown, when the last
+                // poll failed; pollSeq lets a newer poll discard an older
+                // one's late answers.
+                var haltError = ''
+                var pollSeq = 0
+
+                // pollETA refreshes both cards. A failed answer leaves the
+                // last good one on screen, marked stale.
                 async function pollETA() {
-                    try {
-                        var h = await getETA('')
+                    var seq = ++pollSeq
+                    var h = await getETA('')
+                    if (seq !== pollSeq) return
+                    if (h.error) {
+                        haltError = h.error
+                        if (lastHalt) haltCard.show(h)
+                    } else {
+                        haltError = ''
                         lastHalt = h.halt || null
                         if (h.halt) haltCard.show(h)
                         else haltCard.hide()
-                    } catch (e) {}
+                    }
                     var t = linkTarget()
                     if (
                         !t ||
-                        (lastHalt && String(lastHalt.height) === t.height)
+                        (lastHalt && lastHalt.height === Number(t.height))
                     ) {
                         linkCard.hide()
                         return
                     }
                     var p = new URLSearchParams({ height: t.height })
                     if (t.since) p.set('since', t.since)
-                    try {
-                        linkCard.show(await getETA(p.toString()), t.label)
-                    } catch (e) {}
+                    var rep = await getETA(p.toString())
+                    if (seq !== pollSeq) return
+                    linkCard.show(rep, t.label)
                 }
 
                 var linkEl = $('eta-link-card')
@@ -5863,9 +5953,14 @@
                 }
                 window.closeEtaModal = function () {
                     modal.classList.remove('open')
+                    $('eta-btn').focus()
                 }
                 modal.addEventListener('click', function (e) {
                     if (e.target === modal) closeEtaModal()
+                })
+                document.addEventListener('keydown', function (e) {
+                    if (e.key === 'Escape' && modal.classList.contains('open'))
+                        closeEtaModal()
                 })
                 modal.querySelectorAll('.eta-seg button').forEach(function (b) {
                     b.addEventListener('click', function () {
@@ -5874,6 +5969,7 @@
                             .querySelectorAll('.eta-seg button')
                             .forEach(function (x) {
                                 x.classList.toggle('on', x === b)
+                                x.setAttribute('aria-pressed', String(x === b))
                             })
                         $('eta-in-label').textContent =
                             mode === 'height'
@@ -5888,18 +5984,30 @@
                     })
                 })
                 $('eta-in').addEventListener('input', function () {
+                    // The shown answer no longer matches the input.
+                    planned = null
+                    $('eta-go').disabled = true
                     clearTimeout(planTimer)
                     planTimer = setTimeout(plan, 300)
                 })
 
                 function renderHaltRow() {
-                    $('eta-halt-row').innerHTML = lastHalt
-                        ? 'On chain: halt scheduled at <b>#' +
-                          nf(lastHalt.height) +
-                          '</b> (min ' +
-                          esc(lastHalt.min_version) +
-                          '). Its countdown shows for everyone, no link needed.'
-                        : 'On chain: no halt scheduled.'
+                    var row = $('eta-halt-row')
+                    if (lastHalt) {
+                        row.innerHTML =
+                            'On chain: halt scheduled at <b>#' +
+                            nf(lastHalt.height) +
+                            '</b> (min ' +
+                            esc(lastHalt.min_version) +
+                            '). Its countdown shows for everyone, no link needed.'
+                    } else if (haltError) {
+                        row.textContent =
+                            'On chain: halt status unavailable (' +
+                            haltError +
+                            ').'
+                    } else {
+                        row.textContent = 'On chain: no halt scheduled.'
+                    }
                 }
 
                 // plan answers the planner's input through /api/eta.
