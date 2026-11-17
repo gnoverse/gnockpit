@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -602,5 +603,181 @@ func TestPubKeyBech32(t *testing.T) {
 	pk2 := PubKey{AminoType: "/tm.PubKeyEd25519", Value: b64}
 	if got := pk2.Bech32(); got != want {
 		t.Errorf("PubKey{AminoType}.Bech32() = %q, want %q", got, want)
+	}
+}
+
+// ---- RPC errors
+
+func TestRPCErrorsSurface(t *testing.T) {
+	// The body gno writes for a JSON-RPC error, whatever the HTTP status.
+	rpcErrorBody := func(data string) string {
+		d, _ := json.Marshal(data)
+		return `{"jsonrpc":"2.0","id":"","error":{"code":-32603,"message":"Internal error","data":` + string(d) + `}}`
+	}
+	t.Run("rate limited", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Retry-After", "236")
+			w.WriteHeader(http.StatusTooManyRequests)
+		}))
+		defer srv.Close()
+
+		_, err := NewClient(srv.URL, 5*time.Second).GetStatus(context.Background())
+		var se *HTTPStatusError
+		if !errors.As(err, &se) {
+			t.Fatalf("GetStatus() error = %v, want an *HTTPStatusError", err)
+		}
+		if se.StatusCode != http.StatusTooManyRequests || se.RetryAfter != 236*time.Second {
+			t.Errorf("HTTPStatusError = {%d, %v}, want {429, 236s}", se.StatusCode, se.RetryAfter)
+		}
+	})
+	t.Run("error envelope with HTTP 200", func(t *testing.T) {
+		const data = "min height 99999999 can't be greater than max height 1628915"
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			fmt.Fprint(w, rpcErrorBody(data))
+		}))
+		defer srv.Close()
+
+		_, err := NewClient(srv.URL, 5*time.Second).GetStatus(context.Background())
+		var re *RPCError
+		if !errors.As(err, &re) {
+			t.Fatalf("GetStatus() error = %v, want an *RPCError", err)
+		}
+		if re.Code != -32603 || re.Data != data {
+			t.Errorf("RPCError = {%d, %q}, want {-32603, %q}", re.Code, re.Data, data)
+		}
+		if !strings.Contains(err.Error(), data) {
+			t.Errorf("error text %q does not carry the node's reason %q", err, data)
+		}
+	})
+	t.Run("code-running query refused", func(t *testing.T) {
+		// gno with rpc.allow_code_execution = false: HTTP 403 plus a JSON-RPC error.
+		const data = `query "vm/qrender" runs code, which this node does not allow over RPC (rpc.allow_code_execution = false)`
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusForbidden)
+			fmt.Fprint(w, rpcErrorBody(data))
+		}))
+		defer srv.Close()
+
+		_, err := NewClient(srv.URL, 5*time.Second).FetchValoperNames(context.Background())
+		if err == nil || !strings.Contains(err.Error(), "rpc.allow_code_execution = false") {
+			t.Errorf("FetchValoperNames() error = %v, want the node's refusal", err)
+		}
+	})
+}
+
+// ---- Block times and halt params
+
+func TestBlockTime(t *testing.T) {
+	// Recorded from gnoland-1's /blockchain?minHeight=1600000&maxHeight=1600000.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.URL.RawQuery; got != "minHeight=1600000&maxHeight=1600000" {
+			t.Errorf("query = %q, want the single height 1600000", got)
+		}
+		fmt.Fprint(w, `{"jsonrpc":"2.0","id":"","result":{"last_height":"1628985","block_metas":[{
+			"block_id":{"hash":"x"},
+			"header":{"chain_id":"gnoland-1","height":"1600000","time":"2026-11-16T10:51:11.208138936Z"}}]}}`)
+	}))
+	defer srv.Close()
+
+	got, err := NewClient(srv.URL, 5*time.Second).BlockTime(context.Background(), 1600000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := time.Date(2026, 11, 16, 10, 51, 11, 208138936, time.UTC); !got.Equal(want) {
+		t.Errorf("BlockTime(1600000) = %v, want %v", got, want)
+	}
+}
+
+func TestBlockTimeNoBlock(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `{"jsonrpc":"2.0","id":"","result":{"last_height":"5","block_metas":[]}}`)
+	}))
+	defer srv.Close()
+
+	if _, err := NewClient(srv.URL, 5*time.Second).BlockTime(context.Background(), 9); err == nil {
+		t.Error("BlockTime(9) with no block returned = nil error, want one")
+	}
+}
+
+func TestHaltParams(t *testing.T) {
+	// abci_query answers recorded from gnoland-1: the param value is amino JSON
+	// (an int64 as a quoted string), base64-encoded in Data; an unset param has
+	// a null Data.
+	abci := func(data string) string {
+		return `{"jsonrpc":"2.0","id":"","result":{"response":{"ResponseBase":{"Error":null,"Data":` + data +
+			`,"Events":null,"Log":"","Info":""},"Key":null,"Value":null,"Proof":null,"Height":"0"}}}`
+	}
+	tests := []struct {
+		name    string
+		answers map[string]string // abci path -> Data JSON
+		want    Halt
+	}{
+		{
+			name: "set",
+			answers: map[string]string{
+				"params/node:p:halt_height":      `"IjExODMwMDAi"`, // "1183000"
+				"params/node:p:halt_min_version": `"InYxLjcuMCI="`, // "v1.7.0"
+			},
+			want: Halt{Height: 1183000, MinVersion: "v1.7.0"},
+		},
+		{
+			name: "unset",
+			answers: map[string]string{
+				"params/node:p:halt_height":      `null`,
+				"params/node:p:halt_min_version": `null`,
+			},
+			want: Halt{},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				path := strings.Trim(r.URL.Query().Get("path"), `"`)
+				data, ok := tc.answers[path]
+				if !ok {
+					t.Errorf("unexpected abci path %q", path)
+				}
+				fmt.Fprint(w, abci(data))
+			}))
+			defer srv.Close()
+
+			got, err := NewClient(srv.URL, 5*time.Second).HaltParams(context.Background())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got != tc.want {
+				t.Errorf("HaltParams() = %+v, want %+v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestChainHead(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `{"jsonrpc":"2.0","result":{
+			"node_info":{"moniker":"m","network":"gnoland-1","id":"abc"},
+			"sync_info":{"latest_block_height":"1627838","latest_block_time":"2026-11-17T14:06:59.418337027Z","catching_up":false}
+		}}`)
+	}))
+	defer srv.Close()
+
+	got, err := NewClient(srv.URL, 5*time.Second).ChainHead(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := ChainHead{ChainID: "gnoland-1", Height: 1627838, Time: time.Date(2026, 11, 17, 14, 6, 59, 418337027, time.UTC)}
+	if got.ChainID != want.ChainID || got.Height != want.Height || !got.Time.Equal(want.Time) {
+		t.Errorf("ChainHead() = %+v, want %+v", got, want)
+	}
+}
+
+func TestStatusHeadUnparsable(t *testing.T) {
+	for _, si := range []SyncInfo{
+		{LatestBlockHeight: "", LatestBlockTime: "2026-11-17T14:06:59Z"},
+		{LatestBlockHeight: "12", LatestBlockTime: "not a time"},
+	} {
+		if _, err := (&Status{SyncInfo: si}).Head(); err == nil {
+			t.Errorf("Head() of %+v = nil error, want one", si)
+		}
 	}
 }

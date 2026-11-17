@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/gnoverse/gnockpit/eta"
 	"github.com/gnoverse/gnockpit/history"
 	"github.com/gnoverse/gnockpit/node"
 	"github.com/gnoverse/gnockpit/web"
@@ -131,6 +132,16 @@ func run() error {
 		return fmt.Errorf("init signing history: %w", err)
 	}
 	srv.History = hist
+
+	// So do the block times behind block ETAs, backfilled from the primary
+	// source; the tracker stops with ctx.
+	etaStore, err := eta.NewStore(ctx, db.SQL())
+	if err != nil {
+		return fmt.Errorf("init block ETA store: %w", err)
+	}
+	tracker := eta.NewTracker(etaStore, sources.Primary())
+	srv.ETA = tracker
+	go tracker.Run(ctx)
 
 	pushMgr, err := push.NewManager(db, flagChainStuckSecs, flagMaxMissedInARow)
 	if err != nil {

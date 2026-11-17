@@ -72,6 +72,8 @@ type Server struct {
 	missed24h   map[string]int // val address -> blocks missed in last 24h (guarded by mu)
 	missedSince time.Time      // oldest retained block time; how far back missed counts reach (guarded by mu)
 
+	etaBlockTimes blockTimeCache // times of reached blocks asked for on /api/eta
+
 	// WebSocket clients
 	wsmu      sync.RWMutex
 	wsClients map[*wsClient]struct{}
@@ -82,6 +84,7 @@ type Server struct {
 	GeoIP           *node.GeoIP    // IP geolocation for the network map (nil = disabled)
 	ASN             *node.ASN      // IP-to-ASN/cloud-provider resolution (nil = disabled)
 	History         *history.Store // block-signing history for missed-block windows (nil = disabled)
+	ETA             ETAView        // block-time model and scheduled halt for /api/eta (nil = disabled)
 	NotifyTestToken string         // bearer token for the notify-test API (empty = disabled)
 	ChainStuckSecs  int            // seconds without a new block before status is "down"
 	Links           []Link         // static header link buttons
@@ -1136,6 +1139,7 @@ func (s *Server) Run(ctx context.Context) error {
 	mux.HandleFunc("/api/links", s.handleLinks)
 	mux.HandleFunc("/api/status", s.handleStatus)
 	mux.HandleFunc("/api/stats", s.handleStats)
+	mux.HandleFunc("/api/eta", s.handleETA)
 	mux.HandleFunc("/badge.svg", s.handleBadge)
 
 	srv := &http.Server{

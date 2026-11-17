@@ -18,10 +18,15 @@ node/            — RPC client + types (pure data layer, no UI)
   asn.go         — DB-IP ASN Lite: IP → ASN + cloud provider (auto-downloaded, monthly)
 history/         — SQLite store of per-block validator signing (shares the push DB handle)
   store.go       — RecordBlocks / MissedInWindow / MissedByWindows / Prune; missed-block windows
+eta/             — block ETAs: sampled block times + estimator + halt tracking (shares the push DB handle)
+  store.go       — eta_block_times (every 100th height), chain id, backfill floor, first sighting of each halt
+  model.go       — pure estimator: pace of the last 3000 blocks; 80/95% ranges from the predictor's past errors (30-day lookback)
+  tracker.go     — background loop on the primary source: backfill newest-first (~4 req/s, honours 429 Retry-After), halt params
 web/             — Web dashboard + HTTP API
   server.go      — HTTP/WebSocket server, background data fetcher, system info collector
   status.go      — /api/status: health + curated network state / recent blocks / peer + validator columns
   stats.go       — /api/stats: missed-block windows, provider/country aggregates, set health, Nakamoto
+  eta.go         — /api/eta: ETA of a height, height at a time, or the scheduled halt (model from eta.Tracker)
   analytics.go   — Optional third-party analytics snippet (--analytics), injected before </body>; off by default
   index.html     — Single-page dashboard (embedded via go:embed, vanilla JS, no framework)
 ```
@@ -34,6 +39,7 @@ web/             — Web dashboard + HTTP API
 3. The snapshot is broadcast to all connected WebSocket clients as typed messages: `status`, `peers`, `votes`, `checks`, `signing`
 4. `index.html` receives these messages and updates the DOM in-place
 5. Each cycle also geolocates peers (`geoip`) and resolves their cloud provider (`asn`) — using each peer's resolved public IP only (peers with no usable public IP are geolocated to nothing and bucketed "Unknown" on the map) — and records the recent blocks' missing-validator sets into the `history` store (forward-only, deduped by height). This powers the network map, the Country/Provider columns, and per-validator missed-block windows (1h/24h/7d/30d/total). Validators inherit the country/provider of their correlated peer (matched via `ValAddress`), so validators no source is peered with have none.
+6. Separately, `eta.Tracker` (started in `main.go`) runs its own loop on the primary source: every minute, and back to back while backfilling, it reads the chain head, drops the stored history if the chain id changed, reads the halt params, and fetches the missing every-100th block times newest-first. `/api/eta` combines its model with the snapshot's newest block; the dashboard's ETA cards poll `/api/eta` every 10 s and tick the countdown locally in between. The link card's target lives only in the page link (`?eta=&since=&label=`); the halt card's comes from the chain params; the "original" estimate is recomputed from the stored history as of `since`.
 
 ### NameRegistry (validators.go)
 Maps validator addresses to human-readable monikers. This is critical because Tendermint RPC only returns addresses, not names. Discovery happens through:
@@ -59,6 +65,7 @@ forward-only (never backfilled) and pruned past 31 days.
 ### HTTP API (CORS-open JSON)
 - `/api/status` (status.go) — health summary (retrocompat `status`/`chain`/`height`/`reason`/`time`) plus `network`, `recent_blocks` (last 100), and per-`peers`/`validators` column data.
 - `/api/stats` (stats.go) — per-validator missed-block windows, provider + country aggregates, validator-set health, Nakamoto coefficient.
+- `/api/eta` (eta.go) — `?height=` (+`since` for original/drift/trail), `?time=`, or none for the on-chain halt.
 - `/api` (server.go) — raw `Snapshot` dump (unstable shape; debugging).
 - Also: `/badge.svg`, `/ws`, `/api/boot`, `/api/push/*`, `/api/notify/*`.
 
@@ -69,6 +76,9 @@ Everything is auto-detected or configurable via flags. The tool works on any gno
 - Chain ID → from RPC `/status`
 - Genesis time + validator names → streamed from RPC `/genesis` (head only)
 - Validator names → also discovered dynamically from peers
+
+### RPC errors
+`rpcGet` returns a `*node.HTTPStatusError` (with `RetryAfter`) for a non-2xx answer; `rpcGetJSON` wraps a `*node.RPCError` for a JSON-RPC `error` envelope, which gno sends with HTTP 200 (e.g. a height out of range). `node.IsRefusal` tells a node refusing a call (JSON-RPC error) from one failing to answer (transport error, HTTP error status). Decode RPC results through `rpcGetJSON` so neither passes silently.
 
 ### Single HTML file
 `web/index.html` is a complete SPA with no build step. Vanilla JS, CSS variables for dark theme, no external dependencies. It's embedded in the binary via `go:embed`.

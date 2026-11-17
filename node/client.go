@@ -66,15 +66,20 @@ func (c *Client) rpcGet(ctx context.Context, path string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
+	if resp.StatusCode < 200 || resp.StatusCode > 299 {
+		return nil, newHTTPStatusError(url, resp, body)
+	}
 	return body, nil
 }
 
-// rpcResult wraps the JSON-RPC result envelope.
+// rpcResult wraps the JSON-RPC response envelope.
 type rpcResult struct {
 	Result json.RawMessage `json:"result"`
+	Error  *RPCError       `json:"error"`
 }
 
-// rpcGetJSON fetches a path and unmarshals .result into dest.
+// rpcGetJSON fetches a path and unmarshals .result into dest. A JSON-RPC
+// error in the response is returned as an *RPCError.
 func (c *Client) rpcGetJSON(ctx context.Context, path string, dest interface{}) error {
 	body, err := c.rpcGet(ctx, path)
 	if err != nil {
@@ -83,6 +88,9 @@ func (c *Client) rpcGetJSON(ctx context.Context, path string, dest interface{}) 
 	var envelope rpcResult
 	if err := json.Unmarshal(body, &envelope); err != nil {
 		return fmt.Errorf("unmarshal envelope: %w (body: %s)", err, truncate(string(body), 200))
+	}
+	if envelope.Error != nil {
+		return fmt.Errorf("%s: %w", path, envelope.Error)
 	}
 	return json.Unmarshal(envelope.Result, dest)
 }
@@ -136,6 +144,35 @@ func (c *Client) GetStatus(ctx context.Context) (*Status, error) {
 		SyncInfo:      result.SyncInfo,
 		ValidatorInfo: result.ValidatorInfo,
 	}, nil
+}
+
+// ChainHead is a chain's id and its newest block.
+type ChainHead struct {
+	ChainID string
+	Height  int64
+	Time    time.Time
+}
+
+// ChainHead reads the chain id and the newest block from /status.
+func (c *Client) ChainHead(ctx context.Context) (ChainHead, error) {
+	st, err := c.GetStatus(ctx)
+	if err != nil {
+		return ChainHead{}, err
+	}
+	return st.Head()
+}
+
+// Head returns the chain id and the newest block the status reports.
+func (s *Status) Head() (ChainHead, error) {
+	h := ChainHead{ChainID: s.NodeInfo.Network}
+	var err error
+	if h.Height, err = strconv.ParseInt(s.SyncInfo.LatestBlockHeight, 10, 64); err != nil {
+		return ChainHead{}, fmt.Errorf("latest block height %q: %w", s.SyncInfo.LatestBlockHeight, err)
+	}
+	if h.Time, err = time.Parse(time.RFC3339Nano, s.SyncInfo.LatestBlockTime); err != nil {
+		return ChainHead{}, fmt.Errorf("latest block time %q: %w", s.SyncInfo.LatestBlockTime, err)
+	}
+	return h, nil
 }
 
 // GetNetInfo fetches /net_info and returns the peer list.
@@ -249,6 +286,26 @@ func (c *Client) GetValidatorSetAt(ctx context.Context, height int) (map[string]
 		set[v.Address] = true
 	}
 	return set, nil
+}
+
+// BlockTime returns the time of the block at height, read from its header via
+// /blockchain (one header, no transactions).
+func (c *Client) BlockTime(ctx context.Context, height int64) (time.Time, error) {
+	var res struct {
+		BlockMetas []struct {
+			Header struct {
+				Time time.Time `json:"time"`
+			} `json:"header"`
+		} `json:"block_metas"`
+	}
+	path := fmt.Sprintf("/blockchain?minHeight=%d&maxHeight=%d", height, height)
+	if err := c.rpcGetJSON(ctx, path, &res); err != nil {
+		return time.Time{}, err
+	}
+	if len(res.BlockMetas) != 1 {
+		return time.Time{}, fmt.Errorf("%s: %d block headers, want 1", path, len(res.BlockMetas))
+	}
+	return res.BlockMetas[0].Header.Time, nil
 }
 
 // GetBlock fetches /block at a given height.
@@ -470,15 +527,11 @@ func (c *Client) GetSigningStats(ctx context.Context, currentHeight int, window 
 
 // DumpConsensusState fetches /dump_consensus_state.
 func (c *Client) DumpConsensusState(ctx context.Context) (json.RawMessage, error) {
-	body, err := c.rpcGet(ctx, "/dump_consensus_state")
-	if err != nil {
+	var result json.RawMessage
+	if err := c.rpcGetJSON(ctx, "/dump_consensus_state", &result); err != nil {
 		return nil, err
 	}
-	var envelope rpcResult
-	if err := json.Unmarshal(body, &envelope); err != nil {
-		return nil, err
-	}
-	return envelope.Result, nil
+	return result, nil
 }
 
 // GetConsensusState parses the dump_consensus_state into structured data.

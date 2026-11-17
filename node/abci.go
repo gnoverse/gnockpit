@@ -20,27 +20,21 @@ func (c *Client) abciQuery(ctx context.Context, abciPath, data string) ([]byte, 
 	q := neturl.Values{}
 	q.Set("path", `"`+abciPath+`"`)
 	q.Set("data", `"`+base64.StdEncoding.EncodeToString([]byte(data))+`"`)
-	body, err := c.rpcGet(ctx, "/abci_query?"+q.Encode())
-	if err != nil {
-		return nil, err
+	var res struct {
+		Response struct {
+			ResponseBase struct {
+				Error json.RawMessage `json:"Error"`
+				Data  []byte          `json:"Data"` // base64 in JSON → bytes
+			} `json:"ResponseBase"`
+		} `json:"response"`
 	}
-	var env struct {
-		Result struct {
-			Response struct {
-				ResponseBase struct {
-					Error json.RawMessage `json:"Error"`
-					Data  []byte          `json:"Data"` // base64 in JSON → bytes
-				} `json:"ResponseBase"`
-			} `json:"response"`
-		} `json:"result"`
-	}
-	if err := json.Unmarshal(body, &env); err != nil {
+	if err := c.rpcGetJSON(ctx, "/abci_query?"+q.Encode(), &res); err != nil {
 		return nil, fmt.Errorf("abci_query %s: %w", abciPath, err)
 	}
-	if e := env.Result.Response.ResponseBase.Error; len(e) > 0 && string(e) != "null" {
+	if e := res.Response.ResponseBase.Error; len(e) > 0 && string(e) != "null" {
 		return nil, fmt.Errorf("abci_query %s: %s", abciPath, e)
 	}
-	return env.Result.Response.ResponseBase.Data, nil
+	return res.Response.ResponseBase.Data, nil
 }
 
 // qrender calls vm/qrender for "<pkgPath>:<renderPath>".
@@ -50,6 +44,49 @@ func (c *Client) qrender(ctx context.Context, pkgPath, renderPath string) (strin
 		return "", err
 	}
 	return string(data), nil
+}
+
+// Halt is the coordinated halt governance set on chain: the height the chain
+// stops at and the minimum release allowed to resume it. Height 0 means no halt
+// was ever set; the params keep their value after the halt, so a Height at or
+// below the chain's height is a past halt.
+type Halt struct {
+	Height     int64
+	MinVersion string
+}
+
+// HaltParams reads the node:p:halt_height and node:p:halt_min_version chain
+// params. A params query runs no code, so nodes with rpc.allow_code_execution
+// set to false still answer it.
+func (c *Client) HaltParams(ctx context.Context) (Halt, error) {
+	var h Halt
+	height, err := c.paramString(ctx, "node:p:halt_height")
+	if err != nil {
+		return h, err
+	}
+	if height != "" {
+		if h.Height, err = strconv.ParseInt(height, 10, 64); err != nil {
+			return h, fmt.Errorf("node:p:halt_height %q: %w", height, err)
+		}
+	}
+	if h.MinVersion, err = c.paramString(ctx, "node:p:halt_min_version"); err != nil {
+		return h, err
+	}
+	return h, nil
+}
+
+// paramString reads a chain param whose amino-JSON value is a string (amino
+// writes an int64 as a quoted string too); an unset param reads as "".
+func (c *Client) paramString(ctx context.Context, key string) (string, error) {
+	data, err := c.abciQuery(ctx, "params/"+key, "")
+	if err != nil || len(data) == 0 {
+		return "", err
+	}
+	var s string
+	if err := json.Unmarshal(data, &s); err != nil {
+		return "", fmt.Errorf("param %s: %w", key, err)
+	}
+	return s, nil
 }
 
 var (
