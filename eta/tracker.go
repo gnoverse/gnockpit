@@ -200,7 +200,11 @@ func (t *Tracker) backfill(ctx context.Context, head node.ChainHead) (more bool,
 			}
 		}
 		bt, ferr := t.blockTime(ctx, h)
-		if refused(ferr) {
+		// A node refusing a height just below ones it served has reached
+		// the oldest block it keeps. Refusing any other height (a node
+		// behind the one that gave the head) may pass on a retry.
+		servedAbove := t.have[h+Stride] || (len(batch) > 0 && batch[len(batch)-1].Height == h+Stride)
+		if node.IsRefusal(ferr) && servedAbove {
 			if err := t.store.SetFloor(ctx, h+Stride); err != nil {
 				return false, err
 			}
@@ -232,22 +236,17 @@ func (t *Tracker) blockTime(ctx context.Context, height int64) (time.Time, error
 		bt, err := t.source.BlockTime(ctx, height)
 		var hs *node.HTTPStatusError
 		if !errors.As(err, &hs) || hs.StatusCode != http.StatusTooManyRequests {
+			if err == nil {
+				t.report("backfill", nil)
+			}
 			return bt, err
 		}
 		wait := cmp.Or(hs.RetryAfter, rateLimitPause)
-		t.logf("eta: RPC rate limited, pausing the block-time backfill for %s", wait)
+		t.report("backfill", fmt.Errorf("RPC rate limited, pausing for %s", wait))
 		if err := t.sleep(ctx, wait); err != nil {
 			return time.Time{}, err
 		}
 	}
-}
-
-// refused reports whether the node answered that it cannot serve a height, as
-// opposed to failing to answer.
-func refused(err error) bool {
-	var hs *node.HTTPStatusError
-	var re *node.RPCError
-	return !errors.As(err, &hs) && errors.As(err, &re)
 }
 
 // flush stores batch and publishes the model rebuilt with it.

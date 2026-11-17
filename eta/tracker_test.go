@@ -23,6 +23,7 @@ type fakeChain struct {
 	halt    node.Halt
 	fail    map[int64][]error // errors returned, in order, before serving a height
 	fetched []int64
+	onFetch func(h int64) // called before serving each height
 }
 
 func newFakeChain(head int64) *fakeChain {
@@ -40,6 +41,9 @@ func (c *fakeChain) ChainHead(context.Context) (node.ChainHead, error) {
 }
 
 func (c *fakeChain) BlockTime(_ context.Context, h int64) (time.Time, error) {
+	if c.onFetch != nil {
+		c.onFetch(h)
+	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.fetched = append(c.fetched, h)
@@ -169,6 +173,7 @@ func TestTrackerPausesWhenRateLimited(t *testing.T) {
 	chain := newFakeChain(1042)
 	chain.fail[900] = []error{
 		&node.HTTPStatusError{StatusCode: http.StatusTooManyRequests, RetryAfter: 7 * time.Second},
+		&node.HTTPStatusError{StatusCode: http.StatusTooManyRequests, RetryAfter: 7 * time.Second},
 		&node.HTTPStatusError{StatusCode: http.StatusTooManyRequests},
 	}
 	tr, slept, logs := testTracker(t, chain)
@@ -181,11 +186,13 @@ func TestTrackerPausesWhenRateLimited(t *testing.T) {
 	if !slices.Contains(*slept, 7*time.Second) || !slices.Contains(*slept, rateLimitPause) {
 		t.Errorf("slept %v, want the 7s Retry-After then the %v default", *slept, rateLimitPause)
 	}
+	// The same pause twice in a row is logged once; the recovery is logged.
 	want := []string{
-		"eta: RPC rate limited, pausing the block-time backfill for 7s",
-		"eta: RPC rate limited, pausing the block-time backfill for 1m0s",
+		"eta: backfill: RPC rate limited, pausing for 7s",
+		"eta: backfill: RPC rate limited, pausing for 1m0s",
+		"eta: backfill ok again",
 	}
-	if len(*logs) < 2 || !slices.Equal((*logs)[:2], want) {
+	if len(*logs) < 3 || !slices.Equal((*logs)[:3], want) {
 		t.Errorf("logs = %q, want %q first", *logs, want)
 	}
 }
@@ -320,4 +327,74 @@ func newestFirst(from, to int64) []int64 {
 	hs := gridHeights(from, to)
 	slices.Reverse(hs)
 	return hs
+}
+
+func TestTrackerRefusalAboveServedHeightsIsTransient(t *testing.T) {
+	// A node behind the one that gave the head (a load balancer's lagging
+	// backend) refuses the newest heights: retry later, no floor.
+	chain := newFakeChain(5042)
+	chain.fail[5000] = []error{&node.RPCError{Code: -32603, Message: "Internal error", Data: "min height 5000 can't be greater than max height 4990"}}
+	tr, _, _ := testTracker(t, chain)
+
+	if _, err := tr.syncPass(context.Background()); err == nil {
+		t.Fatal("syncPass() error = nil, want the refusal reported")
+	}
+	if floor, _ := tr.store.Floor(context.Background()); floor != 0 {
+		t.Errorf("Floor() = %d, want none", floor)
+	}
+	if tr.View().Complete {
+		t.Error("history complete after a refused head height")
+	}
+	syncAll(t, tr)
+	if got := storedHeights(t, tr); !slices.Equal(got, gridHeights(Stride, 5000)) {
+		t.Errorf("stored %v, want every grid height once the node caught up", got)
+	}
+}
+
+func TestTrackerHTTPErrorIsNotAFloor(t *testing.T) {
+	chain := newFakeChain(1042)
+	chain.fail[900] = []error{&node.HTTPStatusError{
+		StatusCode: http.StatusInternalServerError,
+		RPC:        &node.RPCError{Code: -32603, Message: "Internal error"},
+	}}
+	tr, _, _ := testTracker(t, chain)
+
+	if _, err := tr.syncPass(context.Background()); err == nil {
+		t.Fatal("syncPass() error = nil, want the HTTP error")
+	}
+	if floor, _ := tr.store.Floor(context.Background()); floor != 0 {
+		t.Errorf("Floor() = %d after an HTTP error, want none", floor)
+	}
+}
+
+func TestTrackerRebuildsTheModelMidPass(t *testing.T) {
+	chain := newFakeChain(25_042)
+	tr, _, _ := testTracker(t, chain)
+	seen := -1
+	chain.onFetch = func(h int64) {
+		if h == 25_000-150*Stride {
+			seen = tr.View().Model.Len()
+		}
+	}
+
+	if _, err := tr.syncPass(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if seen != rebuildEvery {
+		t.Errorf("model had %d samples at the 151st fetch, want %d", seen, rebuildEvery)
+	}
+}
+
+func TestTrackerReport(t *testing.T) {
+	tr, _, logs := testTracker(t, newFakeChain(1042))
+	boom := errors.New("connection reset")
+	tr.report("sync", boom)
+	tr.report("sync", boom)
+	tr.report("halt params", nil)
+	tr.report("sync", nil)
+	tr.report("sync", nil)
+	want := []string{"eta: sync: connection reset", "eta: sync ok again"}
+	if !slices.Equal(*logs, want) {
+		t.Errorf("logs = %q, want %q", *logs, want)
+	}
 }
