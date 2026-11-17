@@ -5812,6 +5812,12 @@
                         var head =
                             '#' + nf(t.height) + (name() ? ' ' + name() : '')
                         var o = rep.original
+                        // The compact line carries the stale mark too.
+                        var mark = stale
+                            ? ' <span style="color: var(--yellow)" title="' +
+                              esc(stale) +
+                              '; showing the last answer">⚠</span>'
+                            : ''
                         if (rep.reached_at) {
                             var at = ms(rep.reached_at)
                             q('.eta-count').innerHTML =
@@ -5822,7 +5828,8 @@
                                 '</span> at ' +
                                 hms(at) +
                                 ' UTC' +
-                                (o ? ' ' + chip(o.drift_seconds) : '')
+                                (o ? ' ' + chip(o.drift_seconds) : '') +
+                                mark
                             return
                         }
                         var left =
@@ -5846,7 +5853,8 @@
                             (rep.range_80
                                 ? ' (80% ' + rangeText(rep.range_80) + ')'
                                 : '') +
-                            (o ? ' ' + chip(o.drift_seconds) : '')
+                            (o ? ' ' + chip(o.drift_seconds) : '') +
+                            mark
                     }
 
                     return {
@@ -5870,7 +5878,9 @@
                         height: p.get('eta'),
                         since: p.get('since') || '',
                         // Capped like the planner's input: a link can carry more.
-                        label: (p.get('label') || '').slice(0, 40),
+                        label: Array.from(p.get('label') || '')
+                            .slice(0, 40)
+                            .join(''),
                     }
                 }
                 function setLinkTarget(t) {
@@ -5889,19 +5899,23 @@
                         '',
                         location.pathname + (s ? '?' + s : '') + location.hash
                     )
+                    // A poll in flight answers for the old target: drop it,
+                    // and start the card afresh.
+                    pollSeq++
+                    linkCard.hide()
                     pollETA()
                 }
 
                 // haltError is why the halt status is unknown, when the last
-                // poll failed; pollSeq lets a newer poll discard an older
-                // one's late answers.
+                // poll failed; pollSeq changes with the link target, so a
+                // poll in flight for the old one drops its answers.
                 var haltError = ''
                 var pollSeq = 0
 
                 // pollETA refreshes both cards. A failed answer leaves the
                 // last good one on screen, marked stale.
                 async function pollETA() {
-                    var seq = ++pollSeq
+                    var seq = pollSeq
                     var h = await getETA('')
                     if (seq !== pollSeq) return
                     if (h.error) {
@@ -5959,8 +5973,22 @@
                     if (e.target === modal) closeEtaModal()
                 })
                 document.addEventListener('keydown', function (e) {
-                    if (e.key === 'Escape' && modal.classList.contains('open'))
-                        closeEtaModal()
+                    if (!modal.classList.contains('open')) return
+                    if (e.key === 'Escape') closeEtaModal()
+                    if (e.key !== 'Tab') return
+                    // Keep focus inside the dialog.
+                    var f = Array.from(
+                        modal.querySelectorAll('button:not(:disabled), input')
+                    )
+                    var first = f[0]
+                    var last = f[f.length - 1]
+                    if (e.shiftKey && document.activeElement === first) {
+                        last.focus()
+                        e.preventDefault()
+                    } else if (!e.shiftKey && document.activeElement === last) {
+                        first.focus()
+                        e.preventDefault()
+                    }
                 })
                 modal.querySelectorAll('.eta-seg button').forEach(function (b) {
                     b.addEventListener('click', function () {
@@ -6050,12 +6078,7 @@
                                 m[1] + 'T' + m[2] + (m[3] || ':00') + 'Z'
                             )
                     }
-                    var rep
-                    try {
-                        rep = await getETA(query)
-                    } catch (e) {
-                        rep = { error: 'gnockpit is unreachable' }
-                    }
+                    var rep = await getETA(query)
                     if (seq !== planSeq) return
                     if (rep.error) {
                         out.textContent = rep.error
@@ -6125,8 +6148,12 @@
                     closeEtaModal()
                 })
 
-                pollETA()
-                setInterval(pollETA, ETA_POLL_MS)
+                // Each poll is scheduled once the previous one is done, so a
+                // slow answer is shown rather than overtaken.
+                ;(async function pollLoop() {
+                    await pollETA()
+                    setTimeout(pollLoop, ETA_POLL_MS)
+                })()
                 setInterval(function () {
                     haltCard.tick()
                     linkCard.tick()
