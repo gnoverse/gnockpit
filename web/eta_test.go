@@ -1,12 +1,16 @@
 package web
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -24,19 +28,27 @@ type staticETA struct{ v eta.View }
 
 func (s staticETA) View() eta.View { return s.v }
 
+// answerBlockTimes is an RPC answering /blockchain with the test chain's times.
+func answerBlockTimes(w http.ResponseWriter, r *http.Request) {
+	h, _ := strconv.ParseInt(r.URL.Query().Get("minHeight"), 10, 64)
+	fmt.Fprintf(w, `{"jsonrpc":"2.0","result":{"block_metas":[{"header":{"time":%q}}]}}`,
+		etaBlockTime(h).Format(time.RFC3339Nano))
+}
+
 // etaServer serves /api/eta for a chain at tip with 40 days of regular
 // history; its RPC answers /blockchain for reached heights.
 func etaServer(t *testing.T, tip int64, halt *eta.ScheduledHalt) *Server {
+	t.Helper()
+	return etaServerWithRPC(t, tip, halt, answerBlockTimes)
+}
+
+func etaServerWithRPC(t *testing.T, tip int64, halt *eta.ScheduledHalt, rpcHandler http.HandlerFunc) *Server {
 	t.Helper()
 	var samples []eta.Sample
 	for h := eta.Stride; h <= tip; h += eta.Stride {
 		samples = append(samples, eta.Sample{Height: h, Time: etaBlockTime(h)})
 	}
-	rpc := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		h, _ := strconv.ParseInt(r.URL.Query().Get("minHeight"), 10, 64)
-		fmt.Fprintf(w, `{"jsonrpc":"2.0","result":{"block_metas":[{"header":{"time":%q}}]}}`,
-			etaBlockTime(h).Format(time.RFC3339Nano))
-	}))
+	rpc := httptest.NewServer(rpcHandler)
 	t.Cleanup(rpc.Close)
 	s := &Server{Client: node.NewClient(rpc.URL, time.Second)}
 	s.ETA = staticETA{eta.View{Model: eta.NewModel(samples), Halt: halt, Complete: true}}
@@ -259,7 +271,71 @@ func TestETAUnavailable(t *testing.T) {
 		t.Errorf("no status: %d, want 503", code)
 	}
 	s = etaServer(t, 2_000, nil)
-	if code, _, _ := getETA(t, s, "height=999999999"); code != http.StatusServiceUnavailable {
+	if code, _, _ := getETA(t, s, "height=50000"); code != http.StatusServiceUnavailable {
 		t.Errorf("2000 blocks of history: %d, want 503", code)
+	}
+}
+
+func TestETAReachedBlockTimeIsCached(t *testing.T) {
+	var calls atomic.Int32
+	s := etaServerWithRPC(t, tipHeight, nil, func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		answerBlockTimes(w, r)
+	})
+	for range 3 {
+		if code, _, _ := getETA(t, s, "height=987000"); code != http.StatusOK {
+			t.Fatalf("status %d, want 200", code)
+		}
+	}
+	if n := calls.Load(); n != 1 {
+		t.Errorf("RPC asked %d times for a reached block's time, want 1", n)
+	}
+}
+
+func TestETAReachedBlockTimeFailures(t *testing.T) {
+	t.Run("RPC error", func(t *testing.T) {
+		var logs bytes.Buffer
+		log.SetOutput(&logs)
+		t.Cleanup(func() { log.SetOutput(os.Stderr) })
+		s := etaServerWithRPC(t, tipHeight, nil, func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusInternalServerError)
+		})
+		code, rep, _ := getETA(t, s, "height=987000")
+		if code != http.StatusBadGateway || rep.Error == "" {
+			t.Fatalf("status %d, error %q; want 502 with a reason", code, rep.Error)
+		}
+		// The RPC's address may carry credentials: the public answer leaves
+		// it out, the log keeps it.
+		if strings.Contains(rep.Error, "127.0.0.1") || strings.Contains(rep.Error, "http") {
+			t.Errorf("error %q names the RPC", rep.Error)
+		}
+		if !strings.Contains(logs.String(), "HTTP 500") {
+			t.Errorf("log = %q, want the RPC failure", logs.String())
+		}
+	})
+	t.Run("not served yet", func(t *testing.T) {
+		// The RPC is behind the source that gave the newest block.
+		s := etaServerWithRPC(t, tipHeight, nil, func(w http.ResponseWriter, r *http.Request) {
+			fmt.Fprint(w, `{"jsonrpc":"2.0","id":"","error":{"code":-32603,"message":"Internal error","data":"min height 987000 can't be greater than max height 986990"}}`)
+		})
+		if code, rep, _ := getETA(t, s, "height=987000"); code != http.StatusServiceUnavailable || rep.Error == "" {
+			t.Errorf("status %d, error %q; want 503 with a reason", code, rep.Error)
+		}
+	})
+}
+
+func TestETATimeWarnsOfAHalt(t *testing.T) {
+	halt := &eta.ScheduledHalt{Height: tipHeight + 500, MinVersion: "v1.8.0", FirstSeen: etaBlockTime(tipHeight)}
+	s := etaServer(t, tipHeight, halt)
+	_, rep, _ := getETA(t, s, "time="+rfc(etaBlockTime(tipHeight+1_000)))
+	if !strings.Contains(rep.Warning, fmt.Sprintf("#%d", halt.Height)) {
+		t.Errorf("warning = %q, want the halt named", rep.Warning)
+	}
+}
+
+func TestETAHeightTooFarAhead(t *testing.T) {
+	s := etaServer(t, tipHeight, nil)
+	if code, rep, _ := getETA(t, s, "height=2000000000000"); code != http.StatusBadRequest || rep.Error == "" {
+		t.Errorf("status %d, error %q; want 400 with a reason", code, rep.Error)
 	}
 }

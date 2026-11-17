@@ -27,6 +27,10 @@ type ETAView interface {
 // by a viewer whose clock runs fast.
 const sinceSkew = time.Minute
 
+// maxBlocksAhead bounds how far ahead a height may be asked about: about a
+// decade of blocks, well inside what a time.Duration can hold.
+const maxBlocksAhead = 100_000_000
+
 // etaScenarioSpans are the look-back spans the scenarios take the pace over;
 // a zero span means the whole history.
 var etaScenarioSpans = []struct {
@@ -243,39 +247,51 @@ func (s *Server) etaReport(ctx context.Context, q url.Values, now time.Time) (et
 	if snap == nil || snap.Status == nil {
 		return etaReport{}, etaUnavailable("no chain status yet")
 	}
-	tip, err := tipSample(snap.Status)
+	head, err := snap.Status.Head()
 	if err != nil {
 		return etaReport{}, etaUnavailable(fmt.Sprintf("chain status: %v", err))
 	}
-	req, err := parseETARequest(q, tip.Time, now)
+	in := etaInput{view: s.ETA.View(), tip: eta.Sample{Height: head.Height, Time: head.Time}, now: now}
+	req, err := parseETARequest(q, in.tip.Time, now)
 	if err != nil {
 		return etaReport{}, err
 	}
-	v := s.ETA.View()
 	rep := etaReport{
-		Chain:   snap.Status.NodeInfo.Network,
-		Now:     &etaBlock{Height: tip.Height, BlockTime: rfc3339(tip.Time)},
-		Halt:    haltJSON(v.Halt),
-		History: historyJSON(v),
+		Chain:   head.ChainID,
+		Now:     &etaBlock{Height: in.tip.Height, BlockTime: rfc3339(in.tip.Time)},
+		Halt:    haltJSON(in.view.Halt),
+		History: historyJSON(in.view),
 	}
-	switch {
+	switch halt := in.view.Halt; {
 	case !req.at.IsZero():
-		err = fillETATime(&rep, v, tip, req.at)
+		err = fillETATime(&rep, in, req.at)
 	case req.height != 0:
-		err = s.fillETAHeight(ctx, &rep, v, tip, req.height, req.since, now)
-	case v.Halt != nil:
-		err = s.fillETAHeight(ctx, &rep, v, tip, v.Halt.Height, v.Halt.FirstSeen, now)
+		err = s.fillETAHeight(ctx, &rep, in, req.height, req.since)
+	case halt != nil:
+		err = s.fillETAHeight(ctx, &rep, in, halt.Height, halt.FirstSeen)
 	default:
-		if p, ok := v.Model.Pace(tip); ok {
+		if p, ok := in.view.Model.Pace(in.tip); ok {
 			rep.Pace = paceJSON(p)
 		}
 	}
 	return rep, err
 }
 
+// etaInput is what an /api/eta answer is computed from: the tracker's view,
+// the newest block, and the server's time.
+type etaInput struct {
+	view eta.View
+	tip  eta.Sample
+	now  time.Time
+}
+
 // fillETAHeight answers when target is reached, and how the estimate moved
 // since since when it is set.
-func (s *Server) fillETAHeight(ctx context.Context, rep *etaReport, v eta.View, tip eta.Sample, target int64, since, now time.Time) error {
+func (s *Server) fillETAHeight(ctx context.Context, rep *etaReport, in etaInput, target int64, since time.Time) error {
+	v, tip := in.view, in.tip
+	if target-tip.Height > maxBlocksAhead {
+		return badETARequest("height %d is more than %d blocks ahead", target, maxBlocksAhead)
+	}
 	rep.Target = &etaTarget{Height: target, BlocksLeft: max(0, target-tip.Height)}
 	if v.Halt != nil && target > v.Halt.Height {
 		rep.Warning = fmt.Sprintf("a halt is scheduled at #%d, before this height; the estimate does not include the upgrade downtime", v.Halt.Height)
@@ -283,8 +299,15 @@ func (s *Server) fillETAHeight(ctx context.Context, rep *etaReport, v eta.View, 
 	var outcome time.Time
 	if target <= tip.Height {
 		at, err := s.reachedBlockTime(ctx, target)
+		if node.IsRefusal(err) {
+			// The RPC is behind the source that gave the newest block.
+			return etaUnavailable(fmt.Sprintf("block #%d is not served by the RPC yet", target))
+		}
 		if err != nil {
-			return &etaError{http.StatusBadGateway, fmt.Sprintf("reading the time of block #%d: %v", target, err)}
+			// The error names the RPC, whose address may carry credentials:
+			// keep it in the log.
+			log.Printf("eta: time of block #%d: %v", target, err)
+			return &etaError{http.StatusBadGateway, fmt.Sprintf("the RPC could not give the time of block #%d", target)}
 		}
 		outcome = at
 		rep.ReachedAt, rep.ETA = rfc3339(at), rfc3339(at)
@@ -295,12 +318,12 @@ func (s *Server) fillETAHeight(ctx context.Context, rep *etaReport, v eta.View, 
 			return errShortHistory
 		}
 		outcome = e.ETA
-		left := max(0, int64(math.Round(e.ETA.Sub(now).Seconds())))
+		left := max(0, int64(math.Round(e.ETA.Sub(in.now).Seconds())))
 		rep.ETA, rep.SecondsLeft = rfc3339(e.ETA), &left
 		rep.Range80, rep.Range95 = timeRangeJSON(e.Range80), timeRangeJSON(e.Range95)
 		rep.Pace = paceJSON(e.Pace)
 		rep.Scenarios = etaScenarios(v.Model, tip, func(p eta.Pace) etaScenario {
-			return etaScenario{ETA: rfc3339(tip.Time.Add(secondsDuration(p.SecondsPerBlock * float64(target-tip.Height))))}
+			return etaScenario{ETA: rfc3339(tip.Time.Add(p.Duration(target - tip.Height)))}
 		})
 	}
 	if since.IsZero() {
@@ -326,7 +349,8 @@ func (s *Server) fillETAHeight(ctx context.Context, rep *etaReport, v eta.View, 
 }
 
 // fillETATime answers which height the chain reaches at at.
-func fillETATime(rep *etaReport, v eta.View, tip eta.Sample, at time.Time) error {
+func fillETATime(rep *etaReport, in etaInput, at time.Time) error {
+	v, tip := in.view, in.tip
 	h, ok := v.Model.HeightAt(tip, at)
 	if !ok {
 		return errShortHistory
@@ -398,18 +422,6 @@ func (s *Server) reachedBlockTime(ctx context.Context, height int64) (time.Time,
 	return t, nil
 }
 
-func tipSample(st *node.Status) (eta.Sample, error) {
-	h, err := strconv.ParseInt(st.SyncInfo.LatestBlockHeight, 10, 64)
-	if err != nil {
-		return eta.Sample{}, fmt.Errorf("latest block height %q: %w", st.SyncInfo.LatestBlockHeight, err)
-	}
-	t, err := time.Parse(time.RFC3339Nano, st.SyncInfo.LatestBlockTime)
-	if err != nil {
-		return eta.Sample{}, fmt.Errorf("latest block time %q: %w", st.SyncInfo.LatestBlockTime, err)
-	}
-	return eta.Sample{Height: h, Time: t}, nil
-}
-
 func haltJSON(h *eta.ScheduledHalt) *etaHalt {
 	if h == nil {
 		return nil
@@ -445,7 +457,5 @@ func heightRangeJSON(r *eta.HeightRange) *etaHeightRange {
 
 // roundPace keeps four decimals: tenths of a millisecond per block.
 func roundPace(s float64) float64 { return math.Round(s*1e4) / 1e4 }
-
-func secondsDuration(s float64) time.Duration { return time.Duration(s * float64(time.Second)) }
 
 func rfc3339(t time.Time) string { return t.UTC().Format(time.RFC3339) }
