@@ -193,7 +193,8 @@ location, which is accurate when gnockpit runs alongside the node.
 ## Block history
 
 gnockpit records every block since genesis in the SQLite database
-(`--db-path`; on a temporary path, a reboot means filling it again).
+(`--db-path`; on a temporary path, a reboot means filling it again). It takes
+about 100 bytes a block on onyx (56 validators): about 130 MB for 1.25M blocks.
 
 - **Recorded** — each block's time, proposer and round, the validator set that
   signed it, and the members of that set that did not sign it for the block:

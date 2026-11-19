@@ -19,7 +19,7 @@ node/            — RPC client + types (pure data layer, no UI)
   batch.go       — JSON-RPC batches (one POST, several calls); HeightError
   blockhistory.go — commits (one, or a batch), validator sets with priorities, block events: the block history's and the live window's reads
 blocks/          — block history since genesis: per-height facts in SQLite, filled from the primary source (shares the push DB handle)
-  store.go       — blocks, validator sets, absences (absent / nil / other block), round proposers, flags, set events + event gaps, daily vote-delay histograms; each address once (blocks_validators), the rest by id; missed-block windows
+  store.go       — blocks, validator sets, absences (absent / nil / other block), round proposers, flags, set events + event gaps, daily vote-delay histograms; each address once (blocks_validators), the rest by id, no index beside the keys; missed-block windows (first block found by bisecting heights)
   record.go      — a commit + its validator set → a Record: absence kinds, vote delays from tm2's weighted median time
   proposer.go    — port of tm2's proposer-priority increment: the expected proposer of each round
   tracker.go     — fill loop (Data Flow #7)
