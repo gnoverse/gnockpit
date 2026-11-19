@@ -130,3 +130,94 @@ func (c *Client) Commits(ctx context.Context, heights []int64) ([]Commit, error)
 	}
 	return out, nil
 }
+
+// SetMember is a validator of the set at a height, with its proposer priority
+// there.
+type SetMember struct {
+	Address  string
+	PubKey   string // the key's base64 value
+	Power    int64
+	Priority int64
+}
+
+// ValidatorSet reads the validator set at height, in set order (the order of
+// a commit's precommits).
+func (c *Client) ValidatorSet(ctx context.Context, height int64) ([]SetMember, error) {
+	var res struct {
+		Validators []struct {
+			Address string `json:"address"`
+			PubKey  struct {
+				Value string `json:"value"`
+			} `json:"pub_key"`
+			VotingPower      string `json:"voting_power"`
+			ProposerPriority string `json:"proposer_priority"`
+		} `json:"validators"`
+	}
+	if err := c.rpcGetJSON(ctx, fmt.Sprintf("/validators?height=%d", height), &res); err != nil {
+		return nil, err
+	}
+	out := make([]SetMember, len(res.Validators))
+	for i, v := range res.Validators {
+		power, err := strconv.ParseInt(v.VotingPower, 10, 64)
+		if err != nil {
+			return nil, fmt.Errorf("validator %s voting power %q: %w", v.Address, v.VotingPower, err)
+		}
+		priority, err := strconv.ParseInt(v.ProposerPriority, 10, 64)
+		if err != nil {
+			return nil, fmt.Errorf("validator %s proposer priority %q: %w", v.Address, v.ProposerPriority, err)
+		}
+		out[i] = SetMember{Address: v.Address, PubKey: v.PubKey.Value, Power: power, Priority: priority}
+	}
+	return out, nil
+}
+
+// BlockEvent is an event a transaction of a block emitted with chain.Emit.
+type BlockEvent struct {
+	Type    string
+	PkgPath string
+	Attrs   map[string]string
+}
+
+// BlockEvents reads the events the successful transactions of the block at
+// height emitted with chain.Emit, in order (/block_results). Other events,
+// such as storage deposits, are left out.
+func (c *Client) BlockEvents(ctx context.Context, height int64) ([]BlockEvent, error) {
+	var res struct {
+		Results struct {
+			DeliverTx []struct {
+				ResponseBase struct {
+					Error  json.RawMessage `json:"Error"`
+					Events []struct {
+						Kind    string `json:"@type"`
+						Type    string `json:"type"`
+						PkgPath string `json:"pkg_path"`
+						Attrs   []struct {
+							Key   string `json:"key"`
+							Value string `json:"value"`
+						} `json:"attrs"`
+					} `json:"Events"`
+				} `json:"ResponseBase"`
+			} `json:"deliver_tx"`
+		} `json:"results"`
+	}
+	if err := c.rpcGetJSON(ctx, fmt.Sprintf("/block_results?height=%d", height), &res); err != nil {
+		return nil, err
+	}
+	var out []BlockEvent
+	for _, tx := range res.Results.DeliverTx {
+		if e := tx.ResponseBase.Error; len(e) > 0 && string(e) != "null" {
+			continue
+		}
+		for _, ev := range tx.ResponseBase.Events {
+			if ev.Kind != "/tm.Event" {
+				continue
+			}
+			attrs := make(map[string]string, len(ev.Attrs))
+			for _, a := range ev.Attrs {
+				attrs[a.Key] = a.Value
+			}
+			out = append(out, BlockEvent{Type: ev.Type, PkgPath: ev.PkgPath, Attrs: attrs})
+		}
+	}
+	return out, nil
+}

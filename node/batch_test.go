@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -141,5 +142,64 @@ func TestCommitsRateLimited(t *testing.T) {
 	}
 	if !strings.HasPrefix(err.Error(), "POST ") {
 		t.Errorf("error = %q, want it to name the POST", err)
+	}
+}
+
+func TestValidatorSet(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/validators" || r.URL.Query().Get("height") != "1663000" {
+			t.Errorf("request = %s, want /validators?height=1663000", r.URL)
+		}
+		fmt.Fprint(w, `{"jsonrpc":"2.0","result":{"block_height":"1663000","validators":[
+			{"address":"g180gwv8tjclsqqj6hlgm7gmmrzl6l69xfg3r88p","pub_key":{"@type":"/tm.PubKeyEd25519","value":"GjEG38KhdIL48BK4YqMoG6+YleQsAaqGOXHZneY4zkE="},"voting_power":"60","proposer_priority":"136"},
+			{"address":"g1g0yrmdhney8pcaf9rfut4604equz604pszdsyt","pub_key":{"@type":"/tm.PubKeyEd25519","value":"AAAA"},"voting_power":"60","proposer_priority":"-192"}
+		]}}`)
+	}))
+	defer srv.Close()
+	got, err := NewClient(srv.URL, 5*time.Second).ValidatorSet(context.Background(), 1663000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []SetMember{
+		{Address: "g180gwv8tjclsqqj6hlgm7gmmrzl6l69xfg3r88p", PubKey: "GjEG38KhdIL48BK4YqMoG6+YleQsAaqGOXHZneY4zkE=", Power: 60, Priority: 136},
+		{Address: "g1g0yrmdhney8pcaf9rfut4604equz604pszdsyt", PubKey: "AAAA", Power: 60, Priority: -192},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("ValidatorSet() = %+v, want %+v", got, want)
+	}
+}
+
+// TestBlockEvents reads onyx's block 1223186 (trimmed), where a GovDAO
+// proposal added a validator, plus a failed transaction whose events are left
+// out.
+func TestBlockEvents(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/block_results" || r.URL.Query().Get("height") != "1223186" {
+			t.Errorf("request = %s, want /block_results?height=1223186", r.URL)
+		}
+		fmt.Fprint(w, `{"jsonrpc":"2.0","result":{"height":"1223186","results":{"deliver_tx":[
+			{"ResponseBase":{"Error":null,"Events":[
+				{"@type":"/tm.Event","type":"ProposalCreated","attrs":[{"key":"id","value":"42"}],"pkg_path":"gno.land/r/gov/dao"},
+				{"@type":"/tm.Event","type":"ValidatorAdded","attrs":[{"key":"op","value":"g1aeddlftlfk27ret5rf750d7w5dume3kcsm8r8m"},{"key":"signingAddr","value":"g19429enajcectdlhwulwza8x2h6mkygu0hpt6y4"},{"key":"power","value":"350"}],"pkg_path":"gno.land/r/sys/validators/v0"},
+				{"@type":"/tm.StorageDepositEvent","bytes_delta":"1276","fee_delta":"127600ugnot","pkg_path":"gno.land/r/sys/validators/v0"}
+			]},"GasWanted":"1","GasUsed":"1"},
+			{"ResponseBase":{"Error":{"@type":"/std.OutOfGasError","value":{}},"Events":[
+				{"@type":"/tm.Event","type":"ValidatorRemoved","attrs":[],"pkg_path":"gno.land/r/sys/validators/v0"}
+			]}}
+		],"end_block":{}}}}`)
+	}))
+	defer srv.Close()
+	got, err := NewClient(srv.URL, 5*time.Second).BlockEvents(context.Background(), 1223186)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []BlockEvent{
+		{Type: "ProposalCreated", PkgPath: "gno.land/r/gov/dao", Attrs: map[string]string{"id": "42"}},
+		{Type: "ValidatorAdded", PkgPath: "gno.land/r/sys/validators/v0", Attrs: map[string]string{
+			"op": "g1aeddlftlfk27ret5rf750d7w5dume3kcsm8r8m", "signingAddr": "g19429enajcectdlhwulwza8x2h6mkygu0hpt6y4", "power": "350",
+		}},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("BlockEvents() = %+v, want %+v", got, want)
 	}
 }
