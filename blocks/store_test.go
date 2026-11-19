@@ -54,15 +54,15 @@ func TestStoreWriteAndRead(t *testing.T) {
 	if low, high, err := s.Range(ctx); err != nil || low != 10 || high != 12 {
 		t.Errorf("Range() = %d, %d, %v; want 10, 12, nil", low, high, err)
 	}
-	got, sets, err := s.Blocks(ctx, 9, 11)
+	got, err := s.Blocks(ctx, 9, 11)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := []Record{rec(10), rec(11, Absence{val15T, Nil})}; !reflect.DeepEqual(got, want) {
-		t.Errorf("Blocks(9, 11) =\n%+v\nwant\n%+v", got, want)
+	if want := []Record{rec(10), rec(11, Absence{val15T, Nil})}; !reflect.DeepEqual(got.Blocks, want) {
+		t.Errorf("Blocks(9, 11) =\n%+v\nwant\n%+v", got.Blocks, want)
 	}
-	if want := map[string][]Member{"SET": testSet}; !reflect.DeepEqual(sets, want) {
-		t.Errorf("Blocks(9, 11) sets = %+v, want %+v", sets, want)
+	if want := map[string][]Member{"SET": testSet}; !reflect.DeepEqual(got.Sets, want) {
+		t.Errorf("Blocks(9, 11) sets = %+v, want %+v", got.Sets, want)
 	}
 	if hash, ok, err := s.ValsetHashAt(ctx, 12); err != nil || !ok || hash != "SET" {
 		t.Errorf("ValsetHashAt(12) = %q, %v, %v; want SET", hash, ok, err)
@@ -96,16 +96,51 @@ func TestStoreWriteCountsAHeightOnce(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	var votes, sum, b0, b3 int64
-	day := t0.Add(10*time.Second).Unix() / 86400
-	if err := s.db.QueryRowContext(ctx,
-		`SELECT SUM(votes), SUM(sum_ms), SUM(b0), SUM(b3) FROM blocks_vote_delays WHERE day = ?`, day,
-	).Scan(&votes, &sum, &b0, &b3); err != nil {
+	day := t0.Truncate(24 * time.Hour)
+	got, err := s.VoteDelays(ctx, day, day)
+	if err != nil {
 		t.Fatal(err)
 	}
-	// 300 ms falls in [250, 1000), -1200 ms in ≤ -1000.
-	if votes != 2 || sum != -900 || b0 != 1 || b3 != 1 {
-		t.Errorf("delays: votes %d, sum %d, b0 %d, b3 %d; want 2, -900, 1, 1", votes, sum, b0, b3)
+	// -1200 ms falls in ≤ -1000, 300 ms in [250, 1000).
+	want := []DayDelays{
+		{Day: day, Address: val15T, Votes: 1, SumMs: -1200, Buckets: [DelayBuckets]int64{0: 1}},
+		{Day: day, Address: valG0Y, Votes: 1, SumMs: 300, Buckets: [DelayBuckets]int64{3: 1}},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("VoteDelays() =\n%+v\nwant\n%+v", got, want)
+	}
+}
+
+func TestStoreVoteDelaysByDay(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	putTestSet(t, s)
+	day1 := t0.Truncate(24 * time.Hour)
+	day2 := day1.Add(24 * time.Hour)
+	r1, r2 := rec(10), rec(11)
+	r1.Delays = []Delay{{valG0Y, 100}}
+	r2.Time, r2.Delays = day2.Add(time.Hour), []Delay{{valG0Y, 6000}, {valG0Y, 0}}
+	if err := s.Write(ctx, []Record{r1, r2}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.VoteDelays(ctx, day2, day2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []DayDelays{{Day: day2, Address: valG0Y, Votes: 2, SumMs: 6000, Buckets: [DelayBuckets]int64{2: 1, 6: 1}}}; !reflect.DeepEqual(got, want) {
+		t.Errorf("VoteDelays(day 2) = %+v, want %+v", got, want)
+	}
+	if got, err := s.VoteDelays(ctx, day1, day2); err != nil || len(got) != 2 || !got[0].Day.Equal(day1) || !got[1].Day.Equal(day2) {
+		t.Errorf("VoteDelays(days 1–2) = %+v, %v; want day 1 then day 2", got, err)
+	}
+}
+
+func TestDelayBucketEdges(t *testing.T) {
+	// An edge falls in the bucket farther from 0.
+	for ms, want := range map[int64]int{-1000: 0, -999: 1, -250: 1, -249: 2, 0: 2, 249: 2, 250: 3, 999: 3, 1000: 4, 2500: 5, 5000: 6} {
+		if got := delayBucket(ms); got != want {
+			t.Errorf("delayBucket(%d) = %d, want %d", ms, got, want)
+		}
 	}
 }
 
@@ -114,33 +149,17 @@ func TestStoreRoundsAndFlags(t *testing.T) {
 	s := newTestStore(t)
 	putTestSet(t, s)
 	r := rec(10)
-	r.Round, r.Rounds, r.Flag = 1, []string{val15T, valG0Y}, "test flag"
+	// Round 0's expected proposer is unknown: "".
+	r.Round, r.Rounds, r.Flag = 1, []string{"", valG0Y}, "test flag"
 	if err := s.Write(ctx, []Record{r}); err != nil {
 		t.Fatal(err)
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT round, proposer FROM blocks_rounds WHERE height = 10 ORDER BY round`)
+	got, err := s.Blocks(ctx, 10, 10)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer rows.Close()
-	var got []string
-	for rows.Next() {
-		var round int
-		var p string
-		if err := rows.Scan(&round, &p); err != nil {
-			t.Fatal(err)
-		}
-		got = append(got, p)
-	}
-	if err := rows.Err(); err != nil {
-		t.Fatal(err)
-	}
-	if !reflect.DeepEqual(got, []string{val15T, valG0Y}) {
-		t.Errorf("rounds = %v, want [%s %s]", got, val15T, valG0Y)
-	}
-	var reason string
-	if err := s.db.QueryRowContext(ctx, `SELECT reason FROM blocks_flags WHERE height = 10`).Scan(&reason); err != nil || reason != "test flag" {
-		t.Errorf("flag = %q, %v; want test flag", reason, err)
+	if len(got.Blocks) != 1 || !reflect.DeepEqual(got.Blocks[0], r) {
+		t.Errorf("Blocks(10, 10) = %+v, want %+v", got.Blocks, r)
 	}
 }
 
@@ -217,17 +236,12 @@ func TestStorePutEvents(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	var n int
-	var source int64
-	var typ, addr string
-	var applied bool
-	if err := s.db.QueryRowContext(ctx,
-		`SELECT COUNT(*), MAX(source_height), MAX(type), MAX(address), MAX(applied) FROM blocks_events WHERE height = 200`,
-	).Scan(&n, &source, &typ, &addr, &applied); err != nil {
+	got, err := s.Blocks(ctx, 199, 201)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if n != 1 || source != 198 || typ != "ValidatorAdded" || addr != valH97 || !applied {
-		t.Errorf("events = %d rows, source %d, %s %s applied %v; want 1 row from 198, ValidatorAdded %s applied", n, source, typ, addr, applied, valH97)
+	if want := map[int64]SetChange{200: {Source: 198, Events: evs}}; !reflect.DeepEqual(got.Changes, want) {
+		t.Errorf("changes = %+v, want %+v", got.Changes, want)
 	}
 }
 
@@ -269,9 +283,8 @@ func TestStoreMetaAndReset(t *testing.T) {
 	if _, ok, _ := s.Valset(ctx, "SET"); ok {
 		t.Error("Valset(SET) found after Reset")
 	}
-	var events int
-	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM blocks_events`).Scan(&events); err != nil || events != 0 {
-		t.Errorf("events after Reset = %d, %v; want 0", events, err)
+	if got, err := s.Blocks(ctx, 1, 100); err != nil || len(got.Changes) != 0 {
+		t.Errorf("changes after Reset = %+v, %v; want none", got.Changes, err)
 	}
 }
 

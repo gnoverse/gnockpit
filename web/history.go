@@ -103,13 +103,13 @@ func (s *Server) historyReport(ctx context.Context, q url.Values) (historyReport
 	case to-from+1 > maxHistoryBlocks:
 		return historyReport{}, http.StatusBadRequest, fmt.Errorf("at most %d blocks per call", maxHistoryBlocks)
 	}
-	recs, sets, err := s.Blocks.Blocks(ctx, from, to)
+	span, err := s.Blocks.Blocks(ctx, from, to)
 	if err != nil {
 		log.Printf("history: blocks %d-%d: %v", from, to, err)
 		return historyReport{}, http.StatusInternalServerError, errors.New("internal error")
 	}
-	rep.Blocks = make([]historyBlock, 0, len(recs))
-	for _, r := range recs {
+	rep.Blocks = make([]historyBlock, 0, len(span.Blocks))
+	for _, r := range span.Blocks {
 		b := historyBlock{
 			Height: r.Height, Time: r.Time.UTC().Format(historyTime), Proposer: r.Proposer, Round: r.Round, Txs: r.Txs,
 			Valset: r.ValsetHash, Absent: []string{}, Nil: []string{}, OtherBlock: []string{},
@@ -126,8 +126,8 @@ func (s *Server) historyReport(ctx context.Context, q url.Values) (historyReport
 		}
 		rep.Blocks = append(rep.Blocks, b)
 	}
-	rep.Valsets = make(map[string][]historyMember, len(sets))
-	for hash, members := range sets {
+	rep.Valsets = make(map[string][]historyMember, len(span.Sets))
+	for hash, members := range span.Sets {
 		out := make([]historyMember, len(members))
 		for i, m := range members {
 			out[i] = historyMember{Address: m.Address, Power: m.Power}

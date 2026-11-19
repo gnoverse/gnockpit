@@ -2,7 +2,6 @@ package blocks
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"fmt"
 	"net/http"
@@ -298,12 +297,8 @@ func TestPassStopsBeforeACommitNotFinalYet(t *testing.T) {
 	wantRange(t, tt.store, 150, 251)
 	c.lagging = 0
 	mustPass(t, tt)
-	recs, _, err := tt.store.Blocks(context.Background(), 252, 252)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(recs) != 1 || len(recs[0].Absences) != 0 {
-		t.Errorf("block 252 = %+v, want it stored from the next block's commit, without absence", recs)
+	if b := storedBlock(t, tt.store, 252); len(b.Absences) != 0 {
+		t.Errorf("block 252 = %+v, want it stored from the next block's commit, without absence", b)
 	}
 }
 
@@ -646,56 +641,38 @@ func TestRunPacesItsPasses(t *testing.T) {
 	}
 }
 
-func storedRounds(t *testing.T, s *Store, height int64) []string {
+func storedBlock(t *testing.T, s *Store, height int64) Record {
 	t.Helper()
-	rows, err := s.db.QueryContext(context.Background(), `SELECT proposer FROM blocks_rounds WHERE height = ? ORDER BY round`, height)
+	got, err := s.Blocks(context.Background(), height, height)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer rows.Close()
-	var out []string
-	for rows.Next() {
-		var p string
-		if err := rows.Scan(&p); err != nil {
-			t.Fatal(err)
-		}
-		out = append(out, p)
+	if len(got.Blocks) != 1 {
+		t.Fatalf("Blocks(%d, %d) = %+v, want the block", height, height, got.Blocks)
 	}
-	if err := rows.Err(); err != nil {
-		t.Fatal(err)
-	}
-	return out
+	return got.Blocks[0]
+}
+
+func storedRounds(t *testing.T, s *Store, height int64) []string {
+	t.Helper()
+	return storedBlock(t, s, height).Rounds
 }
 
 func storedFlag(t *testing.T, s *Store, height int64) string {
 	t.Helper()
-	var reason string
-	err := s.db.QueryRowContext(context.Background(), `SELECT reason FROM blocks_flags WHERE height = ?`, height).Scan(&reason)
-	if err != nil && !errors.Is(err, sql.ErrNoRows) {
-		t.Fatal(err)
-	}
-	return reason
+	return storedBlock(t, s, height).Flag
 }
 
 func storedEvents(t *testing.T, s *Store, height int64) []string {
 	t.Helper()
-	rows, err := s.db.QueryContext(context.Background(),
-		`SELECT type, address, power, source_height FROM blocks_events WHERE height = ? ORDER BY idx`, height)
+	got, err := s.Blocks(context.Background(), height, height)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer rows.Close()
+	change := got.Changes[height]
 	var out []string
-	for rows.Next() {
-		var typ, addr string
-		var power, source int64
-		if err := rows.Scan(&typ, &addr, &power, &source); err != nil {
-			t.Fatal(err)
-		}
-		out = append(out, fmt.Sprintf("%s %s %d from %d", typ, addr, power, source))
-	}
-	if err := rows.Err(); err != nil {
-		t.Fatal(err)
+	for _, e := range change.Events {
+		out = append(out, fmt.Sprintf("%s %s %d from %d", e.Type, e.Address, e.Power, change.Source))
 	}
 	return out
 }

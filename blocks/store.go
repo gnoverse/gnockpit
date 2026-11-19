@@ -236,9 +236,9 @@ func writeRecord(ctx context.Context, tx *sql.Tx, r Record) error {
 			return fmt.Errorf("insert flag %d: %w", r.Height, err)
 		}
 	}
-	day := r.Time.UTC().Unix() / 86400
+	day := dayOf(r.Time)
 	for _, d := range r.Delays {
-		var b [7]int64
+		var b [DelayBuckets]int64
 		b[delayBucket(d.Ms)] = 1
 		if _, err := tx.ExecContext(ctx,
 			`INSERT INTO blocks_vote_delays(day, address, votes, sum_ms, b0, b1, b2, b3, b4, b5, b6)
@@ -253,27 +253,6 @@ func writeRecord(ctx context.Context, tx *sql.Tx, r Record) error {
 		}
 	}
 	return nil
-}
-
-// delayBucket is the histogram bucket of a vote delay in ms: ≤ −1000,
-// (−1000, −250], (−250, 250), [250, 1000), [1000, 2500), [2500, 5000), ≥ 5000.
-func delayBucket(ms int64) int {
-	switch {
-	case ms <= -1000:
-		return 0
-	case ms <= -250:
-		return 1
-	case ms < 250:
-		return 2
-	case ms < 1000:
-		return 3
-	case ms < 2500:
-		return 4
-	case ms < 5000:
-		return 5
-	default:
-		return 6
-	}
 }
 
 // Range returns the lowest and highest stored heights, 0 and 0 when none is.
@@ -312,65 +291,186 @@ func (s *Store) Earliest(ctx context.Context) (time.Time, error) {
 	return time.UnixMilli(ms).UTC(), nil
 }
 
-// Blocks returns the stored records of heights from to to, ascending, with
-// their absences, and the members of the validator sets they name.
-func (s *Store) Blocks(ctx context.Context, from, to int64) ([]Record, map[string][]Member, error) {
-	rows, err := s.db.QueryContext(ctx,
-		`SELECT b.height, b.time_ms, b.proposer, b.round, b.txs, v.hash FROM blocks b
-		 JOIN blocks_valsets v ON v.id = b.valset WHERE b.height BETWEEN ? AND ? ORDER BY b.height`, from, to)
-	if err != nil {
-		return nil, nil, fmt.Errorf("query blocks: %w", err)
-	}
-	var recs []Record
+// Span is what the store holds for a span of heights.
+type Span struct {
+	Blocks  []Record            // ascending, with absences, expected round proposers and flags
+	Sets    map[string][]Member // the validator sets the blocks name, by hash
+	Changes map[int64]SetChange // the validator set changes in the span, by height
+}
+
+// SetChange is the events behind a validator set change, read from the block
+// at Source.
+type SetChange struct {
+	Source int64
+	Events []Event
+}
+
+// Blocks returns what the store holds for heights from to to.
+func (s *Store) Blocks(ctx context.Context, from, to int64) (Span, error) {
+	span := Span{Sets: map[string][]Member{}, Changes: map[int64]SetChange{}}
 	index := map[int64]int{}
-	for rows.Next() {
+	err := s.each(ctx, func(rows *sql.Rows) error {
 		var r Record
 		var ms int64
 		if err := rows.Scan(&r.Height, &ms, &r.Proposer, &r.Round, &r.Txs, &r.ValsetHash); err != nil {
-			rows.Close()
-			return nil, nil, fmt.Errorf("scan block: %w", err)
+			return err
 		}
 		r.Time = time.UnixMilli(ms).UTC()
-		index[r.Height] = len(recs)
-		recs = append(recs, r)
-	}
-	rows.Close()
-	if err := rows.Err(); err != nil {
-		return nil, nil, fmt.Errorf("iterate blocks: %w", err)
-	}
-	arows, err := s.db.QueryContext(ctx,
-		`SELECT height, address, kind FROM blocks_absences WHERE height BETWEEN ? AND ? ORDER BY height, rowid`, from, to)
+		index[r.Height] = len(span.Blocks)
+		span.Blocks = append(span.Blocks, r)
+		return nil
+	}, `SELECT b.height, b.time_ms, b.proposer, b.round, b.txs, v.hash FROM blocks b
+	    JOIN blocks_valsets v ON v.id = b.valset WHERE b.height BETWEEN ? AND ? ORDER BY b.height`, from, to)
 	if err != nil {
-		return nil, nil, fmt.Errorf("query absences: %w", err)
+		return Span{}, fmt.Errorf("blocks %d-%d: %w", from, to, err)
 	}
-	for arows.Next() {
+	err = s.each(ctx, func(rows *sql.Rows) error {
 		var h int64
 		var a Absence
-		if err := arows.Scan(&h, &a.Address, &a.Kind); err != nil {
-			arows.Close()
-			return nil, nil, fmt.Errorf("scan absence: %w", err)
+		if err := rows.Scan(&h, &a.Address, &a.Kind); err != nil {
+			return err
 		}
 		if i, ok := index[h]; ok {
-			recs[i].Absences = append(recs[i].Absences, a)
+			span.Blocks[i].Absences = append(span.Blocks[i].Absences, a)
 		}
+		return nil
+	}, `SELECT height, address, kind FROM blocks_absences WHERE height BETWEEN ? AND ? ORDER BY height, rowid`, from, to)
+	if err != nil {
+		return Span{}, fmt.Errorf("absences %d-%d: %w", from, to, err)
 	}
-	arows.Close()
-	if err := arows.Err(); err != nil {
-		return nil, nil, fmt.Errorf("iterate absences: %w", err)
+	err = s.each(ctx, func(rows *sql.Rows) error {
+		var h int64
+		var p string
+		if err := rows.Scan(&h, &p); err != nil {
+			return err
+		}
+		if i, ok := index[h]; ok {
+			span.Blocks[i].Rounds = append(span.Blocks[i].Rounds, p)
+		}
+		return nil
+	}, `SELECT height, proposer FROM blocks_rounds WHERE height BETWEEN ? AND ? ORDER BY height, round`, from, to)
+	if err != nil {
+		return Span{}, fmt.Errorf("rounds %d-%d: %w", from, to, err)
 	}
-	sets := map[string][]Member{}
-	for _, r := range recs {
-		if _, ok := sets[r.ValsetHash]; ok {
+	err = s.each(ctx, func(rows *sql.Rows) error {
+		var h int64
+		var reason string
+		if err := rows.Scan(&h, &reason); err != nil {
+			return err
+		}
+		if i, ok := index[h]; ok {
+			span.Blocks[i].Flag = reason
+		}
+		return nil
+	}, `SELECT height, reason FROM blocks_flags WHERE height BETWEEN ? AND ?`, from, to)
+	if err != nil {
+		return Span{}, fmt.Errorf("flags %d-%d: %w", from, to, err)
+	}
+	err = s.each(ctx, func(rows *sql.Rows) error {
+		var h int64
+		var source int64
+		var e Event
+		if err := rows.Scan(&h, &source, &e.Type, &e.Operator, &e.Address, &e.OldAddress, &e.NewAddress, &e.Power, &e.Applied); err != nil {
+			return err
+		}
+		change := span.Changes[h]
+		change.Source = source
+		change.Events = append(change.Events, e)
+		span.Changes[h] = change
+		return nil
+	}, `SELECT height, source_height, type, operator, address, old_address, new_address, power, applied
+	    FROM blocks_events WHERE height BETWEEN ? AND ? ORDER BY height, idx`, from, to)
+	if err != nil {
+		return Span{}, fmt.Errorf("events %d-%d: %w", from, to, err)
+	}
+	for _, r := range span.Blocks {
+		if _, ok := span.Sets[r.ValsetHash]; ok {
 			continue
 		}
 		members, _, err := s.Valset(ctx, r.ValsetHash)
 		if err != nil {
-			return nil, nil, err
+			return Span{}, err
 		}
-		sets[r.ValsetHash] = members
+		span.Sets[r.ValsetHash] = members
 	}
-	return recs, sets, nil
+	return span, nil
 }
+
+// each runs query and calls scan on each row.
+func (s *Store) each(ctx context.Context, scan func(*sql.Rows) error, query string, args ...any) error {
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		if err := scan(rows); err != nil {
+			return err
+		}
+	}
+	return rows.Err()
+}
+
+// ---- Vote delays
+
+// DelayBuckets is how many buckets the vote delay histogram has.
+const DelayBuckets = len(delayEdges) + 1
+
+// delayEdges bound the vote delay histogram's buckets, in ms. A delay on an
+// edge falls in the bucket farther from 0.
+var delayEdges = [...]int64{-1000, -250, 250, 1000, 2500, 5000}
+
+// DelayEdges returns the edges of the vote delay histogram's buckets, in ms:
+// bucket i holds the delays between edges i-1 and i, a delay on an edge
+// falling in the bucket farther from 0.
+func DelayEdges() [DelayBuckets - 1]int64 { return delayEdges }
+
+// delayBucket is the histogram bucket of a vote delay in ms.
+func delayBucket(ms int64) int {
+	for i, e := range delayEdges {
+		if ms < e || ms < 0 && ms == e {
+			return i
+		}
+	}
+	return len(delayEdges)
+}
+
+// DayDelays is a validator's vote delays over a UTC day.
+type DayDelays struct {
+	Day     time.Time // midnight UTC
+	Address string
+	Votes   int64
+	SumMs   int64
+	Buckets [DelayBuckets]int64 // see DelayEdges
+}
+
+// VoteDelays returns the vote delays of the UTC days from from to to, by day
+// then address.
+func (s *Store) VoteDelays(ctx context.Context, from, to time.Time) ([]DayDelays, error) {
+	var out []DayDelays
+	err := s.each(ctx, func(rows *sql.Rows) error {
+		var d DayDelays
+		var day int64
+		b := &d.Buckets
+		if err := rows.Scan(&day, &d.Address, &d.Votes, &d.SumMs, &b[0], &b[1], &b[2], &b[3], &b[4], &b[5], &b[6]); err != nil {
+			return err
+		}
+		d.Day = time.Unix(day*secondsPerDay, 0).UTC()
+		out = append(out, d)
+		return nil
+	}, `SELECT day, address, votes, sum_ms, b0, b1, b2, b3, b4, b5, b6 FROM blocks_vote_delays
+	    WHERE day BETWEEN ? AND ? ORDER BY day, address`, dayOf(from), dayOf(to))
+	if err != nil {
+		return nil, fmt.Errorf("vote delays: %w", err)
+	}
+	return out, nil
+}
+
+// secondsPerDay is a UTC day's length: vote delays are counted per day.
+const secondsPerDay = 24 * 60 * 60
+
+// dayOf is the UTC day of t, in days since the Unix epoch.
+func dayOf(t time.Time) int64 { return t.UTC().Unix() / secondsPerDay }
 
 // ---- Missed-block windows
 
