@@ -37,6 +37,10 @@ const (
 	floorMargin = 1000
 	// rateWindow is the span Progress.Rate is measured over.
 	rateWindow = 5 * time.Minute
+	// behindReport is how long the source can fail to give the heights asked
+	// final before it is reported: a load balancer's lagging backend is
+	// routine, minutes of it are not.
+	behindReport = 2 * time.Minute
 	// gapRetry spaces the retries of the validator set changes whose events
 	// could not be read.
 	gapRetry = 10 * time.Minute
@@ -112,6 +116,7 @@ type Tracker struct {
 	marks        []lowMark // the lowest stored height at each publish of the last rateWindow
 	floorChecked bool      // the recorded floor was checked against the source since start
 	floorSeen    int64     // a floor one answer showed, set when a second shows it; 0: none
+	behindSince  time.Time // since when passes have met heights not final at the source; zero: none
 	gapsAt       time.Time // when the event gaps are read again
 	lastErr      map[string]string
 
@@ -174,9 +179,13 @@ func (t *Tracker) Run(ctx context.Context) {
 // pass stores the heights between the stored range and the chain head, then
 // one batch below the range. more reports heights left below.
 func (t *Tracker) pass(ctx context.Context) (more bool, err error) {
+	var behind bool // the source did not give a height asked final yet
 	defer func() {
 		if perr := t.publish(ctx); perr != nil && err == nil {
 			err = perr
+		}
+		if err == nil {
+			t.watchBehind(behind)
 		}
 	}()
 	head, err := t.chainHead(ctx)
@@ -206,6 +215,7 @@ func (t *Tracker) pass(ctx context.Context) (more bool, err error) {
 		n, err := t.fill(ctx, heightsUp(high+1, min(high+int64(t.batch), top)), head, upward, 0)
 		high += int64(n)
 		if errors.Is(err, errNotYet) {
+			behind = true
 			break // the source has not got further yet
 		}
 		if err != nil {
@@ -241,7 +251,9 @@ func (t *Tracker) pass(ctx context.Context) (more bool, err error) {
 		witness, size = low, max(1, size-1)
 	}
 	n, err := t.fill(ctx, heightsDown(low-1, max(1, floor, low-size)), head, downward, witness)
-	if err != nil && !errors.Is(err, errNotYet) {
+	notYet := errors.Is(err, errNotYet)
+	behind = behind || notYet
+	if err != nil && !notYet {
 		return false, err
 	}
 	if floor, err = t.store.Floor(ctx); err != nil {
@@ -324,6 +336,23 @@ func (t *Tracker) fill(ctx context.Context, heights []int64, head node.ChainHead
 		}
 	}
 	return len(recs), cerr
+}
+
+// watchBehind reports the source once it has failed, for behindReport, to
+// give final the heights passes ask, and when it gives them again.
+func (t *Tracker) watchBehind(behind bool) {
+	if !behind {
+		t.behindSince = time.Time{}
+		t.report("behind", nil)
+		return
+	}
+	now := t.now()
+	if t.behindSince.IsZero() {
+		t.behindSince = now
+	}
+	if now.Sub(t.behindSince) >= behindReport {
+		t.report("behind", fmt.Errorf("the first -rpc has not given the heights asked final for %s", behindReport))
+	}
 }
 
 // sawFloor records an answer that served floor and refused the height below

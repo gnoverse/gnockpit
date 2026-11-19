@@ -463,6 +463,45 @@ func TestPassRechecksTheFloorWithoutHoldingTheHead(t *testing.T) {
 	}
 }
 
+func TestPassReportsABackendBehindForMinutes(t *testing.T) {
+	c := newFakeChain(500)
+	tt := newTestTracker(t, c)
+	at := t0
+	tt.now = func() time.Time { return at }
+	mustPass(t, tt) // 499..400
+	c.head, c.lagging = 600, 10
+	for range 4 { // at 0, 1, 2 and 3 minutes
+		mustPass(t, tt)
+		at = at.Add(time.Minute)
+	}
+	var reports int
+	for _, l := range tt.logs {
+		if strings.HasPrefix(l, "blocks: behind:") {
+			reports++
+		}
+	}
+	if reports != 1 {
+		t.Errorf("logs = %q, want the backend behind reported once, after %s", tt.logs, behindReport)
+	}
+	c.lagging = 0
+	mustPass(t, tt)
+	if !tt.logged("blocks: behind ok again") {
+		t.Errorf("logs = %q, want the recovery", tt.logs)
+	}
+}
+
+func TestPassFailsOnTheBackfillsErrorBehindALaggingHead(t *testing.T) {
+	c := newFakeChain(2300)
+	tt := newTestTracker(t, c)
+	mustPass(t, tt) // 2299..2200
+	// Up, the head's height is not final yet; down, the batch fails.
+	c.head, c.lagging = 2302, 1
+	c.broken = map[int64]error{2150: errors.New("502 bad gateway")}
+	if _, err := tt.pass(context.Background()); err == nil || !strings.Contains(err.Error(), "502 bad gateway") {
+		t.Errorf("pass() = %v, want the backfill's failure", err)
+	}
+}
+
 func TestPassWaitsOutARateLimitOnEveryRead(t *testing.T) {
 	c := newFakeChain(250)
 	c.change = 200
