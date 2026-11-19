@@ -38,29 +38,29 @@ appear for the same peer, the earlier `-rpc` in flag order wins.
 
 ## Flags
 
-| Flag                    | Default                    | Description                                                                                                                                                                            |
-| ----------------------- | -------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `-rpc`                  | `http://127.0.0.1:26657`   | Tendermint RPC endpoint; repeatable to consolidate several sources (flag order = precedence)                                                                                           |
-| `-names`                | `/tmp/gnockpit-names.json` | Persistent name registry                                                                                                                                                               |
-| `-port`                 | `8080`                     | Web server port                                                                                                                                                                        |
-| `-addr`                 | `0.0.0.0`                  | Bind address                                                                                                                                                                           |
-| `-interval`             | `5s`                       | Dashboard refresh interval                                                                                                                                                             |
-| `-v`                    | false                      | Verbose HTTP logging                                                                                                                                                                   |
-| `--db-path`             | `/tmp/gnockpit.db`         | SQLite database for push notifications, the block history and block-ETA history; keep it on a persistent path (see Push Notifications, Block history, Block ETA)                       |
-| `--history-pace`        | `1s`                       | Wait between the batches that fill the block history, back to genesis and up to the head after downtime; `0` for none (see Block history)                                              |
-| `--history-batch`       | `100`                      | Commits asked in one JSON-RPC batch while filling the block history; halved until restart when the first `-rpc` refuses a batch, for 10 minutes when one times out (see Block history) |
-| `--chain-stuck-secs`    | `30`                       | Seconds without a new block before the chain-stuck alert fires                                                                                                                         |
-| `--notify`              | (none)                     | Shoutrrr notification URL (repeatable); see External Notifications                                                                                                                     |
-| `--redact-secret`       | false                      | Strip notification URL secrets from logged Shoutrrr errors; see External Notifications                                                                                                 |
-| `--max-missed-in-a-row` | `10`                       | Consecutive blocks a validator must miss to be flagged down (alert fires + counted inactive); it recovers after signing that many in a row                                             |
-| `--geoip-db`            | `/tmp/gnockpit-geoip.mmdb` | DB-IP City Lite mmdb powering the network map + country columns; auto-downloaded and refreshed monthly. Empty disables it.                                                             |
-| `--asn-db`              | `/tmp/gnockpit-asn.mmdb`   | DB-IP ASN Lite mmdb powering cloud-provider detection; auto-downloaded and refreshed monthly. Empty disables it.                                                                       |
-| `--hide-sources`        | false                      | Hide the configured source nodes from the peers list                                                                                                                                   |
-| `--chain-name`          | (chain-id)                 | Display name for the chain in titles and the app icon; defaults to the chain-id (e.g. `test13` for chain-id `test-13`)                                                                 |
-| `--link`                | (none)                     | Extra header link button, `"Title\|URL"`; repeatable                                                                                                                                   |
-| `--status-link`         | (none)                     | Header link with a live status dot, `"Title\|URL"`; repeatable. BetterStack status pages only for now: the dot reflects `<URL>/index.json`                                             |
-| `--analytics`           | (off)                      | Load a third-party analytics script in the dashboard; only `simple-analytics` is supported. See Analytics.                                                                             |
-| `--analytics-domain`    | (none)                     | Serve the analytics script and its no-JS pixel from a custom domain (e.g. `sa.example.com`) instead of the provider's own hosts; needs `--analytics`. See Analytics.                   |
+| Flag                    | Default                    | Description                                                                                                                                                                                                                                           |
+| ----------------------- | -------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `-rpc`                  | `http://127.0.0.1:26657`   | Tendermint RPC endpoint; repeatable to consolidate several sources (flag order = precedence)                                                                                                                                                          |
+| `-names`                | `/tmp/gnockpit-names.json` | Persistent name registry                                                                                                                                                                                                                              |
+| `-port`                 | `8080`                     | Web server port                                                                                                                                                                                                                                       |
+| `-addr`                 | `0.0.0.0`                  | Bind address                                                                                                                                                                                                                                          |
+| `-interval`             | `5s`                       | Dashboard refresh interval                                                                                                                                                                                                                            |
+| `-v`                    | false                      | Verbose HTTP logging                                                                                                                                                                                                                                  |
+| `--db-path`             | `/tmp/gnockpit.db`         | SQLite database for push notifications, the block history and block-ETA history; keep it on a persistent path (see Push Notifications, Block history, Block ETA)                                                                                      |
+| `--history-pace`        | `1s`                       | Wait between the batches that fill the block history, back to genesis and up to the head after downtime; `0` for none (see Block history)                                                                                                             |
+| `--history-batch`       | `100`                      | Commits asked in one JSON-RPC batch while filling the block history; halved until restart when the first `-rpc` refuses a batch, for 10 minutes when one times out; at `1`, the backfill never completes at a node's oldest block (see Block history) |
+| `--chain-stuck-secs`    | `30`                       | Seconds without a new block before the chain-stuck alert fires                                                                                                                                                                                        |
+| `--notify`              | (none)                     | Shoutrrr notification URL (repeatable); see External Notifications                                                                                                                                                                                    |
+| `--redact-secret`       | false                      | Strip notification URL secrets from logged Shoutrrr errors; see External Notifications                                                                                                                                                                |
+| `--max-missed-in-a-row` | `10`                       | Consecutive blocks a validator must miss to be flagged down (alert fires + counted inactive); it recovers after signing that many in a row                                                                                                            |
+| `--geoip-db`            | `/tmp/gnockpit-geoip.mmdb` | DB-IP City Lite mmdb powering the network map + country columns; auto-downloaded and refreshed monthly. Empty disables it.                                                                                                                            |
+| `--asn-db`              | `/tmp/gnockpit-asn.mmdb`   | DB-IP ASN Lite mmdb powering cloud-provider detection; auto-downloaded and refreshed monthly. Empty disables it.                                                                                                                                      |
+| `--hide-sources`        | false                      | Hide the configured source nodes from the peers list                                                                                                                                                                                                  |
+| `--chain-name`          | (chain-id)                 | Display name for the chain in titles and the app icon; defaults to the chain-id (e.g. `test13` for chain-id `test-13`)                                                                                                                                |
+| `--link`                | (none)                     | Extra header link button, `"Title\|URL"`; repeatable                                                                                                                                                                                                  |
+| `--status-link`         | (none)                     | Header link with a live status dot, `"Title\|URL"`; repeatable. BetterStack status pages only for now: the dot reflects `<URL>/index.json`                                                                                                            |
+| `--analytics`           | (off)                      | Load a third-party analytics script in the dashboard; only `simple-analytics` is supported. See Analytics.                                                                                                                                            |
+| `--analytics-domain`    | (none)                     | Serve the analytics script and its no-JS pixel from a custom domain (e.g. `sa.example.com`) instead of the provider's own hosts; needs `--analytics`. See Analytics.                                                                                  |
 
 ## Analytics
 
@@ -213,14 +213,17 @@ about 100 bytes a block on onyx (56 validators): about 130 MB for 1.25M blocks.
   the batch size until restart; one that times out, for 10 minutes. HTTP 429 pauses for as long as `Retry-After` asks (a
   minute without one). The history is complete once it reaches block 1, or the
   oldest block the node serves: one it served right before refusing the block
-  below, in two answers. gnockpit asks below that block again at each start, in
-  case the node changed. A node that stays behind the head for minutes is
-  logged. A block refused first in its answer, well below the head, shows no
-  oldest block (a backend far behind refuses it too); refused twice in a row,
-  it pauses the backfill for 10 minutes, logged. In a batch of one commit
-  (`--history-batch 1`, or halved down to it) every block is first: the
-  backfill pauses at the node's oldest block rather than completing.
-  Pointing gnockpit at another chain drops the history.
+  below in the same answer, well below the head, seen in two answers. gnockpit
+  asks below that block again at each start, in case the node changed. A node
+  that stays behind the head for minutes is logged. Each batch of two commits
+  or more below the stored blocks opens with the lowest one, asked again. A
+  block refused first in its answer (that block, or any block in a batch of
+  one), well below the head, marks no oldest block (a backend far behind
+  refuses it too); refused twice in a row, it pauses the backfill, asked again
+  every 10 minutes, logged once. So with a batch of one commit
+  (`--history-batch 1`, or a node taking one call a batch), the backfill pauses at the
+  node's oldest block rather than completing. Pointing gnockpit at another
+  chain drops the history.
 - **Used by** — the validators table's Missed 24h and `/api/stats`' 1h / 24h /
   7d / 30d / total windows (`recorded_since` says how far back they reach): an
   absence or a precommit for another block counts as missed, a precommit for
