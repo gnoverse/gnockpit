@@ -828,3 +828,35 @@ func TestGetSigningStatsKeepsFinalCommits(t *testing.T) {
 		t.Errorf("kept commits = %v, want [5]", kept)
 	}
 }
+
+func TestGetSigningStatsCountsAVoteForAnotherBlockAsMissed(t *testing.T) {
+	const (
+		addrA = "g1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+		addrB = "g1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+		addrC = "g1cccccccccccccccccccccccccccccccccccccccc"
+	)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/validators" {
+			fmt.Fprintf(w, `{"jsonrpc":"2.0","result":{"validators":[
+				{"address":%q,"pub_key":{"type":"ed25519","value":"AA"},"voting_power":"1","proposer_priority":"0"},
+				{"address":%q,"pub_key":{"type":"ed25519","value":"BB"},"voting_power":"1","proposer_priority":"0"},
+				{"address":%q,"pub_key":{"type":"ed25519","value":"CC"},"voting_power":"1","proposer_priority":"0"}
+			]}}`, addrA, addrB, addrC)
+			return
+		}
+		// A votes for the block, B for another one, C for nil.
+		fmt.Fprint(w, commitJSONAt("2", addrA, "B2", true,
+			precommitJSON(addrA, 0, "B2"), precommitJSON(addrB, 1, "B1"), precommitJSON(addrC, 2, "")))
+	}))
+	defer srv.Close()
+
+	stats, err := NewClient(srv.URL, 5*time.Second).GetSigningStats(context.Background(), 2, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The block history's rule: a vote for another block is missed, a nil vote signed.
+	b := stats.RecentBlocks[0]
+	if b.Signers != 2 || len(b.Missing) != 1 || b.Missing[0].Address != addrB {
+		t.Errorf("block = %+v, want 2 signers and %s missing", b, addrB)
+	}
+}

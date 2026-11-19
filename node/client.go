@@ -430,10 +430,11 @@ func (c *Client) GetSigningStats(ctx context.Context, currentHeight int, window 
 		if blockTotal == 0 {
 			blockTotal = len(valAddrs) // fallback for genesis block
 		}
-		// An empty slot misses the block; any precommit signs it.
+		// A precommit for the block or for nil signs it; an empty slot or a
+		// precommit for another block misses it, as in the block history.
 		signed := map[string]bool{}
 		for _, pc := range commit.Precommits {
-			if pc != nil {
+			if pc != nil && (pc.BlockHash == "" || pc.BlockHash == commit.BlockHash) {
 				signed[pc.Address] = true
 			}
 		}
