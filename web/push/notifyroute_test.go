@@ -124,6 +124,9 @@ func TestManagerKeepsTheNotifyConfigOnABrokenEdit(t *testing.T) {
 	if n := strings.Count(logs.String(), "keeping the previous one"); n != 1 {
 		t.Errorf("logs = %q, want the broken edit logged once", logs)
 	}
+	if want := "notify config " + path + ": unexpected EOF; keeping the previous one"; !strings.Contains(logs.String(), want) {
+		t.Errorf("logs = %q, want %q", logs, want)
+	}
 	writeNotifyConfig(t, path, `{"targets": [`+target(host, "/c", `["chain_stuck"]`)+`]}`, at.Add(2*time.Minute))
 	m.ReloadNotifyConfigIfChanged()
 	m.NotifyAlert(Alert{Type: AlertChainStuck, Firing: true})

@@ -108,13 +108,13 @@ func ParseNotifyConfig(data []byte) (NotifyConfig, error) {
 	dec := json.NewDecoder(bytes.NewReader(data))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&file); err != nil {
-		return NotifyConfig{}, fmt.Errorf("notify config: %w", err)
+		return NotifyConfig{}, err
 	}
 	cfg := NotifyConfig{Targets: make([]NotifyRoute, 0, len(file.Targets))}
 	for i, t := range file.Targets {
 		route, err := parseRoute(t.URL, t.Alerts)
 		if err != nil {
-			return NotifyConfig{}, fmt.Errorf("notify config: target %d: %w", i+1, err)
+			return NotifyConfig{}, fmt.Errorf("target %d: %w", i+1, err)
 		}
 		cfg.Targets = append(cfg.Targets, route)
 	}

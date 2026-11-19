@@ -96,7 +96,7 @@ func TestParseNotifyConfigRejects(t *testing.T) {
 		{"two keys", `{"targets": [{"url": "x://y", "alerts": [{"chain_stuck": 1, "valset_changed": 1}]}]}`, "one alert per entry"},
 		{"no url", `{"targets": [{"alerts": ["chain_stuck"]}]}`, "target 1: no url"},
 		{"unknown field", `{"targets": [], "urls": []}`, "unknown field"},
-		{"not json", `{"targets": [`, "notify config"},
+		{"not json", `{"targets": [`, "unexpected EOF"},
 	} {
 		_, err := ParseNotifyConfig([]byte(tc.file))
 		if err == nil || !strings.Contains(err.Error(), tc.want) {
