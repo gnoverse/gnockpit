@@ -477,6 +477,16 @@ func TestPassRechecksTheFloorWithoutHoldingTheHead(t *testing.T) {
 	}
 }
 
+func behindReports(tt *testTracker) int {
+	var n int
+	for _, l := range tt.logs {
+		if strings.HasPrefix(l, "blocks: behind:") {
+			n++
+		}
+	}
+	return n
+}
+
 func TestPassReportsABackendBehindForMinutes(t *testing.T) {
 	c := newFakeChain(500)
 	tt := newTestTracker(t, c)
@@ -488,19 +498,41 @@ func TestPassReportsABackendBehindForMinutes(t *testing.T) {
 		mustPass(t, tt)
 		at = at.Add(time.Minute)
 	}
-	var reports int
-	for _, l := range tt.logs {
-		if strings.HasPrefix(l, "blocks: behind:") {
-			reports++
-		}
-	}
-	if reports != 1 {
+	if n := behindReports(tt); n != 1 {
 		t.Errorf("logs = %q, want the backend behind reported once, after %s", tt.logs, behindReport)
 	}
 	c.lagging = 0
 	mustPass(t, tt)
 	if !tt.logged("blocks: behind ok again") {
 		t.Errorf("logs = %q, want the recovery", tt.logs)
+	}
+	// Behind again: reported only once it lasts behindReport again.
+	c.head, c.lagging = 700, 10
+	mustPass(t, tt)
+	at = at.Add(time.Minute)
+	mustPass(t, tt)
+	if n := behindReports(tt); n != 1 {
+		t.Errorf("logs = %q, want no report a minute into the new lag", tt.logs)
+	}
+	at = at.Add(behindReport)
+	mustPass(t, tt)
+	if n := behindReports(tt); n != 2 {
+		t.Errorf("logs = %q, want the new lag reported", tt.logs)
+	}
+}
+
+func TestPassReportsABackendBehindMetGoingDown(t *testing.T) {
+	c := newFakeChain(500)
+	c.lagging = 10 // an empty store: only the backfill meets it
+	tt := newTestTracker(t, c)
+	at := t0
+	tt.now = func() time.Time { return at }
+	for range 4 {
+		mustPass(t, tt)
+		at = at.Add(time.Minute)
+	}
+	if n := behindReports(tt); n != 1 {
+		t.Errorf("logs = %q, want the backend behind reported once", tt.logs)
 	}
 }
 
@@ -754,6 +786,18 @@ func TestPassEndsOnAShortBatchTimingOut(t *testing.T) {
 	}
 	if sizes := batchSizes(c); !slices.Equal(sizes, []int{100, 3}) {
 		t.Errorf("batch sizes = %v, want [100 3]", sizes)
+	}
+}
+
+func TestPassHalvesARefusedShortBatchFromItsLength(t *testing.T) {
+	c := newFakeChain(250)
+	tt := newTestTracker(t, c)
+	mustPass(t, tt) // 249..150
+	// The source takes 2 calls a batch: 4 refused give 2, not half of 100.
+	c.head, c.maxBatch = 254, 2
+	mustPass(t, tt)
+	if sizes := batchSizes(c)[1:]; !slices.Equal(sizes, []int{4, 2, 2, 2}) {
+		t.Errorf("batch sizes = %v, want [4 2 2 2]", sizes)
 	}
 }
 
@@ -1014,6 +1058,24 @@ func TestPassRetriesTheEventsItCouldNotRead(t *testing.T) {
 	}
 }
 
+func TestEventsRecordAGapWhenAStoredSetCannotBeRead(t *testing.T) {
+	ctx := context.Background()
+	c := newFakeChain(250)
+	tt := newTestTracker(t, c)
+	mustPass(t, tt) // 249..150
+	if _, err := tt.store.db.ExecContext(ctx, `ALTER TABLE blocks_valsets RENAME TO valsets_away`); err != nil {
+		t.Fatal(err)
+	}
+	// 199's and 201's sets are read from the store, which fails.
+	tt.events(ctx, []Record{{Height: 200, ValsetHash: "SET1"}})
+	if _, err := tt.store.db.ExecContext(ctx, `ALTER TABLE valsets_away RENAME TO blocks_valsets`); err != nil {
+		t.Fatal(err)
+	}
+	if gaps, err := tt.store.EventGaps(ctx); err != nil || !slices.Equal(gaps, []int64{200, 201}) {
+		t.Errorf("EventGaps() = %v, %v; want [200 201]", gaps, err)
+	}
+}
+
 func TestPassDropsAGapThatIsNoSetChange(t *testing.T) {
 	c := newFakeChain(250)
 	tt := newTestTracker(t, c)
@@ -1096,6 +1158,19 @@ func TestPassDropsTheHistoryOfAnotherChain(t *testing.T) {
 	}
 	if r := tt.Progress().Rate; r != 0 {
 		t.Errorf("Rate = %v, want 0: the new chain's fill has one sample", r)
+	}
+}
+
+func TestPassForgetsAFloorSightingOnAnotherChain(t *testing.T) {
+	c := newFakeChain(2300)
+	c.floor = 1000
+	tt := newTestTrackerOn(t, c, newTestStore(t), Config{Pace: 0, Batch: 1400})
+	tt.floorSeen = 1000 // seen once on the chain the store held
+	c.chainID = "test-13"
+	// On the new chain, 999's refusal right after 1000 is a first sighting.
+	mustPass(t, tt)
+	if f, _ := tt.store.Floor(context.Background()); f != 0 {
+		t.Errorf("Floor() = %d, want none after one sighting on this chain", f)
 	}
 }
 
