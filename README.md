@@ -46,7 +46,7 @@ appear for the same peer, the earlier `-rpc` in flag order wins.
 | `-addr`                 | `0.0.0.0`                  | Bind address                                                                                                                                                         |
 | `-interval`             | `5s`                       | Dashboard refresh interval                                                                                                                                           |
 | `-v`                    | false                      | Verbose HTTP logging                                                                                                                                                 |
-| `--db-path`             | `/tmp/gnockpit.db`         | SQLite database for push notifications, missed-block history and block-ETA history (see Push Notifications, Block ETA)                                               |
+| `--db-path`             | `/tmp/gnockpit.db`         | SQLite database for push notifications, the block history and block-ETA history (see Push Notifications, Block history, Block ETA)                                   |
 | `--chain-stuck-secs`    | `30`                       | Seconds without a new block before the chain-stuck alert fires                                                                                                       |
 | `--notify`              | (none)                     | Shoutrrr notification URL (repeatable); see External Notifications                                                                                                   |
 | `--redact-secret`       | false                      | Strip notification URL secrets from logged Shoutrrr errors; see External Notifications                                                                               |
@@ -193,10 +193,10 @@ location, which is accurate when gnockpit runs alongside the node.
 gnockpit records every block since genesis in the SQLite database
 (`--db-path`): its time, proposer and voting round, the validator set that
 signed it, and which members of that set did not sign it for the block
-(absent, nil, or a vote for another block). It reads them from the first
-`-rpc`, newest first, in JSON-RPC batches of 100 commits at about 100 blocks a
-second (mainnet's 1.6M blocks in about 5 hours, the last 24 hours in minutes),
-then follows the chain head. The history powers the missed-block counts over
+(absent, nil, or a vote for another block). It follows the chain head from
+the first `-rpc` and, in between, fills the older blocks newest first, in
+JSON-RPC batches of 100 commits at about 100 blocks a second (mainnet's 1.6M
+blocks in about 5 hours, the last 24 hours in minutes). The history powers the missed-block counts over
 1h / 24h / 7d / 30d / total windows (the validators table and `/api/stats`,
 where `recorded_since` says how far back it reaches; a nil vote counts as
 signed, a vote for another block as missed) and `/api/history`. Network
@@ -317,7 +317,8 @@ curl -s 'http://localhost:8080/api/history?from=1183000&to=1183010'
 - Block ETA — when a height will be produced (or which height at a given time), with 80%/95% ranges and drift from the original estimate; countdown cards for shared links and for the halt scheduled on chain
 - HTTP API — CORS-open `/api/status`, `/api/stats`, `/api/eta` and `/api/history` for external badges, dashboards and scripts
 - Alerts — browser push (PWA) and external notifications (Discord, Telegram, …) for chain-stuck and missed-blocks
-- Block history — recent blocks with signing visualization
+- Recent blocks — the last 100 blocks with signing visualization
+- Block history — every block since genesis: proposer, round, and which validators did not sign it for the block and how (`/api/history`)
 
 ## License
 
