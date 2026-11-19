@@ -33,7 +33,8 @@ var (
 	flagChainStuckSecs  int
 	flagMaxMissedInARow int
 	flagNamesPath       string
-	flagNotifyURLs      stringSlice
+	flagNotifyConfig    string
+	flagSendTimeout     time.Duration
 	flagRedactSecret    bool
 	flagPublicURL       string
 	flagGeoIPPath       string
@@ -46,8 +47,8 @@ var (
 	flagAnalyticsDomain string
 )
 
-// stringSlice is a flag.Value that accumulates one entry per occurrence,
-// so -notify can be passed multiple times.
+// stringSlice is a flag.Value that accumulates one entry per occurrence, for
+// the repeatable flags (-rpc, -link, -status-link).
 type stringSlice []string
 
 func (s *stringSlice) String() string { return strings.Join(*s, ",") }
@@ -83,7 +84,8 @@ func main() {
 	flag.IntVar(&flagHistoryBatch, "history-batch", blocks.DefaultBatch, "commits asked in one JSON-RPC batch while filling the block history; halved until restart when the first -rpc refuses a batch, for 10 minutes when one times out")
 	flag.IntVar(&flagChainStuckSecs, "chain-stuck-secs", 30, "seconds without a new block before the chain-stuck alert fires")
 	flag.IntVar(&flagMaxMissedInARow, "max-missed-in-a-row", 10, "consecutive blocks a validator must miss to be flagged down (alert fires + counted inactive) and must then sign to recover")
-	flag.Var(&flagNotifyURLs, "notify", "Shoutrrr notification URL, repeatable (e.g. discord://token@id)")
+	flag.DurationVar(&flagSendTimeout, "send-timeout", push.DefaultSendTimeout, "how long a push notification or webhook send may take before it is given up")
+	flag.StringVar(&flagNotifyConfig, "notify-config", "", "notification config file (JSON): the Shoutrrr URLs and the alerts each receives; reread when it changes")
 	flag.BoolVar(&flagRedactSecret, "redact-secret", false, "strip notification URL secrets (tokens, webhook IDs) from logged Shoutrrr errors; off by default: errors are logged verbatim")
 	flag.StringVar(&flagPublicURL, "public-url", "", "public URL of this gnockpit instance, appended to external notification messages")
 	flag.StringVar(&flagGeoIPPath, "geoip-db", "/tmp/gnockpit-geoip.mmdb", "path for the DB-IP City Lite mmdb powering the network map; auto-downloaded and refreshed monthly. Empty disables the map.")
@@ -143,7 +145,6 @@ func run() error {
 	}
 	srv.Blocks = blockStore
 	srv.BlockFill = blockTracker
-	go blockTracker.Run(ctx)
 
 	// So do the block times behind block ETAs, backfilled from the primary
 	// source; the tracker stops with ctx.
@@ -160,14 +161,23 @@ func run() error {
 		return fmt.Errorf("init push manager: %w", err)
 	}
 	pushMgr.SetRedactSecrets(flagRedactSecret)
-	if len(flagNotifyURLs) > 0 {
-		if err := pushMgr.SetNotifyURLs(flagNotifyURLs); err != nil {
-			return fmt.Errorf("invalid notify URL: %w", err)
+	if flagSendTimeout <= 0 {
+		return fmt.Errorf("invalid -send-timeout %s: want more than 0", flagSendTimeout)
+	}
+	pushMgr.SetSendTimeout(flagSendTimeout)
+	if flagNotifyConfig != "" {
+		if err := pushMgr.LoadNotifyConfig(flagNotifyConfig); err != nil {
+			return fmt.Errorf("invalid -notify-config: %w", err)
 		}
 	}
 	if flagPublicURL != "" {
 		pushMgr.SetPublicURL(flagPublicURL)
 	}
+	// The block history tells the set changes it stores going up: it starts
+	// once the push manager it tells them to exists.
+	names := sources.Primary().Names
+	blockTracker.OnValsetChange(func(c blocks.ValsetChange) { pushMgr.NotifyValsetChange(c, names.Name) })
+	go blockTracker.Run(ctx)
 	srv.MaxMissedInARow = flagMaxMissedInARow
 	srv.ChainStuckSecs = flagChainStuckSecs
 	srv.HideSources = flagHideSources

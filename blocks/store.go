@@ -93,6 +93,9 @@ CREATE TABLE IF NOT EXISTS blocks_vote_delays (
 CREATE TABLE IF NOT EXISTS blocks_event_gaps (
 	height INTEGER PRIMARY KEY -- a validator set change whose events are not read yet
 );
+CREATE TABLE IF NOT EXISTS blocks_valset_changes (
+	height INTEGER PRIMARY KEY -- the block's validator set differs from the block below's
+);
 CREATE TABLE IF NOT EXISTS blocks_meta (
 	key   TEXT PRIMARY KEY,
 	value TEXT NOT NULL
@@ -102,8 +105,10 @@ DROP TABLE IF EXISTS signing_blocks;
 `
 
 const (
-	metaChainID = "chain_id"
-	metaFloor   = "floor"
+	metaChainID       = "chain_id"
+	metaFloor         = "floor"
+	metaChangesFilled = "valset_changes_filled" // blocks_valset_changes covers every stored block
+	metaValsetToldTo  = "valset_told_to"        // the validator set changes up to this height were told
 )
 
 // Store persists the block history. Times are kept to the millisecond.
@@ -117,7 +122,11 @@ func NewStore(ctx context.Context, db *sql.DB) (*Store, error) {
 	if _, err := db.ExecContext(ctx, schema); err != nil {
 		return nil, fmt.Errorf("init block history schema: %w", err)
 	}
-	return &Store{db: db}, nil
+	s := &Store{db: db}
+	if err := s.fillValsetChanges(ctx); err != nil {
+		return nil, err
+	}
+	return s, nil
 }
 
 // ---- Blocks
@@ -135,10 +144,15 @@ func (s *Store) Write(ctx context.Context, recs []Record) error {
 	if err != nil {
 		return err
 	}
+	heights := make([]int64, 0, len(recs))
 	for _, r := range recs {
 		if err := writeRecord(ctx, tx, ids, r); err != nil {
 			return err
 		}
+		heights = append(heights, r.Height)
+	}
+	if err := markValsetChanges(ctx, tx, heights); err != nil {
+		return err
 	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit blocks: %w", err)
@@ -419,24 +433,44 @@ func (s *Store) ChainID(ctx context.Context) (string, error) {
 // Floor returns the lowest height the source serves, recorded when it refused
 // a lower one, or 0.
 func (s *Store) Floor(ctx context.Context) (int64, error) {
-	v, err := s.meta(ctx, metaFloor)
+	return s.metaHeight(ctx, metaFloor)
+}
+
+// SetFloor records the lowest height the source serves.
+func (s *Store) SetFloor(ctx context.Context, height int64) error {
+	return s.setMetaHeight(ctx, metaFloor, height)
+}
+
+// ValsetToldTo returns the height up to which the validator set changes were
+// told, or 0 before the first stored high was recorded.
+func (s *Store) ValsetToldTo(ctx context.Context) (int64, error) {
+	return s.metaHeight(ctx, metaValsetToldTo)
+}
+
+// SetValsetToldTo records the height up to which the validator set changes
+// were told.
+func (s *Store) SetValsetToldTo(ctx context.Context, height int64) error {
+	return s.setMetaHeight(ctx, metaValsetToldTo, height)
+}
+
+func (s *Store) metaHeight(ctx context.Context, key string) (int64, error) {
+	v, err := s.meta(ctx, key)
 	if err != nil || v == "" {
 		return 0, err
 	}
 	h, err := strconv.ParseInt(v, 10, 64)
 	if err != nil {
-		return 0, fmt.Errorf("floor %q: %w", v, err)
+		return 0, fmt.Errorf("%s %q: %w", key, v, err)
 	}
 	return h, nil
 }
 
-// SetFloor records the lowest height the source serves.
-func (s *Store) SetFloor(ctx context.Context, height int64) error {
+func (s *Store) setMetaHeight(ctx context.Context, key string, height int64) error {
 	if _, err := s.db.ExecContext(ctx,
 		`INSERT INTO blocks_meta(key, value) VALUES(?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
-		metaFloor, strconv.FormatInt(height, 10),
+		key, strconv.FormatInt(height, 10),
 	); err != nil {
-		return fmt.Errorf("write floor: %w", err)
+		return fmt.Errorf("write %s: %w", key, err)
 	}
 	return nil
 }
@@ -460,14 +494,14 @@ func (s *Store) Reset(ctx context.Context, chainID string) error {
 	for _, table := range []string{
 		"blocks", "blocks_validators", "blocks_valsets", "blocks_valset_members", "blocks_absences",
 		"blocks_rounds", "blocks_flags", "blocks_events", "blocks_event_gaps", "blocks_missed_days", "blocks_vote_delays",
-		"blocks_meta",
+		"blocks_valset_changes", "blocks_meta",
 	} {
 		if _, err := tx.ExecContext(ctx, "DELETE FROM "+table); err != nil {
 			return fmt.Errorf("reset %s: %w", table, err)
 		}
 	}
 	if _, err := tx.ExecContext(ctx,
-		`INSERT INTO blocks_meta(key, value) VALUES(?, ?)`, metaChainID, chainID,
+		`INSERT INTO blocks_meta(key, value) VALUES(?, ?), (?, ?)`, metaChainID, chainID, metaChangesFilled, "1",
 	); err != nil {
 		return fmt.Errorf("reset chain id: %w", err)
 	}

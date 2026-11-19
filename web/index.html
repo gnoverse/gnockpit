@@ -519,6 +519,134 @@
             .table-wrap {
                 overflow-x: auto;
             }
+            /* ---- Validators card views */
+            .view-seg {
+                display: inline-flex;
+                border: 1px solid var(--border);
+                border-radius: 6px;
+                overflow: hidden;
+                font-size: 12px;
+            }
+            .view-seg button {
+                font: inherit;
+                color: var(--fg2);
+                background: none;
+                border: 0;
+                padding: 3px 10px;
+                cursor: pointer;
+            }
+            .view-seg button + button {
+                border-left: 1px solid var(--border);
+            }
+            .view-seg button:focus-visible {
+                outline: 2px solid var(--blue);
+                outline-offset: -2px;
+            }
+            .view-seg button[aria-pressed='true'] {
+                color: var(--fg);
+                background: var(--bg);
+            }
+            #validators-timeline {
+                display: none;
+                font-size: 13px;
+            }
+            #validators-card.view-timeline #validators-timeline {
+                display: block;
+            }
+            #validators-card.view-timeline .table-wrap,
+            #validators-card.view-timeline #validators-cards {
+                display: none !important;
+            }
+            #validators-card.view-timeline #validators-compact-label {
+                visibility: hidden;
+            }
+            .vt-row {
+                display: grid;
+                grid-template-columns: 24ch 18px minmax(0, 1fr) auto;
+                gap: 4px 10px;
+                align-items: baseline;
+                padding: 6px 2px;
+                border-bottom: 1px solid var(--border);
+            }
+            .vt-row .h,
+            .vt-row .n,
+            .vt-row .p {
+                color: var(--fg2);
+                font-variant-numeric: tabular-nums;
+                white-space: nowrap;
+            }
+            .vt-row .k {
+                text-align: center;
+                font-weight: 600;
+            }
+            .vt-row .w {
+                min-width: 0;
+                overflow: hidden;
+                text-overflow: ellipsis;
+                white-space: nowrap;
+            }
+            .vt-add {
+                color: var(--green);
+            }
+            .vt-rm {
+                color: var(--red);
+            }
+            .vt-pow {
+                color: var(--yellow);
+            }
+            .vt-rot {
+                color: var(--blue);
+            }
+            .vt-gen {
+                color: var(--fg2);
+            }
+            .vt-err {
+                color: var(--red);
+            }
+            .vt-pend {
+                color: var(--yellow);
+                font-size: 11px;
+                margin-left: 6px;
+            }
+            .vt-foot {
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                gap: 10px;
+                padding: 8px 2px 0;
+                color: var(--fg2);
+                font-size: 12px;
+            }
+            .vt-foot button {
+                font: inherit;
+                color: var(--fg2);
+                background: none;
+                border: 1px solid var(--border);
+                border-radius: 4px;
+                padding: 2px 10px;
+                cursor: pointer;
+            }
+            @media (max-width: 640px) {
+                .vt-row {
+                    grid-template-columns: 18px minmax(0, 1fr);
+                }
+                .vt-row .k {
+                    grid-row: 1;
+                }
+                .vt-row .w {
+                    white-space: normal;
+                }
+                .vt-row .h {
+                    grid-column: 2;
+                    grid-row: 2;
+                    font-size: 12px;
+                }
+                .vt-row .n {
+                    grid-column: 2;
+                    grid-row: 3;
+                    font-size: 12px;
+                }
+            }
             /* ---- Network map */
             .map-layout {
                 display: flex;
@@ -1002,6 +1130,99 @@
             .eta-actions button:hover {
                 color: var(--fg);
                 border-color: var(--fg2);
+            }
+            .eta-remind-wrap {
+                position: relative;
+            }
+            .eta-actions .eta-remind.set {
+                color: var(--blue);
+                border-color: var(--blue);
+            }
+            .eta-remind svg {
+                vertical-align: middle;
+                margin-right: 4px;
+            }
+            .eta-remind-pop {
+                position: absolute;
+                right: 0;
+                top: calc(100% + 6px);
+                z-index: 50;
+                width: min(280px, calc(100vw - 40px));
+                background: var(--bg2);
+                border: 1px solid var(--border);
+                border-radius: 8px;
+                padding: 12px;
+                box-shadow: 0 6px 24px rgba(0, 0, 0, 0.45);
+                color: var(--fg);
+                font-size: 12px;
+                text-align: left;
+            }
+            .eta-remind-pop[hidden] {
+                display: none;
+            }
+            /* A phone's header leaves the button near the left edge: the
+               popover spans the card instead, inside its padding. */
+            @media (max-width: 480px) {
+                #eta-link-card {
+                    position: relative;
+                }
+                .eta-remind-wrap {
+                    position: static;
+                }
+                .eta-remind-pop {
+                    left: 12px;
+                    right: 12px;
+                    top: 48px;
+                    width: auto;
+                }
+            }
+            .eta-remind-pop .t {
+                font-weight: 600;
+                margin-bottom: 8px;
+            }
+            .eta-remind-pop .r {
+                display: flex;
+                gap: 6px;
+                align-items: center;
+                flex-wrap: wrap;
+            }
+            .eta-remind-pop input,
+            .eta-remind-pop select {
+                font: inherit;
+                color: var(--fg);
+                background: var(--bg);
+                border: 1px solid var(--border);
+                border-radius: 4px;
+                padding: 2px 4px;
+            }
+            .eta-remind-pop input {
+                width: 64px;
+            }
+            .eta-remind-pop .warn,
+            .eta-remind-pop .err {
+                font-size: 11px;
+                margin-top: 6px;
+            }
+            .eta-remind-pop .warn {
+                color: var(--yellow);
+            }
+            .eta-remind-pop .err {
+                color: var(--red);
+            }
+            .eta-remind-pop .note {
+                color: var(--fg2);
+                font-size: 11px;
+                margin-top: 8px;
+            }
+            .eta-remind-pop .b {
+                display: flex;
+                gap: 6px;
+                margin-top: 10px;
+            }
+            .eta-actions .eta-remind-pop .b button.p {
+                background: var(--blue);
+                border-color: var(--blue);
+                color: var(--bg);
             }
             .eta-grid {
                 display: grid;
@@ -1526,6 +1747,74 @@
                                 style="margin-right: 3px"
                             />compact</label
                         >
+                        <span class="eta-remind-wrap" hidden>
+                            <button
+                                class="eta-remind"
+                                title="Notify this device before this height"
+                                aria-haspopup="dialog"
+                                aria-expanded="false"
+                            >
+                                <svg
+                                    width="11"
+                                    height="11"
+                                    viewBox="0 0 24 24"
+                                    fill="none"
+                                    stroke="currentColor"
+                                    stroke-width="2"
+                                    stroke-linecap="round"
+                                    stroke-linejoin="round"
+                                    aria-hidden="true"
+                                >
+                                    <path
+                                        d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"
+                                    />
+                                    <path d="M13.73 21a2 2 0 0 1-3.46 0" /></svg
+                                ><span class="eta-remind-text">notify</span>
+                            </button>
+                            <div
+                                class="eta-remind-pop"
+                                role="dialog"
+                                aria-label="Notify this device"
+                                hidden
+                            >
+                                <div class="t">Notify this device</div>
+                                <div class="r">
+                                    <input
+                                        type="number"
+                                        class="eta-remind-n"
+                                        min="1"
+                                        value="30"
+                                        aria-label="how far ahead"
+                                    />
+                                    <select
+                                        class="eta-remind-unit"
+                                        aria-label="minutes or blocks"
+                                    >
+                                        <option value="m">minutes</option>
+                                        <option value="blocks">blocks</option>
+                                    </select>
+                                    <span class="eta-remind-before"></span>
+                                </div>
+                                <div class="warn" hidden></div>
+                                <div class="err" hidden></div>
+                                <div class="b">
+                                    <button class="p eta-remind-save">
+                                        Save
+                                    </button>
+                                    <button class="eta-remind-remove">
+                                        Remove
+                                    </button>
+                                    <button class="eta-remind-cancel">
+                                        Cancel
+                                    </button>
+                                </div>
+                                <div class="note">
+                                    A push notification on this device only. It
+                                    comes back with this card when the app opens
+                                    without a link.
+                                </div>
+                            </div>
+                        </span>
                         <button
                             class="eta-copy"
                             title="Copy the link to this countdown"
@@ -1732,6 +2021,14 @@
                     <h2 id="validators-header" data-section="validators">
                         Validators
                     </h2>
+                    <span class="view-seg" id="validators-view">
+                        <button data-view="live" aria-pressed="true">
+                            Live
+                        </button>
+                        <button data-view="timeline" aria-pressed="false">
+                            Timeline
+                        </button>
+                    </span>
                     <label class="compact-label" id="validators-compact-label"
                         ><input
                             type="checkbox"
@@ -1838,6 +2135,7 @@
                             </tbody>
                         </table>
                     </div>
+                    <div id="validators-timeline"></div>
                 </div>
             </div>
 
@@ -4672,9 +4970,11 @@
                 const saved = localStorage.getItem('gnockpitAlertPrefs')
                 if (saved) {
                     const prefs = JSON.parse(saved)
-                    Object.entries(prefs).forEach(([id, checked]) => {
+                    Object.entries(prefs).forEach(([id, v]) => {
                         const el = document.getElementById(id)
-                        if (el) el.checked = checked
+                        if (!el) return
+                        if (el.type === 'checkbox') el.checked = v
+                        else el.value = v
                     })
                 }
                 syncValAllState()
@@ -4719,7 +5019,43 @@
         <label for="rec-chain_stuck" style="${recStyle}" title="Also notify on recovery">recovery</label>
     </div>`
 
+                // ---- chain rows: one-off events, no recovery ----
+                const chainRow = (type, label, hint) =>
+                    `<div style="display:flex; align-items:center; gap:10px; padding:6px 0 6px 16px; font-size:0.88em;">
+            <input type="checkbox" id="chk-${type}" data-type="${type}" data-entity="">
+            <label for="chk-${type}" style="flex:1; cursor:pointer;">${label}${hint ? `<span style="${hintStyle}">${hint}</span>` : ''}</label>
+        </div>`
+                const fieldStyle =
+                    'font:inherit; color:var(--fg); background:var(--bg); border:1px solid var(--border,#333); border-radius:4px; padding:2px 4px;'
+                const chainHTML = `<div style="padding:10px 0; border-bottom:1px solid var(--border,#333);">
+        <div style="font-weight:500; margin-bottom:4px;">Chain<span style="${hintStyle}">once per event, no recovery</span></div>
+        ${chainRow('valset_changed', 'Validator set changes', 'joins, leaves, power')}
+        ${chainRow('halt_scheduled', 'New coordinated halt', '')}
+        <div style="display:flex; flex-wrap:wrap; align-items:center; gap:6px 10px; padding:6px 0 6px 16px; font-size:0.88em;">
+            <input type="checkbox" id="chk-halt_approaching" data-type="halt_approaching" data-entity="">
+            <label for="chk-halt_approaching" style="flex:1; cursor:pointer;">Coordinated halt approaching</label>
+            <span style="flex-basis:100%; display:flex; gap:6px; align-items:center; padding-left:26px;">
+                <input type="number" id="lead-halt_approaching-n" min="1" value="30" style="width:64px; ${fieldStyle}" aria-label="lead">
+                <select id="lead-halt_approaching-unit" style="${fieldStyle}" aria-label="lead unit"><option value="m">minutes</option><option value="blocks">blocks</option></select>
+                <span style="${hintStyle} margin:0;">before</span>
+            </span>
+        </div>
+    </div>`
+
                 // ---- validator_missing_blocks rows ----
+                // Monikers are the validators' own text: escaped into HTML.
+                const escHTML = (v) =>
+                    String(v).replace(
+                        /[&<>"']/g,
+                        (c) =>
+                            ({
+                                '&': '&amp;',
+                                '<': '&lt;',
+                                '>': '&gt;',
+                                '"': '&quot;',
+                                "'": '&#39;',
+                            })[c]
+                    )
                 const valRows = validators
                     .map((e) => {
                         const eid = e.val_address || ''
@@ -4734,9 +5070,9 @@
                                 .join(' \u00b7 ') || eid
                         const safeID = `validator_missing_blocks__${eid.replace(/[^a-zA-Z0-9_-]/g, '_')}`
                         return `<div style="display:flex; align-items:center; gap:10px; padding:6px 0 6px 16px; font-size:0.88em;">
-            <input type="checkbox" id="chk-${safeID}" data-type="validator_missing_blocks" data-entity="${eid}" onchange="onAlertCheck(this)">
-            <label for="chk-${safeID}" style="flex:1; cursor:pointer; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="${label}">${label}</label>
-            <input type="checkbox" id="rec-${safeID}" data-rec-type="validator_missing_blocks" data-rec-entity="${eid}" onchange="onRecoveryCheck(this)" title="Also notify on recovery">
+            <input type="checkbox" id="chk-${safeID}" data-type="validator_missing_blocks" data-entity="${escHTML(eid)}" onchange="onAlertCheck(this)">
+            <label for="chk-${safeID}" style="flex:1; cursor:pointer; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="${escHTML(label)}">${escHTML(label)}</label>
+            <input type="checkbox" id="rec-${safeID}" data-rec-type="validator_missing_blocks" data-rec-entity="${escHTML(eid)}" onchange="onRecoveryCheck(this)" title="Also notify on recovery">
             <label for="rec-${safeID}" style="${recStyle}" title="Also notify on recovery">recovery</label>
         </div>`
                     })
@@ -4758,7 +5094,7 @@
     </div>`
 
                 document.getElementById('alerts-form').innerHTML =
-                    chainStuckHTML + valSectionHTML
+                    chainStuckHTML + chainHTML + valSectionHTML
             }
 
             function showAlertsError(msg) {
@@ -4858,7 +5194,71 @@
                 )
             }
 
+            // browserPushSub returns this browser's push subscription,
+            // subscribing it when create is set.
+            async function browserPushSub(create) {
+                const sw = await navigator.serviceWorker.ready
+                let sub = await sw.pushManager.getSubscription()
+                if (!sub && create) {
+                    sub = await sw.pushManager.subscribe({
+                        userVisibleOnly: true,
+                        applicationServerKey: urlBase64ToUint8Array(_vapidKey),
+                    })
+                }
+                return sub
+            }
+
+            // deviceKeys is what the server knows this device by.
+            function deviceKeys(sub) {
+                const b64 = (k) =>
+                    btoa(String.fromCharCode(...new Uint8Array(sub.getKey(k))))
+                return {
+                    endpoint: sub.endpoint,
+                    p256dh: b64('p256dh'),
+                    auth: b64('auth'),
+                }
+            }
+
+            // keepDevice records the device id the server answered; "" means
+            // it forgot the device, which had nothing left: the browser's push
+            // subscription ends too.
+            async function keepDevice(id) {
+                if (id) {
+                    _pushSubID = id
+                    localStorage.setItem('gnockpitPushSubID', id)
+                    return
+                }
+                _pushSubID = null
+                localStorage.removeItem('gnockpitPushSubID')
+                const sub = await browserPushSub(false)
+                if (sub) await sub.unsubscribe()
+            }
+
+            // haltLead reads the approaching-halt lead: "30m" or "100 blocks".
+            function haltLead() {
+                const n = parseInt(
+                    document.getElementById('lead-halt_approaching-n').value,
+                    10
+                )
+                if (!(n >= 1)) return null
+                const unit = document.getElementById(
+                    'lead-halt_approaching-unit'
+                ).value
+                return unit === 'blocks' ? n + ' blocks' : n + 'm'
+            }
+
+            // pushSaveSettings saves the menu; a failure is said in it, the
+            // menu staying open.
             async function pushSaveSettings() {
+                try {
+                    await saveAlerts()
+                } catch (e) {
+                    console.warn('save alerts:', e)
+                    showAlertsError('Failed to save. See console for details.')
+                }
+            }
+
+            async function saveAlerts() {
                 const alerts = []
                 document
                     .querySelectorAll('#alerts-form input[data-type]')
@@ -4869,103 +5269,65 @@
                         const rec = document.querySelector(
                             `#alerts-form input[data-rec-type="${type}"][data-rec-entity="${entity}"]`
                         )
-                        alerts.push({
+                        const a = {
                             alert_type: type,
                             entity_id: entity,
                             recovery_notif: !!(rec && rec.checked),
                             subscription_id: '',
-                        })
-                    })
-
-                // No alerts selected: delete existing subscription and browser push registration.
-                if (alerts.length === 0) {
-                    if (_pushSubID) {
-                        const del = await fetch(
-                            '/api/push/subscribe?id=' + _pushSubID,
-                            { method: 'DELETE' }
-                        )
-                        if (!del.ok) {
-                            showAlertsError(
-                                'Failed to save. See console for details.'
-                            )
-                            return
                         }
-                        _pushSubID = null
-                        localStorage.removeItem('gnockpitPushSubID')
-                    }
-                    const sw = await navigator.serviceWorker.ready
-                    const pushSub = await sw.pushManager.getSubscription()
-                    if (pushSub) await pushSub.unsubscribe()
-                    localStorage.removeItem('gnockpitAlertPrefs')
-                    closeAlertsModal()
+                        if (type === 'halt_approaching') a.lead = haltLead()
+                        alerts.push(a)
+                    })
+                if (alerts.some((a) => a.lead === null)) {
+                    showAlertsError(
+                        'Enter how far ahead of the halt, 1 or more.'
+                    )
                     return
                 }
 
-                if (Notification.permission !== 'granted') {
-                    const p = await Notification.requestPermission()
-                    if (p !== 'granted') {
-                        showAlertsError('Notification permission denied.')
-                        return
+                let pushSub
+                if (alerts.length > 0) {
+                    if (Notification.permission !== 'granted') {
+                        const p = await Notification.requestPermission()
+                        if (p !== 'granted') {
+                            showAlertsError('Notification permission denied.')
+                            return
+                        }
                     }
+                    pushSub = await browserPushSub(true)
+                } else {
+                    // Nothing checked: the device keeps only its reminder,
+                    // if any.
+                    pushSub = await browserPushSub(false)
                 }
-                // Delete old server-side subscription before creating a new one to avoid orphaned rows.
-                if (_pushSubID) {
-                    const del = await fetch(
-                        '/api/push/subscribe?id=' + _pushSubID,
-                        { method: 'DELETE' }
-                    )
-                    if (!del.ok) {
+                if (pushSub) {
+                    // The device keeps its id across saves: what was sent to
+                    // it and its reminder stay.
+                    const r = await fetch('/api/push/subscribe', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            ...deviceKeys(pushSub),
+                            alerts,
+                        }),
+                    })
+                    if (!r.ok) {
+                        console.warn('save alerts:', r.status, await r.text())
                         showAlertsError(
                             'Failed to save. See console for details.'
                         )
                         return
                     }
-                    _pushSubID = null
-                    localStorage.removeItem('gnockpitPushSubID')
+                    await keepDevice((await r.json()).id)
                 }
-                const sw = await navigator.serviceWorker.ready
-                let pushSub = await sw.pushManager.getSubscription()
-                if (!pushSub) {
-                    pushSub = await sw.pushManager.subscribe({
-                        userVisibleOnly: true,
-                        applicationServerKey: urlBase64ToUint8Array(_vapidKey),
-                    })
-                }
-                const p256dh = btoa(
-                    String.fromCharCode(
-                        ...new Uint8Array(pushSub.getKey('p256dh'))
-                    )
-                )
-                const auth = btoa(
-                    String.fromCharCode(
-                        ...new Uint8Array(pushSub.getKey('auth'))
-                    )
-                )
-
-                const r = await fetch('/api/push/subscribe', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        endpoint: pushSub.endpoint,
-                        p256dh,
-                        auth,
-                        alerts,
-                    }),
-                })
-                if (!r.ok) {
-                    showAlertsError('Failed to save. See console for details.')
-                    return
-                }
-                const data = await r.json()
-                _pushSubID = data.id
-                localStorage.setItem('gnockpitPushSubID', data.id)
                 const prefs = {}
                 document
                     .querySelectorAll(
-                        '#alerts-form input[data-type], #alerts-form input[data-rec-type]'
+                        '#alerts-form input[data-type], #alerts-form input[data-rec-type], #lead-halt_approaching-n, #lead-halt_approaching-unit'
                     )
-                    .forEach((cb) => {
-                        prefs[cb.id] = cb.checked
+                    .forEach((el) => {
+                        prefs[el.id] =
+                            el.type === 'checkbox' ? el.checked : el.value
                     })
                 localStorage.setItem(
                     'gnockpitAlertPrefs',
@@ -5007,7 +5369,8 @@
                 }
             }
 
-            initPush()
+            // pushReady settles once initPush knows whether push works.
+            const pushReady = initPush()
         </script>
         <div
             id="alerts-modal"
@@ -5656,7 +6019,7 @@
                     // (dashed line), with its 80% range, and a cone from now
                     // to the ETA where the range closes.
                     function drawChart() {
-                        var svg = q('svg')
+                        var svg = q('.eta-chart svg')
                         var box = svg.getBoundingClientRect()
                         if (!rep || rep.error || !box.width) return
                         var W = box.width
@@ -5942,6 +6305,8 @@
                     // and start the card afresh.
                     pollSeq++
                     linkCard.hide()
+                    remindPop.hidden = true
+                    renderRemind()
                     pollETA()
                 }
 
@@ -5969,7 +6334,9 @@
                     var t = linkTarget()
                     if (
                         !t ||
-                        (lastHalt && lastHalt.height === Number(t.height))
+                        (lastHalt &&
+                            lastHalt.height === Number(t.height) &&
+                            !mine())
                     ) {
                         linkCard.hide()
                         return
@@ -5979,6 +6346,7 @@
                     var rep = await getETA(p.toString())
                     if (seq !== pollSeq) return
                     linkCard.show(rep, t.label)
+                    if (_vapidKey) loadReminder()
                 }
 
                 var linkEl = $('eta-link-card')
@@ -5989,9 +6357,239 @@
                     })
                 linkEl
                     .querySelector('.eta-close')
-                    .addEventListener('click', function () {
+                    .addEventListener('click', async function () {
+                        // A reminder that cannot be removed keeps its card:
+                        // closing it would hide a reminder still due to fire.
+                        if (mine() && !(await removeReminder())) {
+                            openRemind()
+                            remindError(
+                                'Could not remove the reminder, so the card stays. See console for details.'
+                            )
+                            return
+                        }
                         setLinkTarget(null)
                     })
+
+                // ---- Reminder
+                // The link card's notify button reminds this device before its
+                // height (/api/push/reminder): one reminder per device. Shown
+                // only where push works (initPush got the server's key). A
+                // page opened without a target shows the reminder's card: the
+                // Home Screen app always opens at /. The reminder is read again
+                // at each ETA refresh: the server drops it once it fired.
+                var remindWrap = linkEl.querySelector('.eta-remind-wrap')
+                var remindBtn = remindWrap.querySelector('.eta-remind')
+                var remindPop = remindWrap.querySelector('.eta-remind-pop')
+                var reminder = null // this device's: { height, since, label, lead }
+
+                function rq(sel) {
+                    return remindPop.querySelector(sel)
+                }
+                // leadText words a lead as the server writes it: "30m" →
+                // "30 min", "1h" → "1 h", "100 blocks" stays.
+                function leadText(lead) {
+                    var m = /^(\d+)([mh])$/.exec(lead)
+                    if (!m) return lead
+                    return m[1] + (m[2] === 'm' ? ' min' : ' h')
+                }
+                function leadInputs(lead) {
+                    var m = /^(\d+)( blocks|m|h)$/.exec(lead || '')
+                    if (!m) return { n: 30, unit: 'm' }
+                    if (m[2] === ' blocks')
+                        return { n: Number(m[1]), unit: 'blocks' }
+                    return {
+                        n: Number(m[1]) * (m[2] === 'h' ? 60 : 1),
+                        unit: 'm',
+                    }
+                }
+                function mine() {
+                    var t = linkTarget()
+                    return !!(
+                        t &&
+                        reminder &&
+                        reminder.height === Number(t.height)
+                    )
+                }
+                // since is the card's start: the link's, or the server's time
+                // when the link carries none (or none a server reads).
+                function since(t) {
+                    if (t.since && !isNaN(Date.parse(t.since))) return t.since
+                    return new Date(Date.now() + serverTimeOffset)
+                        .toISOString()
+                        .replace(/\.\d+Z$/, 'Z')
+                }
+                function renderRemind() {
+                    remindWrap.hidden = !_vapidKey
+                    var set = mine()
+                    remindBtn.classList.toggle('set', set)
+                    remindBtn.querySelector('.eta-remind-text').textContent =
+                        set ? 'notify · ' + leadText(reminder.lead) : 'notify'
+                }
+                function openRemind() {
+                    var t = linkTarget()
+                    if (!t) return
+                    var v = leadInputs(mine() ? reminder.lead : '')
+                    rq('.eta-remind-n').value = v.n
+                    rq('.eta-remind-unit').value = v.unit
+                    rq('.eta-remind-before').textContent =
+                        'before #' + Number(t.height).toLocaleString('en-US')
+                    var warn = rq('.warn')
+                    warn.hidden = !reminder || mine()
+                    if (!warn.hidden)
+                        warn.textContent =
+                            'Replaces your reminder for #' +
+                            reminder.height.toLocaleString('en-US') +
+                            '.'
+                    rq('.err').hidden = true
+                    rq('.eta-remind-save').textContent = mine()
+                        ? 'Update'
+                        : 'Save'
+                    rq('.eta-remind-remove').hidden = !mine()
+                    remindPop.hidden = false
+                    remindBtn.setAttribute('aria-expanded', 'true')
+                    rq('.eta-remind-n').focus()
+                }
+                // closeRemind hides the popover; refocus returns the focus
+                // to the button, for keyboard users.
+                function closeRemind(refocus) {
+                    if (remindPop.hidden) return
+                    remindPop.hidden = true
+                    remindBtn.setAttribute('aria-expanded', 'false')
+                    if (refocus) remindBtn.focus()
+                }
+                function remindError(msg) {
+                    var e = rq('.err')
+                    e.textContent = msg
+                    e.hidden = false
+                }
+                // loadReminder reads this device's reminder. A failed read
+                // keeps the one last read: it says nothing of the server's.
+                async function loadReminder() {
+                    if (!_pushSubID) {
+                        reminder = null
+                    } else {
+                        try {
+                            var r = await fetch(
+                                '/api/push/reminder?id=' +
+                                    encodeURIComponent(_pushSubID)
+                            )
+                            if (r.status === 204) reminder = null
+                            else if (r.ok) reminder = await r.json()
+                            else console.warn('read reminder:', r.status)
+                        } catch (e) {
+                            console.warn('read reminder:', e)
+                        }
+                    }
+                    renderRemind()
+                }
+                async function saveReminder() {
+                    var t = linkTarget()
+                    var n = parseInt(rq('.eta-remind-n').value, 10)
+                    if (!t || !(n >= 1)) {
+                        remindError('Enter how far ahead, 1 or more.')
+                        return
+                    }
+                    var lead =
+                        rq('.eta-remind-unit').value === 'blocks'
+                            ? n + ' blocks'
+                            : n + 'm'
+                    try {
+                        if (Notification.permission !== 'granted') {
+                            if (
+                                (await Notification.requestPermission()) !==
+                                'granted'
+                            ) {
+                                remindError('Notification permission denied.')
+                                return
+                            }
+                        }
+                        var sub = await browserPushSub(true)
+                        var body = Object.assign(deviceKeys(sub), {
+                            height: Number(t.height),
+                            since: since(t),
+                            label: t.label,
+                            lead: lead,
+                        })
+                        var r = await fetch('/api/push/reminder', {
+                            method: 'PUT',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(body),
+                        })
+                        if (!r.ok) {
+                            remindError((await r.text()).trim())
+                            return
+                        }
+                        await keepDevice((await r.json()).id)
+                    } catch (e) {
+                        console.warn('save reminder:', e)
+                        remindError('Failed to save. See console for details.')
+                        return
+                    }
+                    closeRemind(true)
+                    await loadReminder()
+                }
+                // removeReminder deletes this device's reminder, and reports
+                // whether it is gone.
+                async function removeReminder() {
+                    if (!_pushSubID) return true
+                    try {
+                        var r = await fetch(
+                            '/api/push/reminder?id=' +
+                                encodeURIComponent(_pushSubID),
+                            { method: 'DELETE' }
+                        )
+                        if (!r.ok)
+                            throw new Error(r.status + ' ' + (await r.text()))
+                        if (!(await r.json()).device_kept) await keepDevice('')
+                    } catch (e) {
+                        console.warn('remove reminder:', e)
+                        return false
+                    }
+                    await loadReminder()
+                    return true
+                }
+                remindBtn.addEventListener('click', function (e) {
+                    e.stopPropagation()
+                    if (remindPop.hidden) openRemind()
+                    else closeRemind(true)
+                })
+                remindPop.addEventListener('click', function (e) {
+                    e.stopPropagation()
+                })
+                rq('.eta-remind-save').addEventListener('click', saveReminder)
+                rq('.eta-remind-remove').addEventListener(
+                    'click',
+                    async function () {
+                        if (await removeReminder()) closeRemind(true)
+                        else
+                            remindError(
+                                'Failed to remove. See console for details.'
+                            )
+                    }
+                )
+                rq('.eta-remind-cancel').addEventListener('click', function () {
+                    closeRemind(true)
+                })
+                document.addEventListener('click', function () {
+                    closeRemind(false)
+                })
+                document.addEventListener('keydown', function (e) {
+                    if (e.key === 'Escape') closeRemind(true)
+                })
+                // Once initPush has settled: show the button where push
+                // works, and bring back the reminder's card on a page opened
+                // without a target.
+                ;(async function startReminder() {
+                    await pushReady
+                    if (!_vapidKey) return
+                    await loadReminder()
+                    if (reminder && !linkTarget())
+                        setLinkTarget({
+                            height: String(reminder.height),
+                            since: reminder.since,
+                            label: reminder.label,
+                        })
+                })()
 
                 // ---- Planner modal
                 var mode = 'height'
@@ -6294,6 +6892,307 @@
                     }
                     setTimeout(poll, SYNC_POLL_MS)
                 })()
+            })()
+        </script>
+        <script>
+            // ---- Validator set timeline
+            // The validators card's Timeline view lists the validator set
+            // changes the block history holds, newest first, from
+            // /api/history?changes=; its first page is read again while shown.
+            ;(function () {
+                var VALSET_POLL_MS = 30000
+                var PAGE = 50
+                var VIEW_KEY = 'gnockpit-validators-view'
+                var card = $('validators-card')
+                var list = $('validators-timeline')
+                var seg = $('validators-view')
+                var view = 'live'
+                var changes = []
+                var next = 0
+                var filled = null
+                var timer = null
+                var gen = 0 // the poll chain in force; a view change starts another
+                var loadErr = '' // why the last read failed; '' when it did not
+                var loadingOlder = false
+
+                function el(tag, cls, text) {
+                    var e = document.createElement(tag)
+                    if (cls) e.className = cls
+                    if (text != null) e.textContent = text
+                    return e
+                }
+                function short(a) {
+                    return a.length > 16 ? a.slice(0, 8) + '…' + a.slice(-4) : a
+                }
+                function who(m) {
+                    return m.moniker || short(m.address)
+                }
+                function ago(iso) {
+                    var m = Math.round((Date.now() - Date.parse(iso)) / 60000)
+                    if (m < 1) return 'just now'
+                    if (m < 60) return m + ' min ago'
+                    var h = Math.round(m / 60)
+                    if (h < 48) return h + ' h ago'
+                    return Math.round(h / 24) + ' d ago'
+                }
+                function utc(iso) {
+                    return iso.slice(0, 16).replace('T', ' ') + ' UTC'
+                }
+                // names lists members, their names in bold: [text, bold] pairs.
+                function names(ms) {
+                    var out = []
+                    ms.forEach(function (m, i) {
+                        if (i > 0)
+                            out.push([
+                                i === ms.length - 1 ? ' and ' : ', ',
+                                false,
+                            ])
+                        out.push([who(m), true])
+                    })
+                    return out
+                }
+                function powers(ms) {
+                    var same = ms.every(function (m) {
+                        return m.power === ms[0].power
+                    })
+                    if (same)
+                        return (
+                            'power ' +
+                            ms[0].power +
+                            (ms.length > 1 ? ' each' : '')
+                        )
+                    return (
+                        'power ' +
+                        ms
+                            .map(function (m) {
+                                return m.power
+                            })
+                            .join(', ')
+                    )
+                }
+                // parts splits a change into its lines: one per kind, and one
+                // per member whose power changed or key rotated.
+                function parts(c) {
+                    if (c.genesis)
+                        return [
+                            {
+                                k: '◆',
+                                cls: 'vt-gen',
+                                what: [['Genesis set', true]],
+                                p: '',
+                            },
+                        ]
+                    var out = []
+                    if (c.added.length)
+                        out.push({
+                            k: '+',
+                            cls: 'vt-add',
+                            what: names(c.added).concat([[' joined', false]]),
+                            p: powers(c.added),
+                        })
+                    if (c.removed.length)
+                        out.push({
+                            k: '−',
+                            cls: 'vt-rm',
+                            what: names(c.removed).concat([[' left', false]]),
+                            p: powers(c.removed),
+                        })
+                    c.repowered.forEach(function (m) {
+                        out.push({
+                            k: '↕',
+                            cls: 'vt-pow',
+                            what: [
+                                [who(m), true],
+                                [' power ' + m.before + ' → ' + m.after, false],
+                            ],
+                            p: '',
+                        })
+                    })
+                    c.rotated.forEach(function (r) {
+                        out.push({
+                            k: '⇄',
+                            cls: 'vt-rot',
+                            what: [
+                                [r.moniker || short(r.new_address), true],
+                                [' rotated its key', false],
+                            ],
+                            p:
+                                short(r.old_address) +
+                                ' → ' +
+                                short(r.new_address),
+                        })
+                    })
+                    return out
+                }
+                function size(c) {
+                    if (c.size_before === c.size_after || c.genesis)
+                        return c.size_after + ' validators'
+                    return c.size_before + ' → ' + c.size_after + ' validators'
+                }
+                function rows(c) {
+                    return parts(c).map(function (part, i) {
+                        var r = el('div', 'vt-row')
+                        var h = el(
+                            'span',
+                            'h',
+                            i
+                                ? ''
+                                : '#' +
+                                      c.height.toLocaleString('en-US') +
+                                      ' · ' +
+                                      ago(c.time)
+                        )
+                        h.title = utc(c.time)
+                        r.appendChild(h)
+                        r.appendChild(el('span', 'k ' + part.cls, part.k))
+                        var w = el('span', 'w')
+                        part.what.forEach(function (seg) {
+                            w.appendChild(
+                                seg[1]
+                                    ? el('b', null, seg[0])
+                                    : document.createTextNode(seg[0])
+                            )
+                        })
+                        if (part.p) {
+                            w.appendChild(document.createTextNode(' '))
+                            w.appendChild(el('span', 'p', part.p))
+                        }
+                        if (!i && c.events_pending)
+                            w.appendChild(
+                                el('span', 'vt-pend', 'events pending')
+                            )
+                        r.appendChild(w)
+                        r.appendChild(el('span', 'n', i ? '' : size(c)))
+                        return r
+                    })
+                }
+                function render() {
+                    // The footer is rebuilt: keep a keyboard user on "older".
+                    var refocus =
+                        document.activeElement &&
+                        document.activeElement.classList.contains('vt-older')
+                    list.replaceChildren()
+                    changes.forEach(function (c) {
+                        rows(c).forEach(function (r) {
+                            list.appendChild(r)
+                        })
+                    })
+                    if (!changes.length && !loadErr)
+                        list.appendChild(
+                            el(
+                                'div',
+                                'vt-foot',
+                                'No validator set change in the history yet'
+                            )
+                        )
+                    var foot = el('div', 'vt-foot')
+                    foot.appendChild(
+                        loadErr
+                            ? el('span', 'vt-err', loadErr)
+                            : el(
+                                  'span',
+                                  null,
+                                  filled && filled.to && !filled.complete
+                                      ? 'history reaches back to #' +
+                                            filled.from.toLocaleString(
+                                                'en-US'
+                                            ) +
+                                            ': older changes appear as it fills'
+                                      : ''
+                              )
+                    )
+                    if (next) {
+                        var more = el('button', 'vt-older', 'older')
+                        more.addEventListener('click', older)
+                        foot.appendChild(more)
+                        if (refocus) more.focus()
+                    }
+                    list.appendChild(foot)
+                }
+                async function load(before) {
+                    var q = '/api/history?changes=' + PAGE
+                    if (before) q += '&before=' + before
+                    var r = await fetch(q)
+                    if (!r.ok) throw new Error('HTTP ' + r.status)
+                    return r.json()
+                }
+                // refresh reads the first page again, keeping the older pages
+                // read below it. A failed read keeps the rows on screen and
+                // says so; the next poll tries again.
+                async function refresh() {
+                    try {
+                        var r = await load()
+                        var fresh = r.changes || []
+                        var low = fresh.length
+                            ? fresh[fresh.length - 1].height
+                            : Infinity
+                        var kept = changes.filter(function (c) {
+                            return c.height < low
+                        })
+                        if (!kept.length) next = r.next_before || 0
+                        changes = fresh.concat(kept)
+                        filled = r.filled
+                        loadErr = ''
+                    } catch (e) {
+                        loadErr =
+                            'Could not read the set changes (' +
+                            e.message +
+                            '): trying again shortly.'
+                    }
+                    render()
+                }
+                async function older() {
+                    if (loadingOlder) return
+                    loadingOlder = true
+                    try {
+                        var r = await load(next)
+                        changes = changes.concat(r.changes || [])
+                        next = r.next_before || 0
+                        filled = r.filled
+                        loadErr = ''
+                    } catch (e) {
+                        loadErr =
+                            'Could not read older changes (' + e.message + ').'
+                    } finally {
+                        loadingOlder = false
+                    }
+                    render()
+                }
+                // poll keeps one chain of reads per showing of the view:
+                // a view change starts another and ends the one before.
+                function poll(g) {
+                    refresh().finally(function () {
+                        if (g === gen && view === 'timeline')
+                            timer = setTimeout(function () {
+                                poll(g)
+                            }, VALSET_POLL_MS)
+                    })
+                }
+                function setView(v) {
+                    view = v
+                    card.classList.toggle('view-timeline', v === 'timeline')
+                    seg.querySelectorAll('button').forEach(function (b) {
+                        b.setAttribute(
+                            'aria-pressed',
+                            String(b.dataset.view === v)
+                        )
+                    })
+                    try {
+                        localStorage.setItem(VIEW_KEY, v)
+                    } catch (e) {}
+                    clearTimeout(timer)
+                    gen++
+                    if (v === 'timeline') poll(gen)
+                }
+                seg.addEventListener('click', function (e) {
+                    var b = e.target.closest('button')
+                    if (b) setView(b.dataset.view)
+                })
+                var saved = 'live'
+                try {
+                    saved = localStorage.getItem(VIEW_KEY) || 'live'
+                } catch (e) {}
+                setView(saved === 'timeline' ? 'timeline' : 'live')
             })()
         </script>
     </body>

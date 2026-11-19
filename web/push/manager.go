@@ -2,16 +2,21 @@ package push
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"log"
 	"net/http"
+	"sync"
+	"sync/atomic"
+	"time"
 
 	webpush "github.com/SherClockHolmes/webpush-go"
-	"github.com/containrrr/shoutrrr/pkg/router"
 	"github.com/gnoverse/gnockpit/node"
 )
+
+// DefaultSendTimeout is how long a push or webhook send may take unless
+// SetSendTimeout says otherwise: Shoutrrr's own bound.
+const DefaultSendTimeout = 10 * time.Second
 
 // vapidSubject is the VAPID JWT "sub" claim identifying this server.
 // webpush-go prepends "mailto:" unless the value starts with "https:", so we
@@ -27,10 +32,15 @@ type Manager struct {
 	vapidPrivateKey string
 	chainStuckSecs  int
 	maxMissedInARow int
-	chainName       string
-	notifier        *router.ServiceRouter
-	notifyURLs      []string
+	chainName       atomic.Pointer[string] // written by the publish loop, read by every sender
 	publicURL       string
+	notifyMu        sync.RWMutex
+	targets         []notifyTarget // the notification config's targets; guarded by notifyMu
+	notifyPath      string         // the notification config file; "" when none
+	notifyModTime   time.Time      // its modification time when last read
+	notifyErr       string         // the last reload error logged
+	now             func() time.Time
+	sendTimeout     time.Duration // how long a push or webhook send may take
 	redactSecrets   bool
 }
 
@@ -56,6 +66,8 @@ func NewManager(db *DB, chainStuckSecs, maxMissedInARow int) (*Manager, error) {
 		vapidPrivateKey: priv,
 		chainStuckSecs:  chainStuckSecs,
 		maxMissedInARow: maxMissedInARow,
+		now:             time.Now,
+		sendTimeout:     DefaultSendTimeout,
 	}, nil
 }
 
@@ -71,7 +83,12 @@ func (m *Manager) MaxMissedInARow() int { return m.maxMissedInARow }
 func (m *Manager) MissingBlocksFiring() map[string]bool { return m.detector.MissingBlocksFiring() }
 
 // ChainName returns the last observed chain network ID.
-func (m *Manager) ChainName() string { return m.chainName }
+func (m *Manager) ChainName() string {
+	if n := m.chainName.Load(); n != nil {
+		return *n
+	}
+	return ""
+}
 
 // VAPIDPublicKey returns the VAPID public key for use in browser push subscriptions.
 func (m *Manager) VAPIDPublicKey() string { return m.vapidPublicKey }
@@ -82,9 +99,13 @@ func (m *Manager) DB() *DB { return m.db }
 // SetPublicURL sets the public-facing URL appended to Shoutrrr alert messages.
 func (m *Manager) SetPublicURL(url string) { m.publicURL = url }
 
+// SetSendTimeout bounds how long a push or webhook send may take, so an
+// endpoint that never answers holds no caller. Call before sending.
+func (m *Manager) SetSendTimeout(d time.Duration) { m.sendTimeout = d }
+
 // SetRedactSecrets sets whether the Shoutrrr errors the Manager logs or returns
 // are stripped of notification URL secrets (see redactNotifySecrets); when off,
-// they are kept verbatim. Call before SetNotifyURLs, whose error it also
+// they are kept verbatim. Call before LoadNotifyConfig, whose error it also
 // covers.
 func (m *Manager) SetRedactSecrets(on bool) { m.redactSecrets = on }
 
@@ -97,22 +118,11 @@ func (m *Manager) notifyErrorText(err error, urls []string) string {
 	return redactNotifySecrets(err.Error(), urls)
 }
 
-// SetNotifyURLs configures external notification delivery via Shoutrrr service URLs.
-// Pass nil or empty to disable. Call before the publish loop starts.
-func (m *Manager) SetNotifyURLs(urls []string) error {
-	r, err := NewNotifier(urls)
-	if err != nil {
-		return errors.New(m.notifyErrorText(err, urls))
-	}
-	m.notifier = r
-	m.notifyURLs = urls
-	return nil
-}
-
 // EvaluateAndNotify detects alert transitions from snap and delivers push notifications.
 func (m *Manager) EvaluateAndNotify(snap *node.Snapshot) {
 	if snap.Status != nil && snap.Status.NodeInfo.Network != "" {
-		m.chainName = snap.Status.NodeInfo.Network
+		name := snap.Status.NodeInfo.Network
+		m.chainName.Store(&name)
 	}
 	for _, a := range m.detector.Detect(snap) {
 		m.NotifyAlert(a)
@@ -133,16 +143,7 @@ func (m *Manager) NotifyAlert(a Alert) {
 		m.sendPush(sb.Sub, a)
 	}
 
-	if m.notifier != nil {
-		msg := FormatAlert(m.chainName, m.publicURL, a)
-		if errs := m.notifier.Send(msg, nil); len(errs) > 0 {
-			for _, err := range errs {
-				if err != nil {
-					log.Printf("notify: %s", m.notifyErrorText(err, m.notifyURLs))
-				}
-			}
-		}
-	}
+	m.notifyTargets(a)
 }
 
 // SendTest sends a test notification to a specific subscription.
@@ -162,14 +163,21 @@ func (m *Manager) SendTest(subID string) error {
 type pushPayload struct {
 	Title string `json:"title"`
 	Body  string `json:"body"`
+	URL   string `json:"url,omitempty"` // the page a tap opens (the service worker's notificationclick)
+}
+
+// payloadOf is what a push of a says, its title prefixed with the chain's
+// name when known.
+func payloadOf(chain string, a Alert) pushPayload {
+	title := a.Title
+	if chain != "" {
+		title = chain + " - " + title
+	}
+	return pushPayload{Title: title, Body: a.Body, URL: a.Link}
 }
 
 func (m *Manager) sendPush(sub Subscription, a Alert) {
-	title := a.Title
-	if m.chainName != "" {
-		title = m.chainName + " - " + title
-	}
-	payload, err := json.Marshal(pushPayload{Title: title, Body: a.Body})
+	payload, err := json.Marshal(payloadOf(m.ChainName(), a))
 	if err != nil {
 		log.Printf("push: marshal payload: %v", err)
 		return
@@ -181,6 +189,7 @@ func (m *Manager) sendPush(sub Subscription, a Alert) {
 			Auth:   sub.Auth,
 		},
 	}, &webpush.Options{
+		HTTPClient:      &http.Client{Timeout: m.sendTimeout},
 		VAPIDPublicKey:  m.vapidPublicKey,
 		VAPIDPrivateKey: m.vapidPrivateKey,
 		Subscriber:      vapidSubject,

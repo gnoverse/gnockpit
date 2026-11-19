@@ -23,10 +23,7 @@ func TestNotifyScheme(t *testing.T) {
 }
 
 func TestManager_NotifyTargets_Redacted(t *testing.T) {
-	m := &Manager{notifyURLs: []string{
-		"discord://sometoken@123456",
-		"generic+http://example.com/hook",
-	}}
+	m := managerWith(t, "discord://sometoken@123456", "generic+http://example.com/hook")
 	targets := m.NotifyTargets()
 	if len(targets) != 2 {
 		t.Fatalf("got %d targets, want 2", len(targets))
@@ -49,7 +46,7 @@ func TestManager_NotifyTargets_Redacted(t *testing.T) {
 }
 
 func TestManager_SendTestNotify_OutOfRange(t *testing.T) {
-	m := &Manager{notifyURLs: []string{"generic+http://example.com/hook"}}
+	m := managerWith(t, "generic+http://example.com/hook")
 	if err := m.SendTestNotify(5, "hi"); err == nil {
 		t.Error("expected out-of-range error for index 5")
 	}
@@ -72,7 +69,7 @@ func TestManager_SendTestNotify_Sends(t *testing.T) {
 	defer srv.Close()
 
 	host := strings.TrimPrefix(srv.URL, "http://")
-	m := &Manager{notifyURLs: []string{"generic+http://" + host + "/hook"}}
+	m := managerWith(t, "generic+http://"+host+"/hook")
 	if err := m.SendTestNotify(0, "gnockpit unit test"); err != nil {
 		t.Fatalf("SendTestNotify: %v", err)
 	}
@@ -82,4 +79,15 @@ func TestManager_SendTestNotify_Sends(t *testing.T) {
 	if !strings.Contains(gotBody, "gnockpit unit test") {
 		t.Errorf("target server did not receive the message; body = %q", gotBody)
 	}
+}
+
+// managerWith returns a Manager sending every routable alert to each of urls.
+func managerWith(t *testing.T, urls ...string) *Manager {
+	t.Helper()
+	m := &Manager{}
+	captureLog(t) // keeps the config's log line out of the test output
+	if err := m.SetNotifyConfig(everyAlert(urls...)); err != nil {
+		t.Fatal(err)
+	}
+	return m
 }

@@ -4,46 +4,51 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"slices"
 	"strings"
-
-	"github.com/containrrr/shoutrrr"
 )
 
 // NotifyTarget describes a configured Shoutrrr notification URL without
 // exposing its secret contents — the raw URL holds tokens/passwords, so only
 // redacted metadata is ever surfaced.
 type NotifyTarget struct {
-	Index       int    `json:"index"`
-	Service     string `json:"service"`     // URL scheme, e.g. "discord"
-	Fingerprint string `json:"fingerprint"` // short, non-reversible hash to tell duplicates apart
+	Index       int      `json:"index"`
+	Service     string   `json:"service"`     // URL scheme, e.g. "discord"
+	Fingerprint string   `json:"fingerprint"` // short, non-reversible hash to tell duplicates apart
+	Alerts      []string `json:"alerts"`      // the alerts the target receives, by name
 }
 
-// NotifyTargets lists the configured Shoutrrr notification URLs as redacted
+// NotifyTargets lists the notification config's targets as redacted
 // metadata. The index aligns with SendTestNotify.
 func (m *Manager) NotifyTargets() []NotifyTarget {
-	targets := make([]NotifyTarget, 0, len(m.notifyURLs))
-	for i, u := range m.notifyURLs {
-		targets = append(targets, NotifyTarget{
-			Index:       i,
-			Service:     notifyScheme(u),
-			Fingerprint: notifyFingerprint(u),
-		})
+	targets := m.currentTargets()
+	out := make([]NotifyTarget, 0, len(targets))
+	for i, t := range targets {
+		alerts := make([]string, 0, len(t.route.Alerts))
+		for a := range t.route.Alerts {
+			alerts = append(alerts, string(a))
+		}
+		slices.Sort(alerts)
+		out = append(out, NotifyTarget{Index: i, Service: notifyScheme(t.route.URL), Fingerprint: t.fingerprint, Alerts: alerts})
 	}
-	return targets
+	return out
 }
 
-// NotifyTargetCount returns the number of configured notification URLs.
-func (m *Manager) NotifyTargetCount() int { return len(m.notifyURLs) }
+// NotifyTargetCount returns the number of notification targets.
+func (m *Manager) NotifyTargetCount() int { return len(m.currentTargets()) }
 
-// SendTestNotify sends message to the single configured notification URL at
-// index. Only already-configured URLs can be targeted (by index) — never an
-// arbitrary URL from the caller.
+// SendTestNotify sends message to the notification target at index. Only
+// configured targets can be sent to (by index), never an arbitrary URL from
+// the caller.
 func (m *Manager) SendTestNotify(index int, message string) error {
-	if index < 0 || index >= len(m.notifyURLs) {
-		return fmt.Errorf("notify target index %d out of range (%d configured)", index, len(m.notifyURLs))
+	targets := m.currentTargets()
+	if index < 0 || index >= len(targets) {
+		return fmt.Errorf("notify target index %d out of range (%d configured)", index, len(targets))
 	}
-	if err := shoutrrr.Send(m.notifyURLs[index], message); err != nil {
-		return fmt.Errorf("send test notification: %s", m.notifyErrorText(err, m.notifyURLs))
+	for _, err := range targets[index].sender.Send(message, nil) {
+		if err != nil {
+			return fmt.Errorf("send test notification: %s", m.notifyErrorText(err, targetURLs(targets)))
+		}
 	}
 	return nil
 }

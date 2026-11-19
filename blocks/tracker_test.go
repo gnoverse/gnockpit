@@ -1480,3 +1480,103 @@ func storedEvents(t *testing.T, s *Store, height int64) []string {
 	}
 	return out
 }
+
+// toldChanges registers a handler on tt and returns the heights it is told.
+func toldChanges(tt *testTracker) *[]int64 {
+	told := &[]int64{}
+	tt.OnValsetChange(func(c ValsetChange) { *told = append(*told, c.Height) })
+	return told
+}
+
+func TestPassTellsTheValsetChangesStoredGoingUp(t *testing.T) {
+	c := newFakeChain(250)
+	c.change = 300
+	tt := newTestTracker(t, c)
+	told := toldChanges(tt)
+	mustPass(t, tt) // 249 to 150
+	mustPass(t, tt)
+	c.head = 350
+	for range 3 {
+		mustPass(t, tt)
+	}
+	if !slices.Equal(*told, []int64{300}) {
+		t.Errorf("told = %v, want [300] once", *told)
+	}
+}
+
+func TestPassTellsNoValsetChangeFoundGoingDown(t *testing.T) {
+	c := newFakeChain(2300)
+	c.change = 1000
+	tt := newTestTracker(t, c)
+	told := toldChanges(tt)
+	for i := 0; mustPass(t, tt); i++ {
+		if i == 30 {
+			t.Fatal("the backfill never ended")
+		}
+	}
+	wantRange(t, tt.store, 1, 2299)
+	if len(*told) != 0 {
+		t.Errorf("told = %v, want none: the backfill found the change", *told)
+	}
+}
+
+func TestPassTellsTheValsetChangesMissedDuringDowntime(t *testing.T) {
+	c := newFakeChain(250)
+	c.change = 300
+	tt := newTestTracker(t, c)
+	before := toldChanges(tt)
+	mustPass(t, tt)
+	mustPass(t, tt)
+	// gnockpit stops while the chain goes past the change, then restarts.
+	c.head = 350
+	tt = newTestTrackerOn(t, c, tt.store, DefaultConfig())
+	told := toldChanges(tt)
+	mustPass(t, tt)
+	if len(*before) != 0 || !slices.Equal(*told, []int64{300}) {
+		t.Errorf("told = %v then %v, want none then [300]", *before, *told)
+	}
+}
+
+func TestPassTellsNoValsetChangeOfANewChain(t *testing.T) {
+	c := newFakeChain(250)
+	c.change = 350
+	tt := newTestTracker(t, c)
+	told := toldChanges(tt)
+	mustPass(t, tt)
+	mustPass(t, tt) // the chain the store holds, told up to 249
+	// Another chain, whose first fill goes down across its change at 350.
+	c.chainID, c.head = "test-13", 400
+	mustPass(t, tt)
+	mustPass(t, tt)
+	if len(*told) != 0 {
+		t.Errorf("told = %v, want none: a new chain's first fill goes down", *told)
+	}
+}
+
+func TestPassTellsAChangeTheSecondPassStoresGoingUp(t *testing.T) {
+	c := newFakeChain(250)
+	c.change = 300
+	tt := newTestTracker(t, c)
+	told := toldChanges(tt)
+	mustPass(t, tt) // a fresh store: 249 to 150, going down
+	c.head = 350
+	mustPass(t, tt)
+	if !slices.Equal(*told, []int64{300}) {
+		t.Errorf("told = %v, want [300]: the second pass stored it going up", *told)
+	}
+}
+
+func TestPassMovesTheToldWatermarkBeforeTelling(t *testing.T) {
+	c := newFakeChain(250)
+	c.change = 300
+	tt := newTestTracker(t, c)
+	marked := int64(-1)
+	tt.OnValsetChange(func(ValsetChange) { marked, _ = tt.store.ValsetToldTo(context.Background()) })
+	mustPass(t, tt)
+	mustPass(t, tt)
+	c.head = 350
+	mustPass(t, tt)
+	if marked < 300 {
+		t.Errorf("watermark while telling = %d, want past 300: a crash mid-send must not tell it again", marked)
+	}
+}

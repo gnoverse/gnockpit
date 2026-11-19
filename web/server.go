@@ -755,6 +755,7 @@ func (s *Server) publishLoop(ctx context.Context) {
 		}
 		snap := s.fetchSnapshot(ctx)
 		if s.PushManager != nil {
+			s.PushManager.ReloadNotifyConfigIfChanged()
 			s.PushManager.EvaluateAndNotify(snap)
 		}
 		// Active-validator count and the down set depend on the detector's
@@ -763,6 +764,7 @@ func (s *Server) publishLoop(ctx context.Context) {
 		// immutable when a WebSocket client reads it on connect.
 		s.applyValidatorHealth(snap)
 		s.setSnapshot(snap)
+		s.notifySchedule()
 		s.refreshMissed(ctx)
 
 		// Broadcast to WebSocket clients as a single batched message to reduce
@@ -921,22 +923,26 @@ func (s *Server) handlePushSubscribe(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "endpoint, p256dh and auth are required", http.StatusBadRequest)
 		return
 	}
-	sub := push.Subscription{
-		ID:       generateID(),
-		Endpoint: req.Endpoint,
-		P256dh:   req.P256dh,
-		Auth:     req.Auth,
+	if err := push.ValidateDeviceAlerts(req.Alerts); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
 	}
-	for i := range req.Alerts {
-		req.Alerts[i].SubscriptionID = sub.ID
-	}
-	if err := s.PushManager.DB().SaveSubscriptionWithAlerts(sub, req.Alerts); err != nil {
+	// A device known by its endpoint keeps its id: its reminder and what was
+	// sent to it hang off it.
+	sub := push.Subscription{ID: generateID(), Endpoint: req.Endpoint, P256dh: req.P256dh, Auth: req.Auth}
+	id, err := s.PushManager.DB().SaveDevice(sub, req.Alerts)
+	if err != nil {
+		log.Printf("push: save device: %v", err)
 		http.Error(w, "save subscription", http.StatusInternalServerError)
 		return
 	}
+	status := http.StatusOK
+	if id == sub.ID {
+		status = http.StatusCreated
+	}
 	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(map[string]string{"id": sub.ID})
+	w.WriteHeader(status)
+	json.NewEncoder(w).Encode(map[string]string{"id": id})
 }
 
 func (s *Server) handlePushEntities(w http.ResponseWriter, r *http.Request) {
@@ -1093,6 +1099,7 @@ func (s *Server) Run(ctx context.Context) error {
 	mux.HandleFunc("/api/push/subscribe", s.handlePushSubscribe)
 	mux.HandleFunc("/api/push/entities", s.handlePushEntities)
 	mux.HandleFunc("/api/push/test", s.handlePushTest)
+	mux.HandleFunc("/api/push/reminder", s.handlePushReminder)
 	mux.HandleFunc("/api/notify/targets", s.handleNotifyTargets)
 	mux.HandleFunc("/api/notify/test", s.handleNotifyTest)
 	mux.HandleFunc("/api/links", s.handleLinks)

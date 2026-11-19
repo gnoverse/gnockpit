@@ -107,6 +107,7 @@ type Tracker struct {
 	setRefused   map[int64]int // heights whose set reads refused, well below the head: unserved from the second
 	gapsAt       time.Time     // when the event gaps are read again
 	lastErr      map[string]string
+	onChange     func(ValsetChange) // told of the validator set changes stored going up; nil: none
 
 	mu       sync.RWMutex
 	progress Progress
@@ -133,6 +134,11 @@ func NewTracker(store *Store, source Source, cfg Config) (*Tracker, error) {
 		lastErr:    map[string]string{},
 	}, nil
 }
+
+// OnValsetChange sets f, told of each validator set change stored going up
+// (following the head, or catching up after downtime), in height order. Set
+// it before Run.
+func (t *Tracker) OnValsetChange(f func(ValsetChange)) { t.onChange = f }
 
 // Progress returns how far the stored history reaches.
 func (t *Tracker) Progress() Progress {
@@ -171,6 +177,7 @@ func (t *Tracker) Run(ctx context.Context) {
 func (t *Tracker) pass(ctx context.Context) (more bool, err error) {
 	var behind bool // the source did not give a height asked final yet
 	defer func() {
+		t.tellValsetChanges(ctx)
 		if perr := t.publish(ctx); perr != nil && err == nil {
 			err = perr
 		}
@@ -358,6 +365,43 @@ func (t *Tracker) refusedBelow(ctx context.Context, height int64, served int) er
 	t.belowSeen = 0
 	t.belowAt = t.now().Add(gapRetry)
 	t.report("below", fmt.Errorf("the first -rpc refuses #%d, well below the head: the backfill asks again every %s", height, gapRetry))
+	return nil
+}
+
+// tellValsetChanges tells onChange, at the end of each pass, the validator
+// set changes stored above the told watermark, which starts at the first
+// stored high: a change the backfill stores below it, or one in a new chain's
+// first fill, is never told. The watermark moves before telling, so a crash
+// mid-send tells nothing twice; a failed read is reported, and the next pass
+// tells from the same watermark.
+func (t *Tracker) tellValsetChanges(ctx context.Context) {
+	if t.onChange == nil {
+		return
+	}
+	t.report("tell", t.tellChangesUpTo(ctx))
+}
+
+func (t *Tracker) tellChangesUpTo(ctx context.Context) error {
+	_, high, err := t.store.Range(ctx)
+	if err != nil {
+		return err
+	}
+	told, err := t.store.ValsetToldTo(ctx)
+	if err != nil || high <= told {
+		return err
+	}
+	var changes []ValsetChange
+	if told > 0 {
+		if changes, err = t.store.ValsetChangesIn(ctx, told+1, high); err != nil {
+			return err
+		}
+	}
+	if err := t.store.SetValsetToldTo(ctx, high); err != nil {
+		return err
+	}
+	for _, c := range changes {
+		t.onChange(c)
+	}
 	return nil
 }
 
