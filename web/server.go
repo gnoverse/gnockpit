@@ -1151,6 +1151,7 @@ func (s *Server) Run(ctx context.Context) error {
 	mux.HandleFunc("/api/stats", s.handleStats)
 	mux.HandleFunc("/api/eta", s.handleETA)
 	mux.HandleFunc("/api/history", s.handleHistory)
+	mux.HandleFunc("/api/validator", s.handleValidator)
 	mux.HandleFunc("/badge.svg", s.handleBadge)
 
 	srv := &http.Server{
