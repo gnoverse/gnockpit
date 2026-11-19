@@ -6,6 +6,10 @@ type AlertType string
 const (
 	AlertValidatorMissingBlocks AlertType = "validator_missing_blocks"
 	AlertChainStuck             AlertType = "chain_stuck"
+	AlertValsetChanged          AlertType = "valset_changed"
+	AlertHaltScheduled          AlertType = "halt_scheduled"
+	AlertHaltApproaching        AlertType = "halt_approaching"
+	AlertETAReminder            AlertType = "eta_reminder" // devices only, never routed to a target
 )
 
 // EntityIDLocal is the sentinel entity ID for the locally monitored node.
