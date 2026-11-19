@@ -31,11 +31,12 @@ type historyReport struct {
 }
 
 type historyFilled struct {
-	From     int64  `json:"from"`
-	FromTime string `json:"from_time,omitempty"`
-	To       int64  `json:"to"`
-	Floor    int64  `json:"floor,omitempty"`
-	Complete bool   `json:"complete"`
+	From     int64   `json:"from"`
+	FromTime string  `json:"from_time,omitempty"`
+	To       int64   `json:"to"`
+	Floor    int64   `json:"floor,omitempty"`
+	Complete bool    `json:"complete"`
+	Rate     float64 `json:"rate,omitempty"` // heights filled per second while filling
 }
 
 type historyBlock struct {
@@ -84,7 +85,7 @@ func (s *Server) historyReport(ctx context.Context, q url.Values) (historyReport
 		return historyReport{}, http.StatusServiceUnavailable, errors.New("block history disabled")
 	}
 	p := s.BlockFill.Progress()
-	rep := historyReport{Chain: p.ChainID, Filled: historyFilled{From: p.From, To: p.To, Floor: p.Floor, Complete: p.Complete}}
+	rep := historyReport{Chain: p.ChainID, Filled: historyFilled{From: p.From, To: p.To, Floor: p.Floor, Complete: p.Complete, Rate: p.Rate}}
 	if !p.FromTime.IsZero() {
 		rep.Filled.FromTime = p.FromTime.UTC().Format(historyTime)
 	}

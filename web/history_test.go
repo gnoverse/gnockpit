@@ -122,11 +122,11 @@ func TestHistoryDisabled(t *testing.T) {
 
 func TestHistoryProgress(t *testing.T) {
 	from := time.Date(2026, 11, 3, 8, 0, 0, 0, time.UTC)
-	srv := &Server{Blocks: newBlocksStore(t), BlockFill: fakeFill{ChainID: "gnoland-1", From: 10, To: 12, FromTime: from, Floor: 5}}
+	srv := &Server{Blocks: newBlocksStore(t), BlockFill: fakeFill{ChainID: "gnoland-1", From: 10, To: 12, FromTime: from, Floor: 5, Rate: 12.5}}
 	code, body := getHistory(t, srv, "")
 	want := map[string]any{
 		"chain":  "gnoland-1",
-		"filled": map[string]any{"from": 10.0, "from_time": "2026-11-03T08:00:00.000Z", "to": 12.0, "floor": 5.0, "complete": false},
+		"filled": map[string]any{"from": 10.0, "from_time": "2026-11-03T08:00:00.000Z", "to": 12.0, "floor": 5.0, "complete": false, "rate": 12.5},
 	}
 	if code != http.StatusOK || !reflect.DeepEqual(body, want) {
 		t.Errorf("got %d %v, want 200 %v", code, body, want)

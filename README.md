@@ -292,10 +292,10 @@ curl -s 'http://localhost:8080/api/eta?time=<RFC 3339 time after the newest bloc
 
 ### `/api/history`
 
-| Query            | Answer                                                                                                                                                                                                                                                        |
-| ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| none             | `chain` and `filled`: `from` and `to` (the lowest and highest stored heights), `from_time`, `floor` (the oldest block the first `-rpc` serves, when it refused an older one) and `complete` (`from` is 1, or the floor).                                      |
-| `?from=H1&to=H2` | The same, plus `blocks[]` (`height`, `time`, `proposer`, `round`, `txs`, `valset` and the `absent`, `nil` and `other_block` signers) and `valsets` (each set's members, `address` and `power`). At most 1,000 heights; heights outside `filled` are left out. |
+| Query            | Answer                                                                                                                                                                                                                                                                                              |
+| ---------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| none             | `chain` and `filled`: `from` and `to` (the lowest and highest stored heights), `from_time`, `floor` (the oldest block the first `-rpc` serves, when it refused an older one) `complete` (`from` is 1, or the floor) and, while filling, `rate` (heights filled per second over the last 5 minutes). |
+| `?from=H1&to=H2` | The same, plus `blocks[]` (`height`, `time`, `proposer`, `round`, `txs`, `valset` and the `absent`, `nil` and `other_block` signers) and `valsets` (each set's members, `address` and `power`). At most 1,000 heights; heights outside `filled` are left out.                                       |
 
 Times are RFC 3339 UTC to the millisecond. A nil vote is a precommit for no
 block; `other_block`, a precommit for another block than the one committed.
