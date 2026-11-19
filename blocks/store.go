@@ -1,0 +1,490 @@
+// Package blocks records what the chain did at every height since genesis:
+// each block's time, proposer and round, the validator set that signed it,
+// which members did not sign it for the block and how, the vote delays, the
+// expected proposer of each round of a late block, and the events that changed
+// the set. It keeps them in SQLite, filled from an RPC source, as the facts
+// missed-block counts and validator scores are computed from.
+package blocks
+
+import (
+	"context"
+	"database/sql"
+	"errors"
+	"fmt"
+	"strconv"
+	"time"
+)
+
+// The schema stores each validator address once, in blocks_validators, and
+// refers to it by id elsewhere (blocks_events, a few rows per set change,
+// keeps its addresses as text), and keeps no index beside the tables' keys: an
+// absence is a few bytes, not an address and two index entries. It drops
+// signing_blocks and signing_misses where a database has them: blocks_absences
+// holds the same per-block misses, back to genesis.
+const schema = `
+CREATE TABLE IF NOT EXISTS blocks_validators (
+	id      INTEGER PRIMARY KEY,
+	address TEXT NOT NULL UNIQUE,
+	pub_key TEXT -- NULL until a stored validator set gives it
+);
+CREATE TABLE IF NOT EXISTS blocks (
+	height   INTEGER PRIMARY KEY,
+	time_ms  INTEGER NOT NULL,
+	proposer INTEGER NOT NULL,
+	round    INTEGER NOT NULL,
+	txs      INTEGER NOT NULL,
+	valset   INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS blocks_valsets (
+	id   INTEGER PRIMARY KEY,
+	hash TEXT NOT NULL UNIQUE
+);
+CREATE TABLE IF NOT EXISTS blocks_valset_members (
+	valset    INTEGER NOT NULL,
+	idx       INTEGER NOT NULL,
+	validator INTEGER NOT NULL,
+	power     INTEGER NOT NULL,
+	PRIMARY KEY (valset, idx)
+) WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS blocks_absences (
+	height    INTEGER NOT NULL,
+	validator INTEGER NOT NULL,
+	kind      INTEGER NOT NULL,
+	PRIMARY KEY (height, validator)
+) WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS blocks_rounds (
+	height   INTEGER NOT NULL,
+	round    INTEGER NOT NULL,
+	proposer INTEGER, -- NULL when unknown
+	PRIMARY KEY (height, round)
+) WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS blocks_flags (
+	height INTEGER PRIMARY KEY,
+	reason TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS blocks_events (
+	height        INTEGER NOT NULL,
+	idx           INTEGER NOT NULL,
+	source_height INTEGER NOT NULL,
+	type          TEXT NOT NULL,
+	operator      TEXT NOT NULL,
+	address       TEXT NOT NULL,
+	old_address   TEXT NOT NULL,
+	new_address   TEXT NOT NULL,
+	power         INTEGER NOT NULL,
+	applied       INTEGER NOT NULL,
+	PRIMARY KEY (height, idx)
+);
+CREATE TABLE IF NOT EXISTS blocks_missed_days (
+	day       INTEGER NOT NULL,
+	validator INTEGER NOT NULL,
+	missed    INTEGER NOT NULL, -- absent or other-block precommits in the day's stored blocks
+	PRIMARY KEY (day, validator)
+) WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS blocks_vote_delays (
+	day       INTEGER NOT NULL,
+	validator INTEGER NOT NULL,
+	votes     INTEGER NOT NULL,
+	sum_ms    INTEGER NOT NULL,
+	b0 INTEGER NOT NULL, b1 INTEGER NOT NULL, b2 INTEGER NOT NULL, b3 INTEGER NOT NULL,
+	b4 INTEGER NOT NULL, b5 INTEGER NOT NULL, b6 INTEGER NOT NULL,
+	PRIMARY KEY (day, validator)
+) WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS blocks_event_gaps (
+	height INTEGER PRIMARY KEY -- a validator set change whose events are not read yet
+);
+CREATE TABLE IF NOT EXISTS blocks_meta (
+	key   TEXT PRIMARY KEY,
+	value TEXT NOT NULL
+);
+DROP TABLE IF EXISTS signing_misses;
+DROP TABLE IF EXISTS signing_blocks;
+`
+
+const (
+	metaChainID = "chain_id"
+	metaFloor   = "floor"
+)
+
+// Store persists the block history. Times are kept to the millisecond.
+type Store struct {
+	db *sql.DB
+}
+
+// NewStore initializes the schema on db, which may be shared with other
+// stores.
+func NewStore(ctx context.Context, db *sql.DB) (*Store, error) {
+	if _, err := db.ExecContext(ctx, schema); err != nil {
+		return nil, fmt.Errorf("init block history schema: %w", err)
+	}
+	return &Store{db: db}, nil
+}
+
+// ---- Blocks
+
+// Write stores records in one transaction. A record's validator set must be
+// stored first. A height already stored keeps its rows: its vote delays are
+// counted once.
+func (s *Store) Write(ctx context.Context, recs []Record) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback()
+	ids, err := loadValidatorIDs(ctx, tx)
+	if err != nil {
+		return err
+	}
+	for _, r := range recs {
+		if err := writeRecord(ctx, tx, ids, r); err != nil {
+			return err
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit blocks: %w", err)
+	}
+	return nil
+}
+
+func writeRecord(ctx context.Context, tx *sql.Tx, ids *validatorIDs, r Record) error {
+	var valset int64
+	if err := tx.QueryRowContext(ctx, `SELECT id FROM blocks_valsets WHERE hash = ?`, r.ValsetHash).Scan(&valset); err != nil {
+		return fmt.Errorf("height %d: validator set %s: %w", r.Height, r.ValsetHash, err)
+	}
+	proposer, err := ids.id(ctx, r.Proposer)
+	if err != nil {
+		return err
+	}
+	res, err := tx.ExecContext(ctx,
+		`INSERT OR IGNORE INTO blocks(height, time_ms, proposer, round, txs, valset) VALUES(?, ?, ?, ?, ?, ?)`,
+		r.Height, r.Time.UnixMilli(), proposer, r.Round, r.Txs, valset)
+	if err != nil {
+		return fmt.Errorf("insert block %d: %w", r.Height, err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("insert block %d: %w", r.Height, err)
+	}
+	if n == 0 {
+		return nil // stored already: its rows and delay counts stand
+	}
+	for _, a := range r.Absences {
+		vid, err := ids.id(ctx, a.Address)
+		if err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx,
+			`INSERT INTO blocks_absences(height, validator, kind) VALUES(?, ?, ?)`, r.Height, vid, a.Kind,
+		); err != nil {
+			return fmt.Errorf("insert absence %d/%s: %w", r.Height, a.Address, err)
+		}
+	}
+	for round, p := range r.Rounds {
+		var proposer sql.NullInt64
+		if p != "" {
+			id, err := ids.id(ctx, p)
+			if err != nil {
+				return err
+			}
+			proposer = sql.NullInt64{Int64: id, Valid: true}
+		}
+		if _, err := tx.ExecContext(ctx,
+			`INSERT INTO blocks_rounds(height, round, proposer) VALUES(?, ?, ?)`, r.Height, round, proposer,
+		); err != nil {
+			return fmt.Errorf("insert round %d/%d: %w", r.Height, round, err)
+		}
+	}
+	if r.Flag != "" {
+		if _, err := tx.ExecContext(ctx,
+			`INSERT INTO blocks_flags(height, reason) VALUES(?, ?)`, r.Height, r.Flag,
+		); err != nil {
+			return fmt.Errorf("insert flag %d: %w", r.Height, err)
+		}
+	}
+	day := dayOf(r.Time)
+	for _, a := range r.Absences {
+		if a.Kind != Absent && a.Kind != OtherBlock {
+			continue
+		}
+		vid, err := ids.id(ctx, a.Address)
+		if err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx,
+			`INSERT INTO blocks_missed_days(day, validator, missed) VALUES(?, ?, 1)
+			 ON CONFLICT(day, validator) DO UPDATE SET missed = missed + 1`, day, vid,
+		); err != nil {
+			return fmt.Errorf("count miss %d/%s: %w", r.Height, a.Address, err)
+		}
+	}
+	for _, d := range r.Delays {
+		vid, err := ids.id(ctx, d.Address)
+		if err != nil {
+			return err
+		}
+		var b [DelayBuckets]int64
+		b[delayBucket(d.Ms)] = 1
+		if _, err := tx.ExecContext(ctx,
+			`INSERT INTO blocks_vote_delays(day, validator, votes, sum_ms, b0, b1, b2, b3, b4, b5, b6)
+			 VALUES(?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?)
+			 ON CONFLICT(day, validator) DO UPDATE SET
+			 votes = votes + 1, sum_ms = sum_ms + excluded.sum_ms,
+			 b0 = b0 + excluded.b0, b1 = b1 + excluded.b1, b2 = b2 + excluded.b2, b3 = b3 + excluded.b3,
+			 b4 = b4 + excluded.b4, b5 = b5 + excluded.b5, b6 = b6 + excluded.b6`,
+			day, vid, d.Ms, b[0], b[1], b[2], b[3], b[4], b[5], b[6],
+		); err != nil {
+			return fmt.Errorf("count delay %d/%s: %w", r.Height, d.Address, err)
+		}
+	}
+	return nil
+}
+
+// rangeQuery reads the lowest and highest stored heights. Each in its own
+// subquery, SQLite reads one end of the key; together in one, every row.
+const rangeQuery = `SELECT (SELECT MIN(height) FROM blocks), (SELECT MAX(height) FROM blocks)`
+
+// Range returns the lowest and highest stored heights, 0 and 0 when none is.
+func (s *Store) Range(ctx context.Context) (low, high int64, err error) {
+	return storedRange(ctx, s.db)
+}
+
+func storedRange(ctx context.Context, q queryRower) (low, high int64, err error) {
+	var lo, hi sql.NullInt64
+	if err := q.QueryRowContext(ctx, rangeQuery).Scan(&lo, &hi); err != nil {
+		return 0, 0, fmt.Errorf("block range: %w", err)
+	}
+	return lo.Int64, hi.Int64, nil
+}
+
+// TimeAt returns the time of the stored height.
+func (s *Store) TimeAt(ctx context.Context, height int64) (time.Time, bool, error) {
+	var ms int64
+	err := s.db.QueryRowContext(ctx, `SELECT time_ms FROM blocks WHERE height = ?`, height).Scan(&ms)
+	if errors.Is(err, sql.ErrNoRows) {
+		return time.Time{}, false, nil
+	}
+	if err != nil {
+		return time.Time{}, false, fmt.Errorf("time of %d: %w", height, err)
+	}
+	return time.UnixMilli(ms).UTC(), true, nil
+}
+
+// Earliest returns the time of the lowest stored height, or the zero time
+// when none is.
+func (s *Store) Earliest(ctx context.Context) (time.Time, error) {
+	var ms int64
+	err := s.db.QueryRowContext(ctx, `SELECT time_ms FROM blocks ORDER BY height LIMIT 1`).Scan(&ms)
+	if errors.Is(err, sql.ErrNoRows) {
+		return time.Time{}, nil
+	}
+	if err != nil {
+		return time.Time{}, fmt.Errorf("earliest block: %w", err)
+	}
+	return time.UnixMilli(ms).UTC(), nil
+}
+
+// Span is what the store holds for a span of heights.
+type Span struct {
+	Blocks  []Record            // ascending, with absences, expected round proposers and flags
+	Sets    map[string][]Member // the validator sets the blocks name, by hash
+	Changes map[int64]SetChange // the validator set changes in the span, by height
+}
+
+// SetChange is the events behind a validator set change, read from the block
+// at Source.
+type SetChange struct {
+	Source int64
+	Events []Event
+}
+
+// Blocks returns what the store holds for heights from to to.
+func (s *Store) Blocks(ctx context.Context, from, to int64) (Span, error) {
+	span := Span{Sets: map[string][]Member{}, Changes: map[int64]SetChange{}}
+	index := map[int64]int{}
+	err := s.each(ctx, func(rows *sql.Rows) error {
+		var r Record
+		var ms int64
+		if err := rows.Scan(&r.Height, &ms, &r.Proposer, &r.Round, &r.Txs, &r.ValsetHash); err != nil {
+			return err
+		}
+		r.Time = time.UnixMilli(ms).UTC()
+		index[r.Height] = len(span.Blocks)
+		span.Blocks = append(span.Blocks, r)
+		return nil
+	}, `SELECT b.height, b.time_ms, p.address, b.round, b.txs, v.hash FROM blocks b
+	    JOIN blocks_valsets v ON v.id = b.valset JOIN blocks_validators p ON p.id = b.proposer
+	    WHERE b.height BETWEEN ? AND ? ORDER BY b.height`, from, to)
+	if err != nil {
+		return Span{}, fmt.Errorf("blocks %d-%d: %w", from, to, err)
+	}
+	err = s.each(ctx, func(rows *sql.Rows) error {
+		var h int64
+		var a Absence
+		if err := rows.Scan(&h, &a.Address, &a.Kind); err != nil {
+			return err
+		}
+		if i, ok := index[h]; ok {
+			span.Blocks[i].Absences = append(span.Blocks[i].Absences, a)
+		}
+		return nil
+	}, `SELECT a.height, v.address, a.kind FROM blocks_absences a
+	    JOIN blocks b ON b.height = a.height
+	    JOIN blocks_valset_members m ON m.valset = b.valset AND m.validator = a.validator
+	    JOIN blocks_validators v ON v.id = a.validator
+	    WHERE a.height BETWEEN ? AND ? ORDER BY a.height, m.idx`, from, to)
+	if err != nil {
+		return Span{}, fmt.Errorf("absences %d-%d: %w", from, to, err)
+	}
+	err = s.each(ctx, func(rows *sql.Rows) error {
+		var h int64
+		var p sql.NullString
+		if err := rows.Scan(&h, &p); err != nil {
+			return err
+		}
+		if i, ok := index[h]; ok {
+			span.Blocks[i].Rounds = append(span.Blocks[i].Rounds, p.String)
+		}
+		return nil
+	}, `SELECT r.height, v.address FROM blocks_rounds r LEFT JOIN blocks_validators v ON v.id = r.proposer
+	    WHERE r.height BETWEEN ? AND ? ORDER BY r.height, r.round`, from, to)
+	if err != nil {
+		return Span{}, fmt.Errorf("rounds %d-%d: %w", from, to, err)
+	}
+	err = s.each(ctx, func(rows *sql.Rows) error {
+		var h int64
+		var reason string
+		if err := rows.Scan(&h, &reason); err != nil {
+			return err
+		}
+		if i, ok := index[h]; ok {
+			span.Blocks[i].Flag = reason
+		}
+		return nil
+	}, `SELECT height, reason FROM blocks_flags WHERE height BETWEEN ? AND ?`, from, to)
+	if err != nil {
+		return Span{}, fmt.Errorf("flags %d-%d: %w", from, to, err)
+	}
+	err = s.each(ctx, func(rows *sql.Rows) error {
+		var h int64
+		var source int64
+		var e Event
+		if err := rows.Scan(&h, &source, &e.Type, &e.Operator, &e.Address, &e.OldAddress, &e.NewAddress, &e.Power, &e.Applied); err != nil {
+			return err
+		}
+		change := span.Changes[h]
+		change.Source = source
+		change.Events = append(change.Events, e)
+		span.Changes[h] = change
+		return nil
+	}, `SELECT height, source_height, type, operator, address, old_address, new_address, power, applied
+	    FROM blocks_events WHERE height BETWEEN ? AND ? ORDER BY height, idx`, from, to)
+	if err != nil {
+		return Span{}, fmt.Errorf("events %d-%d: %w", from, to, err)
+	}
+	for _, r := range span.Blocks {
+		if _, ok := span.Sets[r.ValsetHash]; ok {
+			continue
+		}
+		members, _, err := s.Valset(ctx, r.ValsetHash)
+		if err != nil {
+			return Span{}, err
+		}
+		span.Sets[r.ValsetHash] = members
+	}
+	return span, nil
+}
+
+// each runs query and calls scan on each row.
+func (s *Store) each(ctx context.Context, scan func(*sql.Rows) error, query string, args ...any) error {
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		if err := scan(rows); err != nil {
+			return err
+		}
+	}
+	return rows.Err()
+}
+
+// ---- Meta
+
+// ChainID returns the chain the stored history belongs to, or "" before Reset.
+func (s *Store) ChainID(ctx context.Context) (string, error) {
+	return s.meta(ctx, metaChainID)
+}
+
+// Floor returns the lowest height the source serves, recorded when it refused
+// a lower one, or 0.
+func (s *Store) Floor(ctx context.Context) (int64, error) {
+	v, err := s.meta(ctx, metaFloor)
+	if err != nil || v == "" {
+		return 0, err
+	}
+	h, err := strconv.ParseInt(v, 10, 64)
+	if err != nil {
+		return 0, fmt.Errorf("floor %q: %w", v, err)
+	}
+	return h, nil
+}
+
+// SetFloor records the lowest height the source serves.
+func (s *Store) SetFloor(ctx context.Context, height int64) error {
+	if _, err := s.db.ExecContext(ctx,
+		`INSERT INTO blocks_meta(key, value) VALUES(?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+		metaFloor, strconv.FormatInt(height, 10),
+	); err != nil {
+		return fmt.Errorf("write floor: %w", err)
+	}
+	return nil
+}
+
+// ClearFloor forgets the recorded floor, for the source to be asked below it
+// again.
+func (s *Store) ClearFloor(ctx context.Context) error {
+	if _, err := s.db.ExecContext(ctx, `DELETE FROM blocks_meta WHERE key = ?`, metaFloor); err != nil {
+		return fmt.Errorf("clear floor: %w", err)
+	}
+	return nil
+}
+
+// Reset drops the whole history and marks the store as holding chainID's.
+func (s *Store) Reset(ctx context.Context, chainID string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin reset tx: %w", err)
+	}
+	defer tx.Rollback()
+	for _, table := range []string{
+		"blocks", "blocks_validators", "blocks_valsets", "blocks_valset_members", "blocks_absences",
+		"blocks_rounds", "blocks_flags", "blocks_events", "blocks_event_gaps", "blocks_missed_days", "blocks_vote_delays",
+		"blocks_meta",
+	} {
+		if _, err := tx.ExecContext(ctx, "DELETE FROM "+table); err != nil {
+			return fmt.Errorf("reset %s: %w", table, err)
+		}
+	}
+	if _, err := tx.ExecContext(ctx,
+		`INSERT INTO blocks_meta(key, value) VALUES(?, ?)`, metaChainID, chainID,
+	); err != nil {
+		return fmt.Errorf("reset chain id: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit reset: %w", err)
+	}
+	return nil
+}
+
+func (s *Store) meta(ctx context.Context, key string) (string, error) {
+	var v string
+	err := s.db.QueryRowContext(ctx, `SELECT value FROM blocks_meta WHERE key = ?`, key).Scan(&v)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("read %s: %w", key, err)
+	}
+	return v, nil
+}

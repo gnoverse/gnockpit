@@ -12,12 +12,11 @@ import (
 	"net/http"
 	"slices"
 	"sort"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
 
-	"github.com/gnoverse/gnockpit/history"
+	"github.com/gnoverse/gnockpit/blocks"
 	"github.com/gnoverse/gnockpit/node"
 	"github.com/gnoverse/gnockpit/web/icon"
 	"github.com/gnoverse/gnockpit/web/push"
@@ -38,10 +37,6 @@ const (
 	// checked for a new monthly release. The check is a cheap date comparison;
 	// a download only happens when the month actually changes.
 	geoIPRefreshInterval = 24 * time.Hour
-	// historyRetention bounds how far back block-signing history is kept.
-	historyRetention = 31 * 24 * time.Hour
-	// historyPruneInterval governs how often old signing history is pruned.
-	historyPruneInterval = time.Hour
 )
 
 // wsMsg is a WebSocket message envelope.
@@ -60,6 +55,12 @@ var upgrader = websocket.Upgrader{
 	CheckOrigin: func(r *http.Request) bool { return true },
 }
 
+// BlockFill is the fill progress of the block history. *blocks.Tracker
+// provides it.
+type BlockFill interface {
+	Progress() blocks.Progress
+}
+
 // Server serves the web dashboard with WebSocket and background data fetching.
 type Server struct {
 	Client   *node.Client  // primary endpoint (first --rpc): names, genesis, boot
@@ -70,7 +71,7 @@ type Server struct {
 	mu          sync.RWMutex
 	snapshot    *node.Snapshot
 	missed24h   map[string]int // val address -> blocks missed in last 24h (guarded by mu)
-	missedSince time.Time      // oldest retained block time; how far back missed counts reach (guarded by mu)
+	missedSince time.Time      // time of the oldest stored block; how far back missed counts reach (guarded by mu)
 
 	etaBlockTimes blockTimeCache // times of reached blocks asked for on /api/eta
 
@@ -79,19 +80,20 @@ type Server struct {
 	wsClients map[*wsClient]struct{}
 
 	// Set by caller before Run.
-	PushManager     *push.Manager  // push notification manager (nil = disabled)
-	MaxMissedInARow int            // consecutive missed/signed blocks that flip a validator down/up
-	GeoIP           *node.GeoIP    // IP geolocation for the network map (nil = disabled)
-	ASN             *node.ASN      // IP-to-ASN/cloud-provider resolution (nil = disabled)
-	History         *history.Store // block-signing history for missed-block windows (nil = disabled)
-	ETA             ETAView        // block-time model and scheduled halt for /api/eta (nil = disabled)
-	NotifyTestToken string         // bearer token for the notify-test API (empty = disabled)
-	ChainStuckSecs  int            // seconds without a new block before status is "down"
-	Links           []Link         // static header link buttons
-	StatusLinks     []*StatusLink  // header links with a live BetterStack status dot
-	HideSources     bool           // hide the configured source nodes from the peers list
-	ChainName       string         // display name for the chain; defaults to the chain-id when empty
-	Analytics       Analytics      // third-party analytics snippet injected into the dashboard (zero value = none)
+	PushManager     *push.Manager // push notification manager (nil = disabled)
+	MaxMissedInARow int           // consecutive missed/signed blocks that flip a validator down/up
+	GeoIP           *node.GeoIP   // IP geolocation for the network map (nil = disabled)
+	ASN             *node.ASN     // IP-to-ASN/cloud-provider resolution (nil = disabled)
+	Blocks          *blocks.Store // block history: missed-block windows and /api/history (nil = disabled)
+	BlockFill       BlockFill     // fill progress of the block history for /api/history (nil = disabled)
+	ETA             ETAView       // block-time model and scheduled halt for /api/eta (nil = disabled)
+	NotifyTestToken string        // bearer token for the notify-test API (empty = disabled)
+	ChainStuckSecs  int           // seconds without a new block before status is "down"
+	Links           []Link        // static header link buttons
+	StatusLinks     []*StatusLink // header links with a live BetterStack status dot
+	HideSources     bool          // hide the configured source nodes from the peers list
+	ChainName       string        // display name for the chain; defaults to the chain-id when empty
+	Analytics       Analytics     // third-party analytics snippet injected into the dashboard (zero value = none)
 }
 
 // NewServer creates a new web server.
@@ -716,73 +718,31 @@ func (s *Server) ensureValidatorNames(snap *node.Snapshot) {
 
 // --- Publish Loop ---
 
-// recordHistory persists this snapshot's recent blocks into the signing-history
-// store and refreshes the cached missed-24h counts used by the validators view.
-// Errors are logged and swallowed: the live dashboard must keep working even if
-// history recording fails.
-func (s *Server) recordHistory(ctx context.Context, snap *node.Snapshot) {
-	if s.History == nil || snap == nil || snap.Signing == nil {
+// refreshMissed refreshes the cached missed-24h counts, and how far back they
+// reach, from the block history. Errors are logged and swallowed: the live
+// dashboard must keep working even if the history read fails.
+func (s *Server) refreshMissed(ctx context.Context) {
+	if s.Blocks == nil {
 		return
 	}
-	blocks := make([]history.Block, 0, len(snap.Signing.RecentBlocks))
-	for _, b := range snap.Signing.RecentBlocks {
-		h, err := strconv.ParseInt(b.Height, 10, 64)
-		if err != nil {
-			continue
-		}
-		t, err := time.Parse(time.RFC3339Nano, b.Time)
-		if err != nil {
-			continue
-		}
-		missing := make([]string, 0, len(b.Missing))
-		for _, mv := range b.Missing {
-			missing = append(missing, mv.Address)
-		}
-		blocks = append(blocks, history.Block{Height: h, Time: t, Missing: missing})
-	}
-	if err := s.History.RecordBlocks(ctx, blocks); err != nil {
-		log.Printf("history: record blocks: %v", err)
-		return
-	}
-	now := time.Now()
-	wc, err := s.History.MissedInWindow(ctx, 24*time.Hour, now)
+	rep, err := s.Blocks.MissedByWindows(ctx, []time.Duration{24 * time.Hour}, time.Now())
 	if err != nil {
-		log.Printf("history: missed-24h: %v", err)
+		log.Printf("blocks: missed-24h: %v", err)
 		return
 	}
-	earliest, err := s.History.EarliestRecorded(ctx)
+	earliest, err := s.Blocks.Earliest(ctx)
 	if err != nil {
-		log.Printf("history: earliest recorded: %v", err)
+		log.Printf("blocks: earliest block: %v", err)
 		return
+	}
+	missed := make(map[string]int, len(rep.Missed))
+	for addr, n := range rep.Missed {
+		missed[addr] = n[0]
 	}
 	s.mu.Lock()
-	s.missed24h = wc.Missed
+	s.missed24h = missed
 	s.missedSince = earliest
 	s.mu.Unlock()
-}
-
-// historyPruneLoop periodically drops signing history older than the retention
-// horizon, then repeats on a slow timer.
-func (s *Server) historyPruneLoop(ctx context.Context) {
-	if s.History == nil {
-		return
-	}
-	prune := func() {
-		if err := s.History.Prune(ctx, time.Now().Add(-historyRetention)); err != nil {
-			log.Printf("history: prune: %v", err)
-		}
-	}
-	prune()
-	ticker := time.NewTicker(historyPruneInterval)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			prune()
-		}
-	}
 }
 
 func (s *Server) publishLoop(ctx context.Context) {
@@ -803,7 +763,7 @@ func (s *Server) publishLoop(ctx context.Context) {
 		// immutable when a WebSocket client reads it on connect.
 		s.applyValidatorHealth(snap)
 		s.setSnapshot(snap)
-		s.recordHistory(ctx, snap)
+		s.refreshMissed(ctx)
 
 		// Broadcast to WebSocket clients as a single batched message to reduce
 		// JSON.parse calls and WS message overhead on the frontend.
@@ -1116,7 +1076,6 @@ func (s *Server) Run(ctx context.Context) error {
 	go s.geoIPRefreshLoop(ctx)
 	go s.asnRefreshLoop(ctx)
 	go s.statusLinkRefreshLoop(ctx)
-	go s.historyPruneLoop(ctx)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", s.handleIndex)
@@ -1140,6 +1099,7 @@ func (s *Server) Run(ctx context.Context) error {
 	mux.HandleFunc("/api/status", s.handleStatus)
 	mux.HandleFunc("/api/stats", s.handleStats)
 	mux.HandleFunc("/api/eta", s.handleETA)
+	mux.HandleFunc("/api/history", s.handleHistory)
 	mux.HandleFunc("/badge.svg", s.handleBadge)
 
 	srv := &http.Server{

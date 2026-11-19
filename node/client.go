@@ -1,6 +1,7 @@
 package node
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
@@ -23,6 +24,9 @@ type Client struct {
 	Timeout time.Duration
 	LogFn   LogFunc
 	Names   *NameRegistry
+
+	commitsMu sync.Mutex
+	commits   map[int64]Commit // final commits GetSigningStats read, by height
 }
 
 // NewClient creates a new RPC client.
@@ -37,39 +41,50 @@ func NewClient(rpcURL string, timeout time.Duration) *Client {
 
 // rpcGet performs a GET request and returns the raw body.
 func (c *Client) rpcGet(ctx context.Context, path string) ([]byte, error) {
-	url := c.RPCURL + path
-	start := time.Now()
+	return c.send(ctx, http.MethodGet, c.RPCURL+path, nil)
+}
 
-	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+// send performs a request, a JSON POST when payload is not nil, logs it, and
+// returns the body of a 2xx answer; any other status is an *HTTPStatusError.
+func (c *Client) send(ctx context.Context, method, url string, payload []byte) ([]byte, error) {
+	start := time.Now()
+	var body io.Reader
+	if payload != nil {
+		body = bytes.NewReader(payload)
+	}
+	req, err := http.NewRequestWithContext(ctx, method, url, body)
 	if err != nil {
 		if c.LogFn != nil {
-			c.LogFn("GET", url, 0, time.Since(start), err)
+			c.LogFn(method, url, 0, time.Since(start), err)
 		}
 		return nil, err
+	}
+	if payload != nil {
+		req.Header.Set("Content-Type", "application/json")
 	}
 
 	resp, err := c.HTTP.Do(req)
 	dur := time.Since(start)
 	if err != nil {
 		if c.LogFn != nil {
-			c.LogFn("GET", url, 0, dur, err)
+			c.LogFn(method, url, 0, dur, err)
 		}
 		return nil, err
 	}
 	defer resp.Body.Close()
 
 	if c.LogFn != nil {
-		c.LogFn("GET", url, resp.StatusCode, dur, nil)
+		c.LogFn(method, url, resp.StatusCode, dur, nil)
 	}
 
-	body, err := io.ReadAll(resp.Body)
+	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, err
 	}
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		return nil, newHTTPStatusError(url, resp, body)
+		return nil, newHTTPStatusError(method, url, resp, respBody)
 	}
-	return body, nil
+	return respBody, nil
 }
 
 // rpcResult wraps the JSON-RPC response envelope.
@@ -269,25 +284,6 @@ func (c *Client) GetValidators(ctx context.Context) ([]Validator, error) {
 	return vals, nil
 }
 
-// GetValidatorSetAt returns the set of validator addresses at a given height,
-// used to tell an established-but-down validator (in the set from the window's
-// start) from one that was only added mid-window.
-func (c *Client) GetValidatorSetAt(ctx context.Context, height int) (map[string]bool, error) {
-	var result struct {
-		Validators []struct {
-			Address string `json:"address"`
-		} `json:"validators"`
-	}
-	if err := c.rpcGetJSON(ctx, fmt.Sprintf("/validators?height=%d", height), &result); err != nil {
-		return nil, err
-	}
-	set := make(map[string]bool, len(result.Validators))
-	for _, v := range result.Validators {
-		set[v.Address] = true
-	}
-	return set, nil
-}
-
 // BlockTime returns the time of the block at height, read from its header via
 // /blockchain (one header, no transactions).
 func (c *Client) BlockTime(ctx context.Context, height int64) (time.Time, error) {
@@ -337,51 +333,42 @@ func (c *Client) GetBlockAppHash(ctx context.Context, height int) (string, error
 	return block.Block.Header.AppHash, nil
 }
 
-// CommitInfo holds the header and precommit signatures for a single height,
-// fetched via /commit (lighter than /block — no transaction body).
-type CommitInfo struct {
-	Height          string
-	Time            string
-	ProposerAddress string
-	AppHash         string
-	NumTxs          int
-	// Precommits has one entry per validator slot; "null" means that validator
-	// did not sign. These are the signatures that finalized THIS height.
-	Precommits []json.RawMessage
+// commit returns the commit of height, from memory when an earlier call read
+// it final (canonical): a window sliding by one block costs one or two calls,
+// the new head and the one before it, final by then.
+func (c *Client) commit(ctx context.Context, height int64) (Commit, error) {
+	c.commitsMu.Lock()
+	cm, ok := c.commits[height]
+	c.commitsMu.Unlock()
+	if ok {
+		return cm, nil
+	}
+	cm, err := c.Commit(ctx, height)
+	if err != nil {
+		return Commit{}, err
+	}
+	if cm.Canonical {
+		c.commitsMu.Lock()
+		if c.commits == nil {
+			c.commits = map[int64]Commit{}
+		}
+		c.commits[height] = cm
+		c.commitsMu.Unlock()
+	}
+	return cm, nil
 }
 
-// GetCommit fetches /commit at a height: the block header plus the precommits
-// that finalized that height. Unlike a block's last_commit (which proves the
-// previous height), /commit?height=H is the signing record for H itself.
-func (c *Client) GetCommit(ctx context.Context, height int) (*CommitInfo, error) {
-	path := fmt.Sprintf("/commit?height=%d", height)
-	var result struct {
-		SignedHeader struct {
-			Header struct {
-				Height          string `json:"height"`
-				Time            string `json:"time"`
-				ProposerAddress string `json:"proposer_address"`
-				AppHash         string `json:"app_hash"`
-				NumTxs          string `json:"num_txs"`
-			} `json:"header"`
-			Commit struct {
-				Precommits []json.RawMessage `json:"precommits"`
-			} `json:"commit"`
-		} `json:"signed_header"`
+// forgetCommitsOutside drops the commits kept for heights outside [from, to]:
+// below, the window left them; above the head, they are an earlier chain's,
+// the RPC's chain having restarted from genesis.
+func (c *Client) forgetCommitsOutside(from, to int64) {
+	c.commitsMu.Lock()
+	defer c.commitsMu.Unlock()
+	for h := range c.commits {
+		if h < from || h > to {
+			delete(c.commits, h)
+		}
 	}
-	if err := c.rpcGetJSON(ctx, path, &result); err != nil {
-		return nil, err
-	}
-	h := result.SignedHeader.Header
-	numTxs, _ := strconv.Atoi(h.NumTxs)
-	return &CommitInfo{
-		Height:          h.Height,
-		Time:            h.Time,
-		ProposerAddress: h.ProposerAddress,
-		AppHash:         h.AppHash,
-		NumTxs:          numTxs,
-		Precommits:      result.SignedHeader.Commit.Precommits,
-	}, nil
 }
 
 // GetSigningStats fetches the last `window` blocks (capped at 100) and returns
@@ -416,18 +403,26 @@ func (c *Client) GetSigningStats(ctx context.Context, currentHeight int, window 
 	}
 
 	startHeight := currentHeight - window + 1
+	c.forgetCommitsOutside(int64(startHeight), int64(currentHeight))
 	// Valset at the window's first block (best-effort): lets computeSigning tell
 	// an established-but-down validator from one only added mid-window. If this
 	// fails (nil), a validator down for the whole window looks never-eligible and
 	// won't be flagged that cycle — it recovers once the lookup succeeds.
-	atStart, _ := c.GetValidatorSetAt(ctx, startHeight)
+	var atStart map[string]bool
+	if set, err := c.ValidatorSet(ctx, int64(startHeight)); err == nil {
+		atStart = make(map[string]bool, len(set))
+		for _, m := range set {
+			atStart[m.Address] = true
+		}
+	}
 
 	// Pass 1: fetch each commit, collecting the ordered per-block signer sets
 	// (oldest first) and block metadata.
 	var signers []map[string]bool
 	var proposers []string
+	var times []time.Time
 	for h := startHeight; h <= currentHeight; h++ {
-		commit, err := c.GetCommit(ctx, h)
+		commit, err := c.commit(ctx, int64(h))
 		if err != nil {
 			continue
 		}
@@ -436,27 +431,23 @@ func (c *Client) GetSigningStats(ctx context.Context, currentHeight int, window 
 		if blockTotal == 0 {
 			blockTotal = len(valAddrs) // fallback for genesis block
 		}
+		// A precommit for the block or for nil signs it; an empty slot or a
+		// precommit for another block misses it, as in the block history.
 		signed := map[string]bool{}
 		for _, pc := range commit.Precommits {
-			if string(pc) == "null" {
-				continue
-			}
-			var vote struct {
-				ValidatorAddress string `json:"validator_address"`
-			}
-			if json.Unmarshal(pc, &vote) == nil && vote.ValidatorAddress != "" {
-				signed[vote.ValidatorAddress] = true
+			if pc != nil && (pc.BlockHash == "" || pc.BlockHash == commit.BlockHash) {
+				signed[pc.Address] = true
 			}
 		}
-		proposerName := commit.ProposerAddress
+		proposerName := commit.Proposer
 		if c.Names != nil {
-			if n := c.Names.Name(commit.ProposerAddress); n != commit.ProposerAddress {
+			if n := c.Names.Name(commit.Proposer); n != commit.Proposer {
 				proposerName = n
 			}
 		}
 		stats.RecentBlocks = append(stats.RecentBlocks, BlockInfo{
-			Height:   commit.Height,
-			Time:     commit.Time,
+			Height:   strconv.FormatInt(commit.Height, 10),
+			Time:     commit.Time.Format(time.RFC3339Nano),
 			Total:    blockTotal,
 			Signers:  len(signed),
 			Proposer: proposerName,
@@ -464,7 +455,8 @@ func (c *Client) GetSigningStats(ctx context.Context, currentHeight int, window 
 			NumTxs:   commit.NumTxs,
 		})
 		signers = append(signers, signed)
-		proposers = append(proposers, commit.ProposerAddress)
+		proposers = append(proposers, commit.Proposer)
+		times = append(times, commit.Time)
 	}
 
 	stats.ValidatorSigning = computeSigning(signers, atStart, valAddrs)
@@ -490,12 +482,7 @@ func (c *Client) GetSigningStats(ctx context.Context, currentHeight int, window 
 	var totalBlockMs int64
 	var blockCount int
 	for i := 1; i < len(stats.RecentBlocks); i++ {
-		t1, err1 := time.Parse(time.RFC3339Nano, stats.RecentBlocks[i-1].Time)
-		t2, err2 := time.Parse(time.RFC3339Nano, stats.RecentBlocks[i].Time)
-		if err1 != nil || err2 != nil {
-			continue
-		}
-		ms := int(t2.Sub(t1).Milliseconds())
+		ms := int(times[i].Sub(times[i-1]).Milliseconds())
 		if ms < 0 {
 			ms = 0
 		}

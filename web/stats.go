@@ -9,7 +9,7 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/gnoverse/gnockpit/history"
+	"github.com/gnoverse/gnockpit/blocks"
 	"github.com/gnoverse/gnockpit/node"
 )
 
@@ -31,8 +31,8 @@ var statsWindows = []struct {
 }
 
 // Stats is gnockpit's aggregate network statistics, exposed at /api/stats for
-// external dashboards. It is derived from the latest snapshot plus recorded
-// block-signing history.
+// external dashboards. It is derived from the latest snapshot and the block
+// history.
 type Stats struct {
 	Time          string         `json:"time"`
 	Chain         string         `json:"chain,omitempty"`
@@ -116,8 +116,8 @@ func nakamotoCoefficient(vals []node.Validator) int {
 }
 
 // buildStats assembles the /api/stats payload from the latest snapshot and the
-// signing-history store (which may be nil when history is disabled).
-func buildStats(ctx context.Context, snap *node.Snapshot, hist *history.Store, now time.Time) Stats {
+// block history (which may be nil when it is disabled).
+func buildStats(ctx context.Context, snap *node.Snapshot, hist *blocks.Store, now time.Time) Stats {
 	st := Stats{Time: now.UTC().Format(time.RFC3339)}
 	if snap == nil {
 		return st
@@ -141,12 +141,12 @@ func buildStats(ctx context.Context, snap *node.Snapshot, hist *history.Store, n
 		}
 	}
 
-	// Missed-block windows from history.
+	// Missed-block windows from the block history.
 	durs := make([]time.Duration, len(statsWindows))
 	for i, w := range statsWindows {
 		durs[i] = w.dur
 	}
-	var rep history.WindowReport
+	var rep blocks.WindowReport
 	if hist != nil {
 		if r, err := hist.MissedByWindows(ctx, durs, now); err != nil {
 			log.Printf("stats: missed by windows: %v", err)
@@ -156,8 +156,8 @@ func buildStats(ctx context.Context, snap *node.Snapshot, hist *history.Store, n
 				vs.WindowBlocks[w.label] = r.Blocks[i]
 			}
 		}
-		if since, err := hist.EarliestRecorded(ctx); err != nil {
-			log.Printf("stats: earliest recorded: %v", err)
+		if since, err := hist.Earliest(ctx); err != nil {
+			log.Printf("stats: earliest block: %v", err)
 		} else if !since.IsZero() {
 			st.RecordedSince = since.UTC().Format(time.RFC3339)
 		}
@@ -261,7 +261,7 @@ func ctry(m map[string]*CountryStat, code string) *CountryStat {
 // handleStats serves aggregate network statistics as JSON. CORS-open so third
 // parties can build their own dashboards from it.
 func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
-	st := buildStats(r.Context(), s.getSnapshot(), s.History, time.Now())
+	st := buildStats(r.Context(), s.getSnapshot(), s.Blocks, time.Now())
 	body, err := json.MarshalIndent(st, "", "  ")
 	if err != nil {
 		log.Printf("stats: encode: %v", err)

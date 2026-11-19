@@ -41,7 +41,7 @@ func OpenDB(path string) (*DB, error) {
 func (d *DB) Close() error { return d.db.Close() }
 
 // SQL returns the underlying database handle so sibling stores (e.g. the
-// signing-history store) can share the single connection.
+// block history) can share the single connection.
 func (d *DB) SQL() *sql.DB { return d.db }
 
 func initSchema(db *sql.DB) error {

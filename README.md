@@ -38,27 +38,29 @@ appear for the same peer, the earlier `-rpc` in flag order wins.
 
 ## Flags
 
-| Flag                    | Default                    | Description                                                                                                                                                          |
-| ----------------------- | -------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `-rpc`                  | `http://127.0.0.1:26657`   | Tendermint RPC endpoint; repeatable to consolidate several sources (flag order = precedence)                                                                         |
-| `-names`                | `/tmp/gnockpit-names.json` | Persistent name registry                                                                                                                                             |
-| `-port`                 | `8080`                     | Web server port                                                                                                                                                      |
-| `-addr`                 | `0.0.0.0`                  | Bind address                                                                                                                                                         |
-| `-interval`             | `5s`                       | Dashboard refresh interval                                                                                                                                           |
-| `-v`                    | false                      | Verbose HTTP logging                                                                                                                                                 |
-| `--db-path`             | `/tmp/gnockpit.db`         | SQLite database for push notifications, missed-block history and block-ETA history (see Push Notifications, Block ETA)                                               |
-| `--chain-stuck-secs`    | `30`                       | Seconds without a new block before the chain-stuck alert fires                                                                                                       |
-| `--notify`              | (none)                     | Shoutrrr notification URL (repeatable); see External Notifications                                                                                                   |
-| `--redact-secret`       | false                      | Strip notification URL secrets from logged Shoutrrr errors; see External Notifications                                                                               |
-| `--max-missed-in-a-row` | `10`                       | Consecutive blocks a validator must miss to be flagged down (alert fires + counted inactive); it recovers after signing that many in a row                           |
-| `--geoip-db`            | `/tmp/gnockpit-geoip.mmdb` | DB-IP City Lite mmdb powering the network map + country columns; auto-downloaded and refreshed monthly. Empty disables it.                                           |
-| `--asn-db`              | `/tmp/gnockpit-asn.mmdb`   | DB-IP ASN Lite mmdb powering cloud-provider detection; auto-downloaded and refreshed monthly. Empty disables it.                                                     |
-| `--hide-sources`        | false                      | Hide the configured source nodes from the peers list                                                                                                                 |
-| `--chain-name`          | (chain-id)                 | Display name for the chain in titles and the app icon; defaults to the chain-id (e.g. `test13` for chain-id `test-13`)                                               |
-| `--link`                | (none)                     | Extra header link button, `"Title\|URL"`; repeatable                                                                                                                 |
-| `--status-link`         | (none)                     | Header link with a live status dot, `"Title\|URL"`; repeatable. BetterStack status pages only for now: the dot reflects `<URL>/index.json`                           |
-| `--analytics`           | (off)                      | Load a third-party analytics script in the dashboard; only `simple-analytics` is supported. See Analytics.                                                           |
-| `--analytics-domain`    | (none)                     | Serve the analytics script and its no-JS pixel from a custom domain (e.g. `sa.example.com`) instead of the provider's own hosts; needs `--analytics`. See Analytics. |
+| Flag                    | Default                    | Description                                                                                                                                                                                                                                           |
+| ----------------------- | -------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `-rpc`                  | `http://127.0.0.1:26657`   | Tendermint RPC endpoint; repeatable to consolidate several sources (flag order = precedence)                                                                                                                                                          |
+| `-names`                | `/tmp/gnockpit-names.json` | Persistent name registry                                                                                                                                                                                                                              |
+| `-port`                 | `8080`                     | Web server port                                                                                                                                                                                                                                       |
+| `-addr`                 | `0.0.0.0`                  | Bind address                                                                                                                                                                                                                                          |
+| `-interval`             | `5s`                       | Dashboard refresh interval                                                                                                                                                                                                                            |
+| `-v`                    | false                      | Verbose HTTP logging                                                                                                                                                                                                                                  |
+| `--db-path`             | `/tmp/gnockpit.db`         | SQLite database for push notifications, the block history and block-ETA history; keep it on a persistent path (see Push Notifications, Block history, Block ETA)                                                                                      |
+| `--history-pace`        | `1s`                       | Wait between the batches that fill the block history, back to genesis and up to the head after downtime; `0` for none (see Block history)                                                                                                             |
+| `--history-batch`       | `100`                      | Commits asked in one JSON-RPC batch while filling the block history; halved until restart when the first `-rpc` refuses a batch, for 10 minutes when one times out; at `1`, the backfill never completes at a node's oldest block (see Block history) |
+| `--chain-stuck-secs`    | `30`                       | Seconds without a new block before the chain-stuck alert fires                                                                                                                                                                                        |
+| `--notify`              | (none)                     | Shoutrrr notification URL (repeatable); see External Notifications                                                                                                                                                                                    |
+| `--redact-secret`       | false                      | Strip notification URL secrets from logged Shoutrrr errors; see External Notifications                                                                                                                                                                |
+| `--max-missed-in-a-row` | `10`                       | Consecutive blocks a validator must miss to be flagged down (alert fires + counted inactive); it recovers after signing that many in a row                                                                                                            |
+| `--geoip-db`            | `/tmp/gnockpit-geoip.mmdb` | DB-IP City Lite mmdb powering the network map + country columns; auto-downloaded and refreshed monthly. Empty disables it.                                                                                                                            |
+| `--asn-db`              | `/tmp/gnockpit-asn.mmdb`   | DB-IP ASN Lite mmdb powering cloud-provider detection; auto-downloaded and refreshed monthly. Empty disables it.                                                                                                                                      |
+| `--hide-sources`        | false                      | Hide the configured source nodes from the peers list                                                                                                                                                                                                  |
+| `--chain-name`          | (chain-id)                 | Display name for the chain in titles and the app icon; defaults to the chain-id (e.g. `test13` for chain-id `test-13`)                                                                                                                                |
+| `--link`                | (none)                     | Extra header link button, `"Title\|URL"`; repeatable                                                                                                                                                                                                  |
+| `--status-link`         | (none)                     | Header link with a live status dot, `"Title\|URL"`; repeatable. BetterStack status pages only for now: the dot reflects `<URL>/index.json`                                                                                                            |
+| `--analytics`           | (off)                      | Load a third-party analytics script in the dashboard; only `simple-analytics` is supported. See Analytics.                                                                                                                                            |
+| `--analytics-domain`    | (none)                     | Serve the analytics script and its no-JS pixel from a custom domain (e.g. `sa.example.com`) instead of the provider's own hosts; needs `--analytics`. See Analytics.                                                                                  |
 
 ## Analytics
 
@@ -188,14 +190,46 @@ A configured source reached over `localhost` or a private address has no public
 IP of its own; gnockpit then uses its own public egress IP for that source's map
 location, which is accurate when gnockpit runs alongside the node.
 
-## Missed-block history
+## Block history
 
-Per-block validator signing is recorded forward into the SQLite database
-(`--db-path`) as blocks are observed — never backfilled — enabling missed-block
-counts over 1h / 24h / 7d / 30d / total windows (surfaced in the validators
-table and `/api/stats`). History older than 31 days is pruned. Windows only
-cover data recorded since gnockpit started; `/api/stats` exposes `recorded_since`
-so consumers know the coverage.
+gnockpit records every block since genesis in the SQLite database
+(`--db-path`; on a temporary path, a reboot means filling it again). It takes
+about 100 bytes a block on onyx (56 validators): about 130 MB for 1.25M blocks.
+
+- **Recorded** — each block's time, proposer and round, the validator set that
+  signed it, and the members of that set that did not sign it for the block:
+  absent, or a precommit for nil or for another block. Also each validator's
+  vote delays (how far its precommit's time is from the commit's
+  voting-power-weighted median time), as daily histograms; the expected
+  proposer of each round of a block finalized after round 0, and a flag when a
+  block's proposer is not the expected one or cannot be checked (checked on
+  those blocks and on every 1,000th); and the events behind each validator set change.
+- **Fill** — gnockpit follows the chain head from the first `-rpc` and, in
+  between, fills the older blocks newest first, in JSON-RPC batches of
+  `--history-batch` commits with `--history-pace` between them (also between
+  the batches that catch up with the head after downtime): at the
+  defaults (100 commits, 1 s), at most about 100 blocks a second, so a chain of
+  1.6M blocks takes at least 4.5 hours. A batch the node refuses whole halves
+  the batch size until restart; one that times out, for 10 minutes. HTTP 429 pauses for as long as `Retry-After` asks (a
+  minute without one). The history is complete once it reaches block 1, or the
+  oldest block the node serves: one it served right before refusing the block
+  below in the same answer, well below the head, seen in two answers. gnockpit
+  asks below that block again at each start, in case the node changed. A node
+  that stays behind the head for minutes is logged. Each batch of two commits
+  or more below the stored blocks opens with the lowest one, asked again. A
+  block refused first in its answer (that block, or any block in a batch of
+  one), well below the head, marks no oldest block (a backend far behind
+  refuses it too); refused twice in a row, it pauses the backfill, asked again
+  every 10 minutes, logged once. So with a batch of one commit
+  (`--history-batch 1`, or a node taking one call a batch), the backfill pauses at the
+  node's oldest block rather than completing. Pointing gnockpit at another
+  chain drops the history.
+- **Used by** — the validators table's Missed 24h and `/api/stats`' 1h / 24h /
+  7d / 30d / total windows (`recorded_since` says how far back they reach): an
+  absence or a precommit for another block counts as missed, a precommit for
+  nil as signed; and [`/api/history`](#apihistory). While the history fills,
+  Network State's header shows how much is filled and, once the server has
+  measured the fill rate, the time left.
 
 ## Block ETA
 
@@ -235,13 +269,14 @@ target time, then counting down to it.
 
 All endpoints are CORS-open JSON, for building external badges/dashboards.
 
-| Endpoint      | Description                                                                                                                                                                                                                                                                                                                                                                                    |
-| ------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `/api/status` | Health summary (`status`/`chain`/`height`/`reason`/`time`) plus live network state, the last 100 blocks with signing status, and per-peer / per-validator column data, including `name`, `country`, `city`, `lat`/`lon` and cloud `provider`. A validator's location and provider are its matched peer's. Unknown fields are omitted; when only one of `lat`/`lon` is present, the other is 0. |
-| `/api/stats`  | Aggregate stats: per-validator missed-block windows, cloud-provider and country aggregates, validator-set health, and the Nakamoto coefficient.                                                                                                                                                                                                                                                |
-| `/api/eta`    | Block ETAs: when a height is expected, which height a time reaches, or the scheduled halt (see below).                                                                                                                                                                                                                                                                                         |
-| `/api`        | Raw internal snapshot dump (unstable shape; for debugging).                                                                                                                                                                                                                                                                                                                                    |
-| `/badge.svg`  | SVG status badge.                                                                                                                                                                                                                                                                                                                                                                              |
+| Endpoint       | Description                                                                                                                                                                                                                                                                                                                                                                                    |
+| -------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `/api/status`  | Health summary (`status`/`chain`/`height`/`reason`/`time`) plus live network state, the last 100 blocks with signing status, and per-peer / per-validator column data, including `name`, `country`, `city`, `lat`/`lon` and cloud `provider`. A validator's location and provider are its matched peer's. Unknown fields are omitted; when only one of `lat`/`lon` is present, the other is 0. |
+| `/api/stats`   | Aggregate stats: per-validator missed-block windows, cloud-provider and country aggregates, validator-set health, and the Nakamoto coefficient.                                                                                                                                                                                                                                                |
+| `/api/eta`     | Block ETAs: when a height is expected, which height a time reaches, or the scheduled halt; see [`/api/eta`](#apieta).                                                                                                                                                                                                                                                                          |
+| `/api/history` | The block history: how far back it reaches, the blocks of a range of heights with the validators that did not sign each for it, and daily vote delays; see [`/api/history`](#apihistory).                                                                                                                                                                                                      |
+| `/api`         | Raw internal snapshot dump (unstable shape; for debugging).                                                                                                                                                                                                                                                                                                                                    |
+| `/badge.svg`   | SVG status badge.                                                                                                                                                                                                                                                                                                                                                                              |
 
 ### `/api/eta`
 
@@ -283,6 +318,27 @@ curl -s 'http://localhost:8080/api/eta?height=1651200&since=2026-11-16T13:47:26Z
 curl -s 'http://localhost:8080/api/eta?time=<RFC 3339 time after the newest block>'
 ```
 
+### `/api/history`
+
+The query picks what comes back, and the queries combine. Times are RFC 3339
+UTC to the millisecond.
+
+| Query            | Answer                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| none             | `chain` and `filled`: `from` and `to` (the lowest and highest stored heights), `from_time` (the time of block `from`; left out while nothing is stored), `floor` (the oldest block the first `-rpc` serves, when it refused an older one), `complete` (`from` is 1, or the floor) and `rate` (heights added below `from` per second over the last 5 minutes; left out until measured, when the backfill has not moved in that window, and once complete).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| `?from=H1&to=H2` | The same, plus `blocks[]` and `valsets` for at most 1,000 heights. Heights outside `filled` are left out: a range the history does not hold gives an empty `blocks` and `valsets`. Each block has `height`, `time`, `proposer`, `round`, `txs`, `valset` (the hash of its validator set, a key of `valsets`) and the members that did not sign it for the block: `absent`, `nil` (a precommit for no block) and `other_block` (a precommit for another block). A block finalized after round 0 also has `rounds`: the expected proposer of rounds 0 to `round`, `""` where unknown. `flag` says why a block's proposer check failed, when it did (checked on those blocks and on every 1,000th). A block that opens a new validator set (its `valset` differs from the block below's) has `set_change` once its events are read: `source`, the block they were read from, and `events` (`type`, `operator`, `address` or `old_address` and `new_address`, `power`, left out for a removal or a rotation, whose events carry none, and `applied`); it is left out while that read is pending (retried every 10 minutes), when the source block holds no set event, and for good when the source block is below `floor`. `valsets` gives each set's members in set order: `address`, `pub_key` (base64) and `power`. |
+| `?days=N`        | The same, plus `vote_delays` for the last N UTC days, today included (N from 1 to 31): `edges_ms`, the edges of the delay buckets in ms (one bucket more than edges: the first below the first edge, bucket i between edges i−1 and i, the last from the last edge up; a delay on an edge falls in the bucket farther from 0), and `days[]`, each with `day` (`YYYY-MM-DD`) and `validators[]`: `address`, `votes`, `mean_ms` and `buckets`. Days without a recorded vote are left out.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+
+Errors come as `{"error": "…"}`: 400 for a malformed query (a range that is not
+two heights from 1 with `to` at least `from`, or over 1,000 heights; `days`
+outside 1–31), 500 when the
+database read fails.
+
+```bash
+curl -s 'http://localhost:8080/api/history?from=1183000&to=1183010'
+curl -s 'http://localhost:8080/api/history?days=7'
+```
+
 ## Features
 
 - Live WebSocket dashboard with real-time updates
@@ -292,9 +348,10 @@ curl -s 'http://localhost:8080/api/eta?time=<RFC 3339 time after the newest bloc
 - Network map — IP-geolocated peers, per-country list, Country + cloud-Provider columns
 - Signing stats — per-validator blocks missed in the last 100 + proposer speed, and missed-block counts over 1h/24h/7d/30d/total
 - Block ETA — when a height will be produced (or which height at a given time), with 80%/95% ranges and drift from the original estimate; countdown cards for shared links and for the halt scheduled on chain
-- HTTP API — CORS-open `/api/status`, `/api/stats` and `/api/eta` for external badges, dashboards and scripts
+- HTTP API — CORS-open `/api/status`, `/api/stats`, `/api/eta` and `/api/history` for external badges, dashboards and scripts
 - Alerts — browser push (PWA) and external notifications (Discord, Telegram, …) for chain-stuck and missed-blocks
-- Block history — recent blocks with signing visualization
+- Recent blocks — the last 100 blocks with signing visualization
+- Block history — every block since genesis: proposer, round, the validators that did not sign it for the block and how, vote delays, expected round proposers and validator set changes (`/api/history`)
 
 ## License
 

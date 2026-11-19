@@ -335,6 +335,66 @@
                 grid-template-columns: 1fr 1fr;
                 gap: 8px 32px;
             }
+            /* Network State's header shows the block history's fill while it
+               runs: a label, a bar, the share filled and the time left. */
+            #ns-sync {
+                display: flex;
+                align-items: center;
+                justify-content: flex-end;
+                gap: 8px;
+                flex: 1;
+                min-width: 0;
+                font-size: 11px;
+                color: var(--fg2);
+            }
+            #ns-sync[hidden] {
+                display: none;
+            }
+            #ns-sync .track {
+                position: relative;
+                flex: 0 1 120px;
+                min-width: 50px;
+                height: 6px;
+                border-radius: 3px;
+                background: var(--bg);
+                border: 1px solid var(--border);
+                overflow: hidden;
+            }
+            #ns-sync .label {
+                white-space: nowrap;
+            }
+            #ns-sync .fill {
+                position: absolute;
+                top: 0;
+                bottom: 0;
+                left: 0;
+                background: var(--blue);
+                border-radius: 3px;
+            }
+            #ns-sync .text {
+                white-space: nowrap;
+                overflow: hidden;
+                text-overflow: ellipsis;
+            }
+            #ns-sync b {
+                color: var(--fg);
+                font-weight: normal;
+                font-variant-numeric: tabular-nums;
+            }
+            /* Phones: the fill takes its own line under the title. */
+            @media (max-width: 480px) {
+                #ns-header-row {
+                    flex-wrap: wrap;
+                }
+                #ns-sync {
+                    flex-basis: 100%;
+                    order: 3;
+                    justify-content: flex-start;
+                }
+                #ns-sync .track {
+                    flex: 0 0 56px;
+                }
+            }
             .card-header-row {
                 display: flex;
                 align-items: center;
@@ -1488,6 +1548,11 @@
             <div class="card">
                 <div class="card-header-row" id="ns-header-row">
                     <h2 data-section="network-state">Network State</h2>
+                    <span id="ns-sync" hidden
+                        ><span class="label">syncing block history</span
+                        ><span class="track"><span class="fill"></span></span
+                        ><span class="text"></span
+                    ></span>
                     <label id="ns-compact-label"
                         ><input
                             type="checkbox"
@@ -1743,7 +1808,7 @@
                                         data-sort="missed"
                                         style="cursor: pointer"
                                         class="info-btn"
-                                        data-popover="Blocks missed in the last 100 (only counting blocks the validator was in the set for)"
+                                        data-popover="Blocks missed in the last 100: absent from the commit, or a vote for another block (a nil vote counts as signed); only the blocks the validator was in the set for count"
                                     >
                                         Missed last 100
                                     </th>
@@ -1752,7 +1817,7 @@
                                         data-sort="missed24h"
                                         style="cursor: pointer"
                                         class="info-btn"
-                                        data-popover="Blocks this validator missed in the last 24h (forward-only recording; may be partial early on)"
+                                        data-popover="Blocks this validator missed in the last 24h: absent from the commit, or a vote for another block (a nil vote counts as signed)"
                                     >
                                         Missed 24h
                                     </th>
@@ -2832,7 +2897,7 @@
                         }
                         tr.appendChild(missed100Td)
 
-                        // Missed 24h (from signing history; 0 until history accrues)
+                        // Missed 24h (from the block history)
                         var missedTd = document.createElement('td')
                         var missed24h = v.missed_24h
                         if (typeof missed24h === 'number') {
@@ -6136,6 +6201,99 @@
                     haltCard.redraw()
                     linkCard.redraw()
                 })
+            })()
+        </script>
+        <script>
+            // ---- Block history sync
+            // Network State's header shows the block history's fill while it
+            // runs, from /api/history: the share filled, and the time left at
+            // the fill's rate once the server has measured it.
+            ;(function () {
+                var SYNC_POLL_MS = 10000
+                var MONS = [
+                    'Jan',
+                    'Feb',
+                    'Mar',
+                    'Apr',
+                    'May',
+                    'Jun',
+                    'Jul',
+                    'Aug',
+                    'Sep',
+                    'Oct',
+                    'Nov',
+                    'Dec',
+                ]
+                function day(iso) {
+                    var d = new Date(iso)
+                    var hh = String(d.getUTCHours()).padStart(2, '0')
+                    var mm = String(d.getUTCMinutes()).padStart(2, '0')
+                    return (
+                        d.getUTCDate() +
+                        ' ' +
+                        MONS[d.getUTCMonth()] +
+                        ' ' +
+                        d.getUTCFullYear() +
+                        ' ' +
+                        hh +
+                        ':' +
+                        mm +
+                        ' UTC'
+                    )
+                }
+                function timeLeft(s) {
+                    var m = Math.round(s / 60)
+                    if (m < 1) return '< 1 min'
+                    if (m < 60) return '≈ ' + m + ' min'
+                    var h = Math.floor(m / 60)
+                    if (h >= 48) return '≈ ' + Math.round(h / 24) + ' d'
+                    if (h >= 10) return '≈ ' + h + ' h'
+                    return (
+                        '≈ ' +
+                        h +
+                        ' h ' +
+                        String(m % 60).padStart(2, '0') +
+                        ' min'
+                    )
+                }
+                function show(f) {
+                    var el = $('ns-sync')
+                    el.hidden = !f || !f.to || f.complete
+                    if (el.hidden) return
+                    var lowest = Math.max(1, f.floor || 0)
+                    var pct = ((f.to - f.from + 1) / (f.to - lowest + 1)) * 100
+                    el.querySelector('.fill').style.width =
+                        Math.max(pct, 0.5) + '%'
+                    var text =
+                        '<b>' +
+                        (pct < 10 ? pct.toFixed(1) : Math.floor(pct)) +
+                        '%</b>'
+                    if (f.rate > 0)
+                        text +=
+                            ' · <b>' +
+                            timeLeft((f.from - lowest) / f.rate) +
+                            '</b> left'
+                    el.querySelector('.text').innerHTML = text
+                    el.title =
+                        'Block history filled from #' +
+                        f.from.toLocaleString('en-US') +
+                        ' (' +
+                        day(f.from_time) +
+                        ') to #' +
+                        f.to.toLocaleString('en-US') +
+                        ', filling back to #' +
+                        lowest.toLocaleString('en-US')
+                }
+                ;(async function poll() {
+                    try {
+                        show(
+                            (await (await fetch('/api/history')).json()).filled
+                        )
+                    } catch (e) {
+                        show(null)
+                    }
+                    setTimeout(poll, SYNC_POLL_MS)
+                })()
             })()
         </script>
     </body>

@@ -6,10 +6,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
+	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -265,35 +268,38 @@ func TestGetBlockAppHash(t *testing.T) {
 	}
 }
 
-func TestGetCommit(t *testing.T) {
+// precommitJSON is a precommit as /commit gives it: for block, or for nil when
+// block is empty.
+func precommitJSON(addr string, index int, block string) string {
+	return fmt.Sprintf(`{"type":2,"height":"0","round":"0","block_id":{"hash":%q},"timestamp":"2026-01-01T00:00:00Z","validator_address":%q,"validator_index":"%d"}`,
+		block, addr, index)
+}
+
+// commitJSONAt is a /commit answer for height, committing block, with the given
+// precommits ("null" for an empty slot).
+func commitJSONAt(height, proposer, block string, canonical bool, precommits ...string) string {
+	return fmt.Sprintf(`{"jsonrpc":"2.0","result":{"canonical":%t,"signed_header":{
+		"header":{"height":%q,"time":"2026-01-01T00:00:%02sZ","proposer_address":%q,"app_hash":"AH%s","num_txs":"1"},
+		"commit":{"block_id":{"hash":%q},"precommits":[%s]}
+	}}}`, canonical, height, height, proposer, height, block, strings.Join(precommits, ","))
+}
+
+func TestCommit(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		fmt.Fprint(w, `{"jsonrpc":"2.0","result":{"signed_header":{
-			"header":{"height":"100","time":"2026-01-01T00:00:00Z","proposer_address":"g1prop","app_hash":"DEADBEEF","num_txs":"6"},
-			"commit":{"precommits":[{"validator_address":"g1a"},null,{"validator_address":"g1c"}]}
-		},"canonical":true}}`)
+		fmt.Fprint(w, commitJSONAt("10", "g1prop", "B10", true, precommitJSON("g1a", 0, "B10"), "null", precommitJSON("g1c", 2, "")))
 	}))
 	defer srv.Close()
 
-	c := NewClient(srv.URL, 5*time.Second)
-	ci, err := c.GetCommit(context.Background(), 100)
+	got, err := NewClient(srv.URL, 5*time.Second).Commit(context.Background(), 10)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if ci.Height != "100" || ci.ProposerAddress != "g1prop" || ci.AppHash != "DEADBEEF" {
-		t.Errorf("header parse: %+v", ci)
+	if got.Height != 10 || got.Proposer != "g1prop" || got.AppHash != "AH10" || got.NumTxs != 1 || got.BlockHash != "B10" || !got.Canonical {
+		t.Errorf("header parse: %+v", got)
 	}
-	if ci.NumTxs != 6 {
-		t.Errorf("num_txs = %d, want 6", ci.NumTxs)
-	}
-	if ci.Time != "2026-01-01T00:00:00Z" {
-		t.Errorf("time = %q", ci.Time)
-	}
-	if len(ci.Precommits) != 3 {
-		t.Fatalf("precommits = %d, want 3", len(ci.Precommits))
-	}
-	// The middle slot is null — an absent signer.
-	if string(ci.Precommits[1]) != "null" {
-		t.Errorf("precommits[1] = %s, want null", ci.Precommits[1])
+	// The middle slot is empty: an absent signer; the last is a nil vote.
+	if len(got.Precommits) != 3 || got.Precommits[1] != nil || got.Precommits[2].BlockHash != "" || got.Precommits[2].Index != 2 {
+		t.Errorf("precommits = %+v", got.Precommits)
 	}
 }
 
@@ -307,19 +313,19 @@ func TestGetSigningStatsMissingValidators(t *testing.T) {
 		switch {
 		case r.URL.Path == "/validators":
 			fmt.Fprintf(w, `{"jsonrpc":"2.0","result":{"validators":[
-				{"address":%q,"pub_key":{"type":"ed25519","value":"AA"},"voting_power":"1"},
-				{"address":%q,"pub_key":{"type":"ed25519","value":"BB"},"voting_power":"1"},
-				{"address":%q,"pub_key":{"type":"ed25519","value":"CC"},"voting_power":"1"}
+				{"address":%q,"pub_key":{"type":"ed25519","value":"AA"},"voting_power":"1","proposer_priority":"0"},
+				{"address":%q,"pub_key":{"type":"ed25519","value":"BB"},"voting_power":"1","proposer_priority":"0"},
+				{"address":%q,"pub_key":{"type":"ed25519","value":"CC"},"voting_power":"1","proposer_priority":"0"}
 			]}}`, addr1, addr2, addr3)
 		default: // /commit?height=2
 			fmt.Fprintf(w, `{"jsonrpc":"2.0","result":{"signed_header":{
 				"header":{"height":"2","time":"2026-03-20T14:32:01.123456789Z","proposer_address":%q},
 				"commit":{"precommits":[
-					{"validator_address":%q},
+					%s,
 					null,
 					null
 				]}
-			}}}`, addr3, addr3)
+			}}}`, addr3, precommitJSON(addr3, 0, ""))
 		}
 	}))
 	defer srv.Close()
@@ -381,22 +387,22 @@ func TestGetSigningStatsPerValidator(t *testing.T) {
 		switch {
 		case r.URL.Path == "/validators": // current set and any ?height= query
 			fmt.Fprintf(w, `{"jsonrpc":"2.0","result":{"validators":[
-				{"address":%q,"pub_key":{"type":"ed25519","value":"AA"},"voting_power":"1"},
-				{"address":%q,"pub_key":{"type":"ed25519","value":"BB"},"voting_power":"1"}
+				{"address":%q,"pub_key":{"type":"ed25519","value":"AA"},"voting_power":"1","proposer_priority":"0"},
+				{"address":%q,"pub_key":{"type":"ed25519","value":"BB"},"voting_power":"1","proposer_priority":"0"}
 			]}}`, addrA, addrB)
 		default:
 			if r.URL.Query().Get("height") == "2" {
 				// Both validators sign height 2.
 				fmt.Fprintf(w, `{"jsonrpc":"2.0","result":{"signed_header":{
 					"header":{"height":"2","time":"2026-01-01T00:00:00Z","proposer_address":%q},
-					"commit":{"precommits":[{"validator_address":%q},{"validator_address":%q}]}
-				}}}`, addrA, addrA, addrB)
+					"commit":{"precommits":[%s,%s]}
+				}}}`, addrA, precommitJSON(addrA, 0, ""), precommitJSON(addrB, 1, ""))
 			} else {
 				// Only A signs height 3 — B misses the most recent block.
 				fmt.Fprintf(w, `{"jsonrpc":"2.0","result":{"signed_header":{
 					"header":{"height":"3","time":"2026-01-01T00:00:01Z","proposer_address":%q},
-					"commit":{"precommits":[{"validator_address":%q},null]}
-				}}}`, addrA, addrA)
+					"commit":{"precommits":[%s,null]}
+				}}}`, addrA, precommitJSON(addrA, 0, ""))
 			}
 		}
 	}))
@@ -779,5 +785,110 @@ func TestStatusHeadUnparsable(t *testing.T) {
 		if _, err := (&Status{SyncInfo: si}).Head(); err == nil {
 			t.Errorf("Head() of %+v = nil error, want one", si)
 		}
+	}
+}
+
+func TestGetSigningStatsKeepsFinalCommits(t *testing.T) {
+	const addrA = "g1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	var mu sync.Mutex
+	head := "4"
+	asked := map[string]int{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/validators" {
+			fmt.Fprintf(w, `{"jsonrpc":"2.0","result":{"validators":[{"address":%q,"pub_key":{"type":"ed25519","value":"AA"},"voting_power":"1","proposer_priority":"0"}]}}`, addrA)
+			return
+		}
+		h := r.URL.Query().Get("height")
+		mu.Lock()
+		asked[h]++
+		final := h != head // the head's commit is not final yet
+		mu.Unlock()
+		fmt.Fprint(w, commitJSONAt(h, addrA, "B"+h, final, precommitJSON(addrA, 0, "B"+h)))
+	}))
+	defer srv.Close()
+	c := NewClient(srv.URL, 5*time.Second)
+
+	for range 2 {
+		if _, err := c.GetSigningStats(context.Background(), 4, 3); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if want := map[string]int{"2": 1, "3": 1, "4": 2}; !maps.Equal(asked, want) {
+		t.Errorf("commits asked per height = %v, want %v (final ones once, the head each time)", asked, want)
+	}
+
+	// The window moving up drops the commits it left behind.
+	mu.Lock()
+	head = "6"
+	mu.Unlock()
+	if _, err := c.GetSigningStats(context.Background(), 6, 2); err != nil {
+		t.Fatal(err)
+	}
+	if kept := slices.Sorted(maps.Keys(c.commits)); !slices.Equal(kept, []int64{5}) {
+		t.Errorf("kept commits = %v, want [5]", kept)
+	}
+}
+
+func TestGetSigningStatsCountsAVoteForAnotherBlockAsMissed(t *testing.T) {
+	const (
+		addrA = "g1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+		addrB = "g1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+		addrC = "g1cccccccccccccccccccccccccccccccccccccccc"
+	)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/validators" {
+			fmt.Fprintf(w, `{"jsonrpc":"2.0","result":{"validators":[
+				{"address":%q,"pub_key":{"type":"ed25519","value":"AA"},"voting_power":"1","proposer_priority":"0"},
+				{"address":%q,"pub_key":{"type":"ed25519","value":"BB"},"voting_power":"1","proposer_priority":"0"},
+				{"address":%q,"pub_key":{"type":"ed25519","value":"CC"},"voting_power":"1","proposer_priority":"0"}
+			]}}`, addrA, addrB, addrC)
+			return
+		}
+		// A votes for the block, B for another one, C for nil.
+		fmt.Fprint(w, commitJSONAt("2", addrA, "B2", true,
+			precommitJSON(addrA, 0, "B2"), precommitJSON(addrB, 1, "B1"), precommitJSON(addrC, 2, "")))
+	}))
+	defer srv.Close()
+
+	stats, err := NewClient(srv.URL, 5*time.Second).GetSigningStats(context.Background(), 2, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The block history's rule: a vote for another block is missed, a nil vote signed.
+	b := stats.RecentBlocks[0]
+	if b.Signers != 2 || len(b.Missing) != 1 || b.Missing[0].Address != addrB {
+		t.Errorf("block = %+v, want 2 signers and %s missing", b, addrB)
+	}
+}
+
+func TestGetSigningStatsForgetsCommitsOfAnEarlierChain(t *testing.T) {
+	const addrA = "g1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	var mu sync.Mutex
+	head := "9"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/validators" {
+			fmt.Fprintf(w, `{"jsonrpc":"2.0","result":{"validators":[{"address":%q,"pub_key":{"type":"ed25519","value":"AA"},"voting_power":"1","proposer_priority":"0"}]}}`, addrA)
+			return
+		}
+		h := r.URL.Query().Get("height")
+		mu.Lock()
+		final := h != head
+		mu.Unlock()
+		fmt.Fprint(w, commitJSONAt(h, addrA, "B"+h, final, precommitJSON(addrA, 0, "B"+h)))
+	}))
+	defer srv.Close()
+	c := NewClient(srv.URL, 5*time.Second)
+	if _, err := c.GetSigningStats(context.Background(), 9, 3); err != nil {
+		t.Fatal(err)
+	}
+	// The RPC's chain restarts from genesis: the heights above its head are another chain's.
+	mu.Lock()
+	head = "3"
+	mu.Unlock()
+	if _, err := c.GetSigningStats(context.Background(), 3, 2); err != nil {
+		t.Fatal(err)
+	}
+	if kept := slices.Sorted(maps.Keys(c.commits)); !slices.Equal(kept, []int64{2}) {
+		t.Errorf("kept commits = %v, want [2]", kept)
 	}
 }
