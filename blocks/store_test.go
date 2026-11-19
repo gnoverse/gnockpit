@@ -111,11 +111,12 @@ func TestStoreStaysCompact(t *testing.T) {
 	if err := s.db.QueryRowContext(ctx, `PRAGMA page_size`).Scan(&pageSize); err != nil {
 		t.Fatal(err)
 	}
-	// Each address is stored once: 1,000 blocks with 4 absences each take well
-	// under 300 KB. With the address in every absence and two indexes over
-	// them, they take over 1 MB.
-	if size := pages * pageSize; size > 300<<10 {
-		t.Errorf("store size = %d KB, want at most 300 KB", size>>10)
+	// Each address is stored once and no index is kept beside the keys: 1,000
+	// blocks with 4 absences each take under 140 KB. An index on block time
+	// adds over 8 KB; the address in every absence with two indexes over them,
+	// over 650 KB.
+	if size := pages * pageSize; size > 140<<10 {
+		t.Errorf("store size = %d KB, want at most 140 KB", size>>10)
 	}
 }
 
@@ -267,6 +268,35 @@ func TestStoreMissedByWindowsSearchesTheWindowOnly(t *testing.T) {
 		return strings.HasPrefix(d, "SEARCH blocks_absences") && strings.Contains(d, "height>?")
 	}) {
 		t.Errorf("plan = %q, want a search of blocks_absences by height", plan)
+	}
+}
+
+func TestStoreMissedByWindowsFindsEachWindowsFirstBlock(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	putTestSet(t, s)
+	recs := make([]Record, 100)
+	for i := range recs {
+		recs[i] = rec(int64(i + 1)) // at t0 + height seconds
+	}
+	if err := s.Write(ctx, recs); err != nil {
+		t.Fatal(err)
+	}
+	now := t0.Add(100 * time.Second)
+	got, err := s.MissedByWindows(ctx, []time.Duration{time.Second, 10 * time.Second, 0}, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Blocks 99 and 100 are within 1 s of now, 90 to 100 within 10 s.
+	if !slices.Equal(got.Blocks, []int{2, 11, 100}) {
+		t.Errorf("window blocks = %v, want [2 11 100]", got.Blocks)
+	}
+	got, err = s.MissedByWindows(ctx, []time.Duration{time.Second}, now.Add(time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(got.Blocks, []int{0}) {
+		t.Errorf("window blocks an hour later = %v, want [0]", got.Blocks)
 	}
 }
 

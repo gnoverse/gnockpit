@@ -16,8 +16,8 @@ import (
 )
 
 // The schema stores each validator address once, in blocks_validators, and
-// refers to it by id elsewhere: an absence is a few bytes, not an address and
-// two index entries. It drops signing_blocks and signing_misses where a
+// refers to it by id elsewhere, and keeps no index beside the tables' keys: an
+// absence is a few bytes, not an address and two index entries. It drops signing_blocks and signing_misses where a
 // database has them: blocks_absences holds the same per-block misses, back to
 // genesis.
 const schema = `
@@ -34,7 +34,6 @@ CREATE TABLE IF NOT EXISTS blocks (
 	txs      INTEGER NOT NULL,
 	valset   INTEGER NOT NULL
 );
-CREATE INDEX IF NOT EXISTS idx_blocks_time ON blocks(time_ms);
 CREATE TABLE IF NOT EXISTS blocks_valsets (
 	id   INTEGER PRIMARY KEY,
 	hash TEXT NOT NULL UNIQUE
@@ -595,11 +594,12 @@ type WindowReport struct {
 // window of zero or less means all the history.
 //
 // The stored heights run unbroken (the tracker fills outward from one range)
-// and block times grow with height, so a window's blocks are the heights from
-// its first one to the highest: counted without reading them.
+// and block times grow with height, so a window's first block is found by
+// bisecting the heights, and its blocks are counted from it to the highest
+// without reading them.
 func (s *Store) MissedByWindows(ctx context.Context, windows []time.Duration, now time.Time) (WindowReport, error) {
 	rep := WindowReport{Windows: windows, Blocks: make([]int, len(windows)), Missed: map[string][]int{}}
-	_, high, err := s.Range(ctx)
+	low, high, err := s.Range(ctx)
 	if err != nil {
 		return rep, err
 	}
@@ -608,15 +608,12 @@ func (s *Store) MissedByWindows(ctx context.Context, windows []time.Duration, no
 		if w > 0 {
 			cutoff = now.Add(-w).UnixMilli()
 		}
-		var from int64
-		err := s.db.QueryRowContext(ctx,
-			`SELECT height FROM blocks WHERE time_ms >= ? ORDER BY time_ms LIMIT 1`, cutoff,
-		).Scan(&from)
-		if errors.Is(err, sql.ErrNoRows) {
-			continue
-		}
+		from, ok, err := s.firstFrom(ctx, cutoff, low, high)
 		if err != nil {
 			return rep, fmt.Errorf("first block of the %s window: %w", w, err)
+		}
+		if !ok {
+			continue
 		}
 		rep.Blocks[i] = int(high - from + 1)
 		rows, err := s.db.QueryContext(ctx, windowMissesQuery, from, Absent, OtherBlock)
@@ -641,6 +638,39 @@ func (s *Store) MissedByWindows(ctx context.Context, windows []time.Duration, no
 		}
 	}
 	return rep, nil
+}
+
+// firstFrom returns the lowest of the stored heights low to high whose block
+// time is cutoffMs or later, bisecting them: they run unbroken and block
+// times grow with height. ok is false when no stored block is that late.
+func (s *Store) firstFrom(ctx context.Context, cutoffMs, low, high int64) (from int64, ok bool, err error) {
+	if high == 0 {
+		return 0, false, nil
+	}
+	timeOf := func(h int64) (ms int64, err error) {
+		err = s.db.QueryRowContext(ctx, `SELECT time_ms FROM blocks WHERE height = ?`, h).Scan(&ms)
+		if err != nil {
+			return 0, fmt.Errorf("time of %d: %w", h, err)
+		}
+		return ms, nil
+	}
+	last, err := timeOf(high)
+	if err != nil || last < cutoffMs {
+		return 0, false, err
+	}
+	for low < high {
+		mid := low + (high-low)/2
+		ms, err := timeOf(mid)
+		if err != nil {
+			return 0, false, err
+		}
+		if ms >= cutoffMs {
+			high = mid
+		} else {
+			low = mid + 1
+		}
+	}
+	return low, true, nil
 }
 
 // ---- Events
