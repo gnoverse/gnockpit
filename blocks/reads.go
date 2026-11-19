@@ -110,7 +110,7 @@ func (t *Tracker) members(ctx context.Context, c node.Commit) ([]Member, error) 
 // at the height below and at the height, and flags r when round 0's proposer
 // is unknown or no round's expected proposer is r's proposer. A set below the
 // source refuses well below the head (a block at the oldest it keeps), in two
-// reads, leaves round 0's proposer unknown; a first refusal, or one near the
+// reads in a row, leaves round 0's proposer unknown; a first refusal, or one near the
 // head (a backend behind), fails the read for a later pass.
 func (t *Tracker) rounds(ctx context.Context, r *Record, head int64) error {
 	cur, err := t.validatorSet(ctx, r.Height)
@@ -129,6 +129,8 @@ func (t *Tracker) rounds(ctx context.Context, r *Record, head int64) error {
 			prev, prevRefused = nil, true
 		case err != nil:
 			return fmt.Errorf("validator set at %d: %w", r.Height-1, err)
+		default:
+			delete(t.setRefused, r.Height-1) // refusals count in a row
 		}
 	}
 	proposers, err := roundProposers(prev, cur, r.Round)

@@ -982,6 +982,25 @@ func TestPassFlagsTwoLateBlocksWhoseSetsBelowAreRefused(t *testing.T) {
 	}
 }
 
+func TestPassFlagsNoLateBlockWhoseSetBelowIsServedBetweenRefusals(t *testing.T) {
+	c := newFakeChain(2300)
+	c.round[1100], c.round[1050] = 1, 1
+	tt := newTestTrackerOn(t, c, newTestStore(t), Config{Pace: 0, Batch: 2400})
+	// 1099's set is refused, then served while 1049's refusal loses the
+	// batch, then refused again: the refusals are not in a row.
+	for _, refused := range []int64{1099, 1049, 1099} {
+		c.setRefused = map[int64]bool{refused: true}
+		if _, err := tt.pass(context.Background()); err == nil {
+			t.Fatalf("pass() with the set at %d refused = nil, want a first refusal asked again", refused)
+		}
+	}
+	c.setRefused = nil
+	mustPass(t, tt)
+	if reason := storedFlag(t, tt.store, 1100); reason != "" {
+		t.Errorf("flag of 1100 = %q, want none: the set below was served", reason)
+	}
+}
+
 func TestPassForgetsARefusedSetOnAnotherChain(t *testing.T) {
 	c := newFakeChain(2300)
 	c.round[1000] = 1
