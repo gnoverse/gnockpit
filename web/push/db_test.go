@@ -293,3 +293,29 @@ func TestRemindersGoWithAnExpiredDevice(t *testing.T) {
 		t.Errorf("Reminder after the device = %v, %v; want none", ok, err)
 	}
 }
+
+func TestDropReminderLeavesAReplacedOne(t *testing.T) {
+	db := openTestDB(t)
+	if _, err := db.SetReminder(reminderDevice, testReminder(1000)); err != nil {
+		t.Fatal(err)
+	}
+	// The page replaces the reminder while the old one is being sent.
+	if _, err := db.SetReminder(reminderDevice, testReminder(2000)); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.DropReminder("r1", testReminder(1000)); err != nil {
+		t.Fatal(err)
+	}
+	if got, ok, _ := db.Reminder("r1"); !ok || got != testReminder(2000) {
+		t.Errorf("Reminder = %+v, %v; want the replacement kept", got, ok)
+	}
+	if err := db.DropReminder("r1", testReminder(2000)); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok, _ := db.Reminder("r1"); ok {
+		t.Error("the matching reminder stays")
+	}
+	if subs, _ := db.AllSubscriptions(); len(subs) != 1 {
+		t.Errorf("devices = %v, want the device kept", subs)
+	}
+}

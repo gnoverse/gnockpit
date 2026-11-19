@@ -103,8 +103,21 @@ func (d *DB) DeleteReminder(id string) (bool, error) {
 	return kept, tx.Commit()
 }
 
+// DropReminder deletes the reminder of device id if it is still r, keeping
+// the device: a reminder the page replaced meanwhile stays.
+func (d *DB) DropReminder(id string, r Reminder) error {
+	if _, err := d.db.Exec(
+		`DELETE FROM push_reminders WHERE subscription_id = ? AND chain = ? AND height = ? AND since = ? AND label = ? AND lead = ?`,
+		id, r.Chain, r.Height, r.Since, r.Label, r.Lead.String(),
+	); err != nil {
+		return fmt.Errorf("drop reminder of %s: %w", id, err)
+	}
+	return nil
+}
+
 // evaluateReminders sends each reminder of s's chain whose lead is met, and
-// deletes it; a reminder of another chain is deleted unsent.
+// drops it; a reminder of another chain is dropped unsent. The device stays:
+// its page still holds its id.
 func (m *Manager) evaluateReminders(s Schedule) {
 	reminders, err := m.db.Reminders()
 	if err != nil {
@@ -120,7 +133,7 @@ func (m *Manager) evaluateReminders(s Schedule) {
 		default:
 			continue
 		}
-		if _, err := m.db.DeleteReminder(dr.Sub.ID); err != nil {
+		if err := m.db.DropReminder(dr.Sub.ID, r); err != nil {
 			log.Printf("push: %v", err)
 		}
 	}

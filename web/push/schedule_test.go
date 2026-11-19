@@ -228,6 +228,9 @@ func TestEvaluateScheduleFiresAReminderOnceAndDropsIt(t *testing.T) {
 	if _, ok, _ := m.db.Reminder(id); ok {
 		t.Error("the reminder stays after it fired")
 	}
+	if subs, _ := m.db.AllSubscriptions(); len(subs) != 1 {
+		t.Errorf("devices = %v, want the device kept: the page still holds its id", subs)
+	}
 }
 
 func TestEvaluateScheduleDropsARemindersOfAnotherChain(t *testing.T) {
