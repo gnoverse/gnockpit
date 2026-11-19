@@ -336,7 +336,7 @@
                 gap: 8px 32px;
             }
             /* Network State's header shows the block history's fill while it
-               runs: a bar, the share filled and the time left. */
+               runs: a label, a bar, the share filled and the time left. */
             #ns-sync {
                 display: flex;
                 align-items: center;
@@ -360,11 +360,14 @@
                 border: 1px solid var(--border);
                 overflow: hidden;
             }
+            #ns-sync .label {
+                white-space: nowrap;
+            }
             #ns-sync .fill {
                 position: absolute;
                 top: 0;
                 bottom: 0;
-                right: 0;
+                left: 0;
                 background: var(--blue);
                 border-radius: 3px;
             }
@@ -1546,6 +1549,7 @@
                 <div class="card-header-row" id="ns-header-row">
                     <h2 data-section="network-state">Network State</h2>
                     <span id="ns-sync" hidden
+                        ><span class="label">syncing block history</span
                         ><span class="track"><span class="fill"></span></span
                         ><span class="text"></span
                     ></span>
@@ -6257,7 +6261,7 @@
                     el.querySelector('.fill').style.width =
                         Math.max(pct, 0.5) + '%'
                     var text =
-                        'syncing block history <b>' +
+                        '<b>' +
                         (pct < 10 ? pct.toFixed(1) : Math.floor(pct)) +
                         '%</b>'
                     if (f.rate > 0)
