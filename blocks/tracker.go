@@ -18,14 +18,9 @@ import (
 )
 
 const (
-	// batchSize is how many commits one JSON-RPC batch asks for.
-	batchSize = 100
 	// timeoutCut is how long a batch size halved by a timeout holds: a slow
 	// answer can be transient, unlike a refusal of the batch's size.
 	timeoutCut = 10 * time.Minute
-	// backfillPace is the wait between passes while heights are left below
-	// the stored range: about one batch a second.
-	backfillPace = time.Second
 	// syncInterval is the wait between passes once the history is complete.
 	syncInterval = 5 * time.Second
 	// errorPause is the wait after a failed pass.
@@ -74,11 +69,28 @@ type Progress struct {
 	Rate     float64   // heights stored below From per second over the last rateWindow; 0 when unknown or complete
 }
 
+// Config tunes the fill's load on the source.
+type Config struct {
+	Pace  time.Duration // wait between passes while heights are left below; 0 for none
+	Batch int           // commits asked in one JSON-RPC batch, at most
+}
+
+const (
+	// DefaultPace is the default Config.Pace: about a batch a second.
+	DefaultPace = time.Second
+	// DefaultBatch is the default Config.Batch.
+	DefaultBatch = 100
+)
+
+// DefaultConfig returns the default Config.
+func DefaultConfig() Config { return Config{Pace: DefaultPace, Batch: DefaultBatch} }
+
 // Tracker fills the block history from a Source: the heights up to the chain
 // head first, then the ones below the stored range, newest first.
 type Tracker struct {
 	store  *Store
 	source Source
+	cfg    Config
 
 	sleep func(context.Context, time.Duration) error
 	logf  func(format string, args ...any)
@@ -96,17 +108,24 @@ type Tracker struct {
 }
 
 // NewTracker returns a tracker reading source into store. Run starts it.
-func NewTracker(store *Store, source Source) *Tracker {
+func NewTracker(store *Store, source Source, cfg Config) (*Tracker, error) {
+	if cfg.Batch < 1 {
+		return nil, fmt.Errorf("batch of %d commits: want at least 1", cfg.Batch)
+	}
+	if cfg.Pace < 0 {
+		return nil, fmt.Errorf("pace of %s: want 0 or more", cfg.Pace)
+	}
 	return &Tracker{
 		store:    store,
 		source:   source,
+		cfg:      cfg,
 		sleep:    sleepCtx,
 		logf:     log.Printf,
 		now:      time.Now,
-		batch:    batchSize,
-		maxBatch: batchSize,
+		batch:    cfg.Batch,
+		maxBatch: cfg.Batch,
 		lastErr:  map[string]string{},
-	}
+	}, nil
 }
 
 // Progress returns how far the stored history reaches.
@@ -116,7 +135,7 @@ func (t *Tracker) Progress() Progress {
 	return t.progress
 }
 
-// Run fills the history until ctx is done: a pass every backfillPace while
+// Run fills the history until ctx is done: a pass every Config.Pace while
 // heights are left below, every syncInterval once complete, errorPause after a
 // failed one.
 func (t *Tracker) Run(ctx context.Context) {
@@ -132,7 +151,7 @@ func (t *Tracker) Run(ctx context.Context) {
 		case err != nil:
 			wait = errorPause
 		case more:
-			wait = backfillPace
+			wait = t.cfg.Pace
 		}
 		if t.sleep(ctx, wait) != nil {
 			return
@@ -448,7 +467,7 @@ func (t *Tracker) followChain(ctx context.Context, chainID string) error {
 	if stored != "" {
 		t.logf("blocks: chain is %s, dropping the block history of %s", chainID, stored)
 	}
-	t.batch, t.maxBatch, t.regrowAt, t.marks = batchSize, batchSize, time.Time{}, nil
+	t.batch, t.maxBatch, t.regrowAt, t.marks = t.cfg.Batch, t.cfg.Batch, time.Time{}, nil
 	return t.store.Reset(ctx, chainID)
 }
 

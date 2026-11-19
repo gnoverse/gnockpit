@@ -180,14 +180,46 @@ type testTracker struct {
 
 func newTestTracker(t *testing.T, c *fakeChain) *testTracker {
 	t.Helper()
-	s := newTestStore(t)
-	tt := &testTracker{Tracker: NewTracker(s, c), store: s}
+	return newTestTrackerOn(t, c, newTestStore(t), DefaultConfig())
+}
+
+// newTestTrackerOn returns a tracker of c into s, logging and sleeping into
+// the testTracker, on a clock a second further at each reading.
+func newTestTrackerOn(t *testing.T, c *fakeChain, s *Store, cfg Config) *testTracker {
+	t.Helper()
+	tr, err := NewTracker(s, c, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tt := &testTracker{Tracker: tr, store: s}
 	tt.logf = func(format string, args ...any) { tt.logs = append(tt.logs, fmt.Sprintf(format, args...)) }
 	tt.sleep = func(ctx context.Context, d time.Duration) error {
 		tt.waits = append(tt.waits, d)
 		return ctx.Err()
 	}
+	at := t0
+	tt.now = func() time.Time {
+		at = at.Add(time.Second)
+		return at
+	}
 	return tt
+}
+
+func TestNewTrackerRejectsABadConfig(t *testing.T) {
+	for _, cfg := range []Config{{Pace: time.Second, Batch: 0}, {Pace: -time.Second, Batch: 100}} {
+		if _, err := NewTracker(newTestStore(t), newFakeChain(10), cfg); err == nil {
+			t.Errorf("NewTracker(%+v) accepted it", cfg)
+		}
+	}
+}
+
+func TestPassAsksTheConfiguredBatch(t *testing.T) {
+	c := newFakeChain(250)
+	tt := newTestTrackerOn(t, c, newTestStore(t), Config{Pace: 0, Batch: 30})
+	mustPass(t, tt)
+	if sizes := batchSizes(c); !slices.Equal(sizes, []int{30}) {
+		t.Errorf("batch sizes = %v, want [30]", sizes)
+	}
 }
 
 func (tt *testTracker) logged(part string) bool {
@@ -614,16 +646,18 @@ func TestProgressMeasuresTheFillRate(t *testing.T) {
 func TestRunPacesItsPasses(t *testing.T) {
 	for _, tc := range []struct {
 		name string
+		pace time.Duration
 		fail []error
 		want []time.Duration
 	}{
-		{"backfilling, then complete", nil, []time.Duration{backfillPace, syncInterval, syncInterval}},
-		{"after an error", []error{errors.New("connection reset by peer")}, []time.Duration{errorPause, backfillPace, syncInterval}},
+		{"backfilling, then complete", DefaultPace, nil, []time.Duration{DefaultPace, syncInterval, syncInterval}},
+		{"after an error", DefaultPace, []error{errors.New("connection reset by peer")}, []time.Duration{errorPause, DefaultPace, syncInterval}},
+		{"at the configured pace", 0, nil, []time.Duration{0, syncInterval, syncInterval}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			c := newFakeChain(150)
 			c.fail = tc.fail
-			tt := newTestTracker(t, c)
+			tt := newTestTrackerOn(t, c, newTestStore(t), Config{Pace: tc.pace, Batch: DefaultBatch})
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
 			tt.sleep = func(ctx context.Context, d time.Duration) error {

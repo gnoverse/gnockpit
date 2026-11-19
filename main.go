@@ -28,6 +28,8 @@ var (
 	flagWebPort         int
 	flagWebAddr         string
 	flagDBPath          string
+	flagHistoryPace     time.Duration
+	flagHistoryBatch    int
 	flagChainStuckSecs  int
 	flagMaxMissedInARow int
 	flagNamesPath       string
@@ -76,7 +78,9 @@ func main() {
 	flag.StringVar(&flagNamesPath, "names", "/tmp/gnockpit-names.json", "path to the persistent validator-name registry")
 	flag.StringVar(&flagWebAddr, "addr", "0.0.0.0", "web server bind address")
 	flag.IntVar(&flagWebPort, "port", 8080, "web server port")
-	flag.StringVar(&flagDBPath, "db-path", "/tmp/gnockpit.db", "SQLite path for web-push subscriptions and VAPID keys; use a persistent path so keys survive reboots")
+	flag.StringVar(&flagDBPath, "db-path", "/tmp/gnockpit.db", "SQLite path for web-push subscriptions and VAPID keys, the block history and the block-ETA history; use a persistent path so they survive reboots")
+	flag.DurationVar(&flagHistoryPace, "history-pace", blocks.DefaultPace, "wait between the batches that fill the block history back to genesis from the first -rpc; 0 for none")
+	flag.IntVar(&flagHistoryBatch, "history-batch", blocks.DefaultBatch, "commits asked in one JSON-RPC batch while filling the block history; halved while the first -rpc refuses or times out")
 	flag.IntVar(&flagChainStuckSecs, "chain-stuck-secs", 30, "seconds without a new block before the chain-stuck alert fires")
 	flag.IntVar(&flagMaxMissedInARow, "max-missed-in-a-row", 10, "consecutive blocks a validator must miss to be flagged down (alert fires + counted inactive) and must then sign to recover")
 	flag.Var(&flagNotifyURLs, "notify", "Shoutrrr notification URL, repeatable (e.g. discord://token@id)")
@@ -133,7 +137,10 @@ func run() error {
 	if err != nil {
 		return fmt.Errorf("init block history: %w", err)
 	}
-	blockTracker := blocks.NewTracker(blockStore, sources.Primary())
+	blockTracker, err := blocks.NewTracker(blockStore, sources.Primary(), blocks.Config{Pace: flagHistoryPace, Batch: flagHistoryBatch})
+	if err != nil {
+		return fmt.Errorf("invalid -history-pace or -history-batch: %w", err)
+	}
 	srv.Blocks = blockStore
 	srv.BlockFill = blockTracker
 	go blockTracker.Run(ctx)
