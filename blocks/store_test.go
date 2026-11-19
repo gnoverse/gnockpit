@@ -112,11 +112,13 @@ func TestStoreStaysCompact(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Each address is stored once and no index is kept beside the keys: 1,000
-	// blocks with 4 absences each take under 140 KB. An index on block time
-	// adds over 8 KB; the address in every absence with two indexes over them,
-	// over 650 KB.
-	if size := pages * pageSize; size > 140<<10 {
-		t.Errorf("store size = %d KB, want at most 140 KB", size>>10)
+	// blocks with 4 absences each take under 160 KB. Of that, the runs of
+	// absences take 12 KB (a run of 4 every 7 blocks per validator: 1,000
+	// runs), the day counters and restart gaps a page each. An index on block
+	// time adds over 8 KB; the address in every absence with two indexes over
+	// them, over 650 KB.
+	if size := pages * pageSize; size > 160<<10 {
+		t.Errorf("store size = %d KB, want at most 160 KB", size>>10)
 	}
 }
 

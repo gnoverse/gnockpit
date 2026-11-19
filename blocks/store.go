@@ -99,6 +99,12 @@ CREATE TABLE IF NOT EXISTS blocks_vote_delays (
 CREATE TABLE IF NOT EXISTS blocks_event_gaps (
 	height INTEGER PRIMARY KEY -- a validator set change whose events are not read yet
 );
+CREATE TABLE IF NOT EXISTS blocks_absence_runs (
+	validator INTEGER NOT NULL,
+	first     INTEGER NOT NULL, -- consecutive heights absent or voting for another block
+	last      INTEGER NOT NULL,
+	PRIMARY KEY (validator, first)
+) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS blocks_gaps (
 	height INTEGER PRIMARY KEY -- block height+1 came more than RestartGap after this block
 );
@@ -114,18 +120,19 @@ DROP TABLE IF EXISTS signing_blocks;
 `
 
 const (
-	metaChainID       = "chain_id"
-	metaFloor         = "floor"
-	metaChangesFilled = "valset_changes_filled" // blocks_valset_changes covers every stored block
-	metaValsetToldTo  = "valset_told_to"        // the validator set changes up to this height were told
-	metaDaysFilled      = "days_filled"      // blocks_days counts the absences of every stored block
-	metaProposalsFilled = "proposals_filled" // blocks_days counts the proposals of every stored block
-	metaGapsFilled      = "gaps_filled"      // blocks_gaps covers every stored block
+	metaChainID         = "chain_id"
+	metaFloor           = "floor"
+	metaChangesFilled   = "valset_changes_filled" // blocks_valset_changes covers every stored block
+	metaValsetToldTo    = "valset_told_to"        // the validator set changes up to this height were told
+	metaDaysFilled      = "days_filled"           // blocks_days counts the absences of every stored block
+	metaProposalsFilled = "proposals_filled"      // blocks_days counts the proposals of every stored block
+	metaGapsFilled      = "gaps_filled"           // blocks_gaps covers every stored block
+	metaRunsFilled      = "runs_filled"           // blocks_absence_runs covers every stored block
 )
 
 // filledKeys are the meta keys of the one-time fills: an empty history (a
 // Reset) has nothing to fill.
-var filledKeys = []string{metaChangesFilled, metaDaysFilled, metaProposalsFilled, metaGapsFilled}
+var filledKeys = []string{metaChangesFilled, metaDaysFilled, metaProposalsFilled, metaGapsFilled, metaRunsFilled}
 
 // Store persists the block history. Times are kept to the millisecond.
 type Store struct {
@@ -149,6 +156,9 @@ func NewStore(ctx context.Context, db *sql.DB) (*Store, error) {
 		return nil, err
 	}
 	if err := s.fillGaps(ctx); err != nil {
+		return nil, err
+	}
+	if err := s.fillRuns(ctx); err != nil {
 		return nil, err
 	}
 	return s, nil
@@ -254,6 +264,11 @@ func writeRecord(ctx context.Context, tx *sql.Tx, ids *validatorIDs, r Record) e
 		}
 		if err := countAbsence(ctx, tx, day, vid, a.Kind); err != nil {
 			return fmt.Errorf("count absence %d/%s: %w", r.Height, a.Address, err)
+		}
+		if a.Kind == Absent || a.Kind == OtherBlock {
+			if err := extendRun(ctx, tx, vid, r.Height); err != nil {
+				return err
+			}
 		}
 	}
 	for _, d := range r.Delays {
@@ -518,7 +533,7 @@ func (s *Store) Reset(ctx context.Context, chainID string) error {
 	defer tx.Rollback()
 	for _, table := range []string{
 		"blocks", "blocks_validators", "blocks_valsets", "blocks_valset_members", "blocks_absences",
-		"blocks_rounds", "blocks_flags", "blocks_events", "blocks_event_gaps", "blocks_days", "blocks_vote_delays", "blocks_gaps",
+		"blocks_rounds", "blocks_flags", "blocks_events", "blocks_event_gaps", "blocks_days", "blocks_vote_delays", "blocks_gaps", "blocks_absence_runs",
 		"blocks_valset_changes", "blocks_meta",
 	} {
 		if _, err := tx.ExecContext(ctx, "DELETE FROM "+table); err != nil {
