@@ -1552,3 +1552,31 @@ func TestPassTellsNoValsetChangeOfANewChain(t *testing.T) {
 		t.Errorf("told = %v, want none: a new chain's first fill goes down", *told)
 	}
 }
+
+func TestPassTellsAChangeTheSecondPassStoresGoingUp(t *testing.T) {
+	c := newFakeChain(250)
+	c.change = 300
+	tt := newTestTracker(t, c)
+	told := toldChanges(tt)
+	mustPass(t, tt) // a fresh store: 249 to 150, going down
+	c.head = 350
+	mustPass(t, tt)
+	if !slices.Equal(*told, []int64{300}) {
+		t.Errorf("told = %v, want [300]: the second pass stored it going up", *told)
+	}
+}
+
+func TestPassMovesTheToldWatermarkBeforeTelling(t *testing.T) {
+	c := newFakeChain(250)
+	c.change = 300
+	tt := newTestTracker(t, c)
+	marked := int64(-1)
+	tt.OnValsetChange(func(ValsetChange) { marked, _ = tt.store.ValsetToldTo(context.Background()) })
+	mustPass(t, tt)
+	mustPass(t, tt)
+	c.head = 350
+	mustPass(t, tt)
+	if marked < 300 {
+		t.Errorf("watermark while telling = %d, want past 300: a crash mid-send must not tell it again", marked)
+	}
+}

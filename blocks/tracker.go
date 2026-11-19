@@ -177,6 +177,7 @@ func (t *Tracker) Run(ctx context.Context) {
 func (t *Tracker) pass(ctx context.Context) (more bool, err error) {
 	var behind bool // the source did not give a height asked final yet
 	defer func() {
+		t.tellValsetChanges(ctx)
 		if perr := t.publish(ctx); perr != nil && err == nil {
 			err = perr
 		}
@@ -228,7 +229,6 @@ func (t *Tracker) pass(ctx context.Context) (more bool, err error) {
 			}
 		}
 	}
-	t.tellValsetChanges(ctx)
 	if !t.floorChecked {
 		t.floorChecked = t.recheckFloor(ctx)
 	}
@@ -368,10 +368,12 @@ func (t *Tracker) refusedBelow(ctx context.Context, height int64, served int) er
 	return nil
 }
 
-// tellValsetChanges tells onChange the validator set changes stored above the
-// told watermark, which starts at the first stored high: a change the backfill
-// stores below it, or one in a new chain's first fill, is never told. A failed
-// read is reported, and the next pass tells from the same watermark.
+// tellValsetChanges tells onChange, at the end of each pass, the validator
+// set changes stored above the told watermark, which starts at the first
+// stored high: a change the backfill stores below it, or one in a new chain's
+// first fill, is never told. The watermark moves before telling, so a crash
+// mid-send tells nothing twice; a failed read is reported, and the next pass
+// tells from the same watermark.
 func (t *Tracker) tellValsetChanges(ctx context.Context) {
 	if t.onChange == nil {
 		return
@@ -388,16 +390,19 @@ func (t *Tracker) tellChangesUpTo(ctx context.Context) error {
 	if err != nil || high <= told {
 		return err
 	}
+	var changes []ValsetChange
 	if told > 0 {
-		changes, err := t.store.ValsetChangesIn(ctx, told+1, high)
-		if err != nil {
+		if changes, err = t.store.ValsetChangesIn(ctx, told+1, high); err != nil {
 			return err
 		}
-		for _, c := range changes {
-			t.onChange(c)
-		}
 	}
-	return t.store.SetValsetToldTo(ctx, high)
+	if err := t.store.SetValsetToldTo(ctx, high); err != nil {
+		return err
+	}
+	for _, c := range changes {
+		t.onChange(c)
+	}
+	return nil
 }
 
 // watchBehind reports the source once it has failed, for behindReport, to
