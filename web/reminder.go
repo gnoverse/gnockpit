@@ -90,7 +90,9 @@ func (s *Server) putReminder(w http.ResponseWriter, r *http.Request) {
 	case req.Height < 1:
 		err = fmt.Errorf("height must be a block height")
 	case err == nil:
-		_, err = time.Parse(time.RFC3339, req.Since)
+		if _, perr := time.Parse(time.RFC3339, req.Since); perr != nil {
+			err = fmt.Errorf("since must be an RFC 3339 time")
+		}
 	}
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)

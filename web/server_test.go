@@ -556,6 +556,11 @@ func TestReminderAPIRejectsBadInput(t *testing.T) {
 			t.Errorf("%s: status %d, want 400", name, code)
 		}
 	}
+	bad := reminderBody(tipHeight+5000, "1h")
+	bad["since"] = "yesterday"
+	if _, body := reminderCall(t, s, http.MethodPut, "", bad); body["text"] != "since must be an RFC 3339 time" {
+		t.Errorf("bad since: %v, want it named", body)
+	}
 	if code, _ := reminderCall(t, s, http.MethodGet, "", nil); code != http.StatusBadRequest {
 		t.Errorf("GET without id: status %d, want 400", code)
 	}
