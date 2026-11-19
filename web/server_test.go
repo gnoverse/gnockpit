@@ -578,3 +578,30 @@ func TestScheduleComesFromTheSnapshotAndETA(t *testing.T) {
 		t.Error("schedule() before the first snapshot is ok, want not")
 	}
 }
+
+func TestNotifyScheduleSendsTheHaltAlerts(t *testing.T) {
+	var pushes int
+	pushSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		pushes++
+		w.WriteHeader(http.StatusCreated)
+	}))
+	t.Cleanup(pushSrv.Close)
+	s := etaServer(t, tipHeight, &eta.ScheduledHalt{Height: tipHeight + 1000, MinVersion: "v1.2.0"})
+	_, mgr := newSrvWithPush(t)
+	s.PushManager = mgr
+	// Keys of a real browser push subscription: sends encrypt to them.
+	if _, err := mgr.DB().SaveDevice(push.Subscription{
+		ID: "d1", Endpoint: pushSrv.URL,
+		P256dh: "BNNL5ZaTfK81qhXOx23-wewhigUeFb632jN6LvRWCFH1ubQr77FE_9qV1FuojuRmHP42zmf34rXgW80OvUVDgTk", Auth: "zqbxT6JKstKSY9JKibZLSQ",
+	},
+		[]push.SubscriptionAlert{{AlertType: push.AlertHaltScheduled}}); err != nil {
+		t.Fatal(err)
+	}
+	quietLog(t)
+	s.notifySchedule()
+	s.notifySchedule()
+	if pushes != 1 {
+		t.Errorf("pushes = %d, want the new halt once", pushes)
+	}
+	(&Server{}).notifySchedule() // push off: nothing to do
+}

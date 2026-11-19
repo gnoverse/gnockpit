@@ -764,6 +764,7 @@ func (s *Server) publishLoop(ctx context.Context) {
 		// immutable when a WebSocket client reads it on connect.
 		s.applyValidatorHealth(snap)
 		s.setSnapshot(snap)
+		s.notifySchedule()
 		s.refreshMissed(ctx)
 
 		// Broadcast to WebSocket clients as a single batched message to reduce

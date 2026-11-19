@@ -143,7 +143,6 @@ func run() error {
 	}
 	srv.Blocks = blockStore
 	srv.BlockFill = blockTracker
-	go blockTracker.Run(ctx)
 
 	// So do the block times behind block ETAs, backfilled from the primary
 	// source; the tracker stops with ctx.
@@ -168,6 +167,11 @@ func run() error {
 	if flagPublicURL != "" {
 		pushMgr.SetPublicURL(flagPublicURL)
 	}
+	// The block history tells the set changes it stores going up: it starts
+	// once the push manager it tells them to exists.
+	names := sources.Primary().Names
+	blockTracker.OnValsetChange(func(c blocks.ValsetChange) { pushMgr.NotifyValsetChange(c, names.Name) })
+	go blockTracker.Run(ctx)
 	srv.MaxMissedInARow = flagMaxMissedInARow
 	srv.ChainStuckSecs = flagChainStuckSecs
 	srv.HideSources = flagHideSources

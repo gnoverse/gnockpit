@@ -115,6 +115,17 @@ func (s *Server) putReminder(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"id": id})
 }
 
+// notifySchedule sends the halt alerts and reminders the chain's state calls
+// for, when push is on and a snapshot is in.
+func (s *Server) notifySchedule() {
+	if s.PushManager == nil {
+		return
+	}
+	if sched, ok := s.schedule(); ok {
+		s.PushManager.EvaluateSchedule(sched)
+	}
+}
+
 // schedule is what the lead-time alerts are checked against: the newest
 // block, and the block-time model's scheduled halt and estimates. The time
 // left to a height runs from the newest block's time at the model's pace, so
