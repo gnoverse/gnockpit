@@ -2,14 +2,14 @@ package push
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"log"
 	"net/http"
+	"sync"
+	"time"
 
 	webpush "github.com/SherClockHolmes/webpush-go"
-	"github.com/containrrr/shoutrrr/pkg/router"
 	"github.com/gnoverse/gnockpit/node"
 )
 
@@ -28,9 +28,12 @@ type Manager struct {
 	chainStuckSecs  int
 	maxMissedInARow int
 	chainName       string
-	notifier        *router.ServiceRouter
-	notifyURLs      []string
 	publicURL       string
+	notifyMu        sync.RWMutex
+	targets         []notifyTarget // the notification config's targets; guarded by notifyMu
+	notifyPath      string         // the notification config file; "" when none
+	notifyModTime   time.Time      // its modification time when last read
+	notifyErr       string         // the last reload error logged
 	redactSecrets   bool
 }
 
@@ -84,7 +87,7 @@ func (m *Manager) SetPublicURL(url string) { m.publicURL = url }
 
 // SetRedactSecrets sets whether the Shoutrrr errors the Manager logs or returns
 // are stripped of notification URL secrets (see redactNotifySecrets); when off,
-// they are kept verbatim. Call before SetNotifyURLs, whose error it also
+// they are kept verbatim. Call before LoadNotifyConfig, whose error it also
 // covers.
 func (m *Manager) SetRedactSecrets(on bool) { m.redactSecrets = on }
 
@@ -95,18 +98,6 @@ func (m *Manager) notifyErrorText(err error, urls []string) string {
 		return err.Error()
 	}
 	return redactNotifySecrets(err.Error(), urls)
-}
-
-// SetNotifyURLs configures external notification delivery via Shoutrrr service URLs.
-// Pass nil or empty to disable. Call before the publish loop starts.
-func (m *Manager) SetNotifyURLs(urls []string) error {
-	r, err := NewNotifier(urls)
-	if err != nil {
-		return errors.New(m.notifyErrorText(err, urls))
-	}
-	m.notifier = r
-	m.notifyURLs = urls
-	return nil
 }
 
 // EvaluateAndNotify detects alert transitions from snap and delivers push notifications.
@@ -133,16 +124,7 @@ func (m *Manager) NotifyAlert(a Alert) {
 		m.sendPush(sb.Sub, a)
 	}
 
-	if m.notifier != nil {
-		msg := FormatAlert(m.chainName, m.publicURL, a)
-		if errs := m.notifier.Send(msg, nil); len(errs) > 0 {
-			for _, err := range errs {
-				if err != nil {
-					log.Printf("notify: %s", m.notifyErrorText(err, m.notifyURLs))
-				}
-			}
-		}
-	}
+	m.notifyTargets(a)
 }
 
 // SendTest sends a test notification to a specific subscription.

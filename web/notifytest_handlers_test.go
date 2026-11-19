@@ -8,6 +8,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/gnoverse/gnockpit/web/push"
 )
 
 func TestNotifyTargetsHandler_Auth(t *testing.T) {
@@ -21,7 +23,8 @@ func TestNotifyTargetsHandler_Auth(t *testing.T) {
 	}
 
 	srv.NotifyTestToken = "s3cret"
-	if err := mgr.SetNotifyURLs([]string{"generic+http://example.com/hook"}); err != nil {
+	quietLog(t)
+	if err := mgr.SetNotifyConfig(notifyTo("generic+http://example.com/hook")); err != nil {
 		t.Fatal(err)
 	}
 
@@ -70,7 +73,8 @@ func TestNotifyTestHandler_SendsWithToken(t *testing.T) {
 
 	srv, mgr := newSrvWithPush(t)
 	srv.NotifyTestToken = "s3cret"
-	if err := mgr.SetNotifyURLs([]string{"generic+http://" + host + "/hook"}); err != nil {
+	quietLog(t)
+	if err := mgr.SetNotifyConfig(notifyTo("generic+http://" + host + "/hook")); err != nil {
 		t.Fatal(err)
 	}
 
@@ -123,7 +127,7 @@ func TestNotifyTestHandler_SendErrorDoesNotLeakURL(t *testing.T) {
 	log.SetOutput(&logBuf)
 	defer log.SetOutput(io.Discard)
 
-	if err := mgr.SetNotifyURLs([]string{"generic+https://" + host + "/webhook/" + secret}); err != nil {
+	if err := mgr.SetNotifyConfig(notifyTo("generic+https://" + host + "/webhook/" + secret)); err != nil {
 		t.Fatal(err)
 	}
 
@@ -158,7 +162,7 @@ func TestNotifyTestHandler_SendErrorLogIsRedacted(t *testing.T) {
 	defer log.SetOutput(prevLog)
 
 	mgr.SetRedactSecrets(true)
-	if err := mgr.SetNotifyURLs([]string{"generic+https://nonexistent.invalid.example/webhook/" + secret}); err != nil {
+	if err := mgr.SetNotifyConfig(notifyTo("generic+https://nonexistent.invalid.example/webhook/" + secret)); err != nil {
 		t.Fatal(err)
 	}
 
@@ -176,4 +180,17 @@ func TestNotifyTestHandler_SendErrorLogIsRedacted(t *testing.T) {
 	if strings.Contains(logBuf.String(), secret) {
 		t.Errorf("server-side log leaked the notify URL secret: %q", logBuf.String())
 	}
+}
+
+// notifyTo is a config sending chain-stuck alerts to url.
+func notifyTo(url string) push.NotifyConfig {
+	return push.NotifyConfig{Targets: []push.NotifyRoute{{URL: url, Alerts: map[push.AlertType]push.AlertOptions{push.AlertChainStuck: {}}}}}
+}
+
+// quietLog keeps the log out of the test output until the test ends.
+func quietLog(t *testing.T) {
+	t.Helper()
+	prev := log.Writer()
+	log.SetOutput(io.Discard)
+	t.Cleanup(func() { log.SetOutput(prev) })
 }

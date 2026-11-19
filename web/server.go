@@ -755,6 +755,7 @@ func (s *Server) publishLoop(ctx context.Context) {
 		}
 		snap := s.fetchSnapshot(ctx)
 		if s.PushManager != nil {
+			s.PushManager.ReloadNotifyConfigIfChanged()
 			s.PushManager.EvaluateAndNotify(snap)
 		}
 		// Active-validator count and the down set depend on the detector's

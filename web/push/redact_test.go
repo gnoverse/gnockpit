@@ -185,11 +185,11 @@ func TestManager_ShoutrrrErrors(t *testing.T) {
 		causes  []string
 	}{
 		{
-			name: "SetNotifyURLs error",
+			name: "SetNotifyConfig error",
 			emit: func(t *testing.T, m *Manager) string {
-				err := m.SetNotifyURLs([]string{malformedDiscordURL})
+				err := m.SetNotifyConfig(everyAlert(malformedDiscordURL))
 				if err == nil {
-					t.Fatal("SetNotifyURLs: expected error for a malformed URL")
+					t.Fatal("SetNotifyConfig: expected error for a malformed URL")
 				}
 				return err.Error()
 			},
@@ -200,8 +200,8 @@ func TestManager_ShoutrrrErrors(t *testing.T) {
 			name: "NotifyAlert log",
 			emit: func(t *testing.T, m *Manager) string {
 				logBuf := captureLog(t)
-				if err := m.SetNotifyURLs([]string{discordURL, gotifyURL}); err != nil {
-					t.Fatalf("SetNotifyURLs: %v", err)
+				if err := m.SetNotifyConfig(everyAlert(discordURL, gotifyURL)); err != nil {
+					t.Fatalf("SetNotifyConfig: %v", err)
 				}
 				failNetwork(t)
 				m.NotifyAlert(Alert{Type: AlertChainStuck, Firing: true, Title: "Chain stuck", Body: "test"})
@@ -213,9 +213,9 @@ func TestManager_ShoutrrrErrors(t *testing.T) {
 		{
 			name: "SendTestNotify errors",
 			emit: func(t *testing.T, m *Manager) string {
-				captureLog(t) // keeps SetNotifyURLs's log line out of the test output
-				if err := m.SetNotifyURLs([]string{discordURL, gotifyURL}); err != nil {
-					t.Fatalf("SetNotifyURLs: %v", err)
+				captureLog(t) // keeps SetNotifyConfig's log line out of the test output
+				if err := m.SetNotifyConfig(everyAlert(discordURL, gotifyURL)); err != nil {
+					t.Fatalf("SetNotifyConfig: %v", err)
 				}
 				failNetwork(t)
 				var texts []string
