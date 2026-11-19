@@ -1,13 +1,10 @@
 package node
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
-	"time"
 )
 
 // rpcCall is one call of a JSON-RPC batch.
@@ -45,31 +42,9 @@ func (c *Client) rpcBatch(ctx context.Context, calls []rpcCall) ([]rpcResult, er
 	if err != nil {
 		return nil, fmt.Errorf("encode batch: %w", err)
 	}
-	url := c.RPCURL
-	start := time.Now()
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(payload))
+	body, err := c.send(ctx, http.MethodPost, c.RPCURL, payload)
 	if err != nil {
 		return nil, err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	resp, err := c.HTTP.Do(req)
-	dur := time.Since(start)
-	if err != nil {
-		if c.LogFn != nil {
-			c.LogFn(http.MethodPost, url, 0, dur, err)
-		}
-		return nil, err
-	}
-	defer resp.Body.Close()
-	if c.LogFn != nil {
-		c.LogFn(http.MethodPost, url, resp.StatusCode, dur, nil)
-	}
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, err
-	}
-	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		return nil, newHTTPStatusError(url, resp, body)
 	}
 	var answers []struct {
 		ID     int             `json:"id"`

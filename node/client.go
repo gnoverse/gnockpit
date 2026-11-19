@@ -1,6 +1,7 @@
 package node
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
@@ -40,39 +41,50 @@ func NewClient(rpcURL string, timeout time.Duration) *Client {
 
 // rpcGet performs a GET request and returns the raw body.
 func (c *Client) rpcGet(ctx context.Context, path string) ([]byte, error) {
-	url := c.RPCURL + path
-	start := time.Now()
+	return c.send(ctx, http.MethodGet, c.RPCURL+path, nil)
+}
 
-	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+// send performs a request, a JSON POST when payload is not nil, logs it, and
+// returns the body of a 2xx answer; any other status is an *HTTPStatusError.
+func (c *Client) send(ctx context.Context, method, url string, payload []byte) ([]byte, error) {
+	start := time.Now()
+	var body io.Reader
+	if payload != nil {
+		body = bytes.NewReader(payload)
+	}
+	req, err := http.NewRequestWithContext(ctx, method, url, body)
 	if err != nil {
 		if c.LogFn != nil {
-			c.LogFn("GET", url, 0, time.Since(start), err)
+			c.LogFn(method, url, 0, time.Since(start), err)
 		}
 		return nil, err
+	}
+	if payload != nil {
+		req.Header.Set("Content-Type", "application/json")
 	}
 
 	resp, err := c.HTTP.Do(req)
 	dur := time.Since(start)
 	if err != nil {
 		if c.LogFn != nil {
-			c.LogFn("GET", url, 0, dur, err)
+			c.LogFn(method, url, 0, dur, err)
 		}
 		return nil, err
 	}
 	defer resp.Body.Close()
 
 	if c.LogFn != nil {
-		c.LogFn("GET", url, resp.StatusCode, dur, nil)
+		c.LogFn(method, url, resp.StatusCode, dur, nil)
 	}
 
-	body, err := io.ReadAll(resp.Body)
+	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, err
 	}
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		return nil, newHTTPStatusError(url, resp, body)
+		return nil, newHTTPStatusError(url, resp, respBody)
 	}
-	return body, nil
+	return respBody, nil
 }
 
 // rpcResult wraps the JSON-RPC response envelope.
