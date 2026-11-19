@@ -103,6 +103,7 @@ type Tracker struct {
 	floorSeen    int64     // a floor one answer showed, set when a second shows it; 0: none
 	behindSince  time.Time // since when passes have met heights not final at the source; zero: none
 	belowAt      time.Time // when the backfill asks again a source refusing the lowest stored height; zero: not paused
+	setRefused   int64     // a height whose set one read refused, taken as unserved when a second does; 0: none
 	gapsAt       time.Time // when the event gaps are read again
 	lastErr      map[string]string
 
@@ -443,7 +444,8 @@ func (t *Tracker) followChain(ctx context.Context, chainID string) error {
 	if stored != "" {
 		t.logf("blocks: chain is %s, dropping the block history of %s", chainID, stored)
 	}
-	t.batch, t.maxBatch, t.regrowAt, t.marks, t.floorSeen, t.belowAt = t.cfg.Batch, t.cfg.Batch, time.Time{}, nil, 0, time.Time{}
+	t.batch, t.maxBatch, t.regrowAt, t.marks = t.cfg.Batch, t.cfg.Batch, time.Time{}, nil
+	t.floorSeen, t.belowAt, t.setRefused = 0, time.Time{}, 0
 	return t.store.Reset(ctx, chainID)
 }
 

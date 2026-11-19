@@ -841,6 +841,11 @@ func TestPassFlagsALateBlockWhoseSetBelowIsRefused(t *testing.T) {
 	c.round[1000] = 1
 	c.setRefused = map[int64]bool{999: true}
 	tt := newTestTrackerOn(t, c, newTestStore(t), Config{Pace: 0, Batch: 2400})
+	// One refusal can be a fluke: the batch is asked again, and a second
+	// refusal flags the block.
+	if _, err := tt.pass(context.Background()); err == nil {
+		t.Fatal("pass() = nil, want the first refusal asked again")
+	}
 	mustPass(t, tt)
 	wantRange(t, tt.store, 1, 2299)
 	if got := storedRounds(t, tt.store, 1000); len(got) != 2 || got[0] != "" || got[1] != c.expected(1000, 1) {
@@ -848,6 +853,24 @@ func TestPassFlagsALateBlockWhoseSetBelowIsRefused(t *testing.T) {
 	}
 	if reason := storedFlag(t, tt.store, 1000); !strings.Contains(reason, "the source does not serve the set at #999") {
 		t.Errorf("flag of 1000 = %q, want the refused set below", reason)
+	}
+}
+
+func TestPassFlagsNoLateBlockOnASingleSetRefusal(t *testing.T) {
+	c := newFakeChain(2300)
+	c.round[1000] = 1
+	c.setRefused = map[int64]bool{999: true}
+	tt := newTestTrackerOn(t, c, newTestStore(t), Config{Pace: 0, Batch: 2400})
+	if _, err := tt.pass(context.Background()); err == nil {
+		t.Fatal("pass() = nil, want the refusal asked again")
+	}
+	c.setRefused = nil
+	mustPass(t, tt)
+	if reason := storedFlag(t, tt.store, 1000); reason != "" {
+		t.Errorf("flag of 1000 = %q, want none", reason)
+	}
+	if got := storedRounds(t, tt.store, 1000); len(got) != 2 || got[0] == "" {
+		t.Errorf("rounds of 1000 = %v, want both known", got)
 	}
 }
 
