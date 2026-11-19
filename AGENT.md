@@ -17,7 +17,7 @@ node/            — RPC client + types (pure data layer, no UI)
   geoip.go       — DB-IP City Lite: IP → coordinates + country (auto-downloaded, monthly)
   asn.go         — DB-IP ASN Lite: IP → ASN + cloud provider (auto-downloaded, monthly)
   batch.go       — JSON-RPC batches (one POST, several calls); HeightError
-  blockhistory.go — Commit/Precommit, SetMember, BlockEvent and their reads: commits (one, or a batch), validator sets with priorities, block events
+  chain.go       — Commit/Precommit, SetMember, BlockEvent and their reads: commits (one, or a batch), validator sets with priorities, block events
 blocks/          — block history since genesis: per-height facts in SQLite, filled from the primary source (shares the push DB handle)
   store.go       — blocks, validator sets, absences (absent / nil / other block), round proposers, flags, set events + event gaps, daily vote-delay histograms; each address once (blocks_validators), the rest by id (blocks_events keeps text addresses), no index beside the keys; missed-block windows (first block found by bisecting heights)
   record.go      — a commit + its validator set → a Record: absence kinds, vote delays from tm2's weighted median time
@@ -129,7 +129,7 @@ Each card has `<h2 data-section="name">` that toggles `.collapsed` class. State 
 ### Adding a new RPC data source
 
 1. Add the fetch method to `node/client.go`
-2. Add types to `node/types.go` (or beside their read, as in `blockhistory.go`)
+2. Add types to `node/types.go` (or beside their read, as in `chain.go`)
 3. Call it in `web/server.go: fetchSnapshot()`
 4. Broadcast it in the publish loop
 5. Handle the WebSocket message in `web/index.html`
