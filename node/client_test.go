@@ -6,10 +6,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
+	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -779,5 +782,49 @@ func TestStatusHeadUnparsable(t *testing.T) {
 		if _, err := (&Status{SyncInfo: si}).Head(); err == nil {
 			t.Errorf("Head() of %+v = nil error, want one", si)
 		}
+	}
+}
+
+func TestGetSigningStatsKeepsFinalCommits(t *testing.T) {
+	const addrA = "g1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	var mu sync.Mutex
+	head := "4"
+	asked := map[string]int{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/validators" {
+			fmt.Fprintf(w, `{"jsonrpc":"2.0","result":{"validators":[{"address":%q,"pub_key":{"type":"ed25519","value":"AA"},"voting_power":"1"}]}}`, addrA)
+			return
+		}
+		h := r.URL.Query().Get("height")
+		mu.Lock()
+		asked[h]++
+		final := h != head // the head's commit is not final yet
+		mu.Unlock()
+		fmt.Fprintf(w, `{"jsonrpc":"2.0","result":{"canonical":%t,"signed_header":{
+			"header":{"height":%q,"time":"2026-01-01T00:00:0%sZ","proposer_address":%q},
+			"commit":{"precommits":[{"validator_address":%q}]}
+		}}}`, final, h, h, addrA, addrA)
+	}))
+	defer srv.Close()
+	c := NewClient(srv.URL, 5*time.Second)
+
+	for range 2 {
+		if _, err := c.GetSigningStats(context.Background(), 4, 3); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if want := map[string]int{"2": 1, "3": 1, "4": 2}; !maps.Equal(asked, want) {
+		t.Errorf("commits asked per height = %v, want %v (final ones once, the head each time)", asked, want)
+	}
+
+	// The window moving up drops the commits it left behind.
+	mu.Lock()
+	head = "6"
+	mu.Unlock()
+	if _, err := c.GetSigningStats(context.Background(), 6, 2); err != nil {
+		t.Fatal(err)
+	}
+	if kept := slices.Sorted(maps.Keys(c.commits)); !slices.Equal(kept, []int{5}) {
+		t.Errorf("kept commits = %v, want [5]", kept)
 	}
 }

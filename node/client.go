@@ -23,6 +23,9 @@ type Client struct {
 	Timeout time.Duration
 	LogFn   LogFunc
 	Names   *NameRegistry
+
+	commitsMu sync.Mutex
+	commits   map[int]*CommitInfo // final commits GetSigningStats read, by height
 }
 
 // NewClient creates a new RPC client.
@@ -345,6 +348,7 @@ type CommitInfo struct {
 	ProposerAddress string
 	AppHash         string
 	NumTxs          int
+	Canonical       bool // read from the next block, so final
 	// Precommits has one entry per validator slot; "null" means that validator
 	// did not sign. These are the signatures that finalized THIS height.
 	Precommits []json.RawMessage
@@ -356,6 +360,7 @@ type CommitInfo struct {
 func (c *Client) GetCommit(ctx context.Context, height int) (*CommitInfo, error) {
 	path := fmt.Sprintf("/commit?height=%d", height)
 	var result struct {
+		Canonical    bool `json:"canonical"`
 		SignedHeader struct {
 			Header struct {
 				Height          string `json:"height"`
@@ -380,8 +385,44 @@ func (c *Client) GetCommit(ctx context.Context, height int) (*CommitInfo, error)
 		ProposerAddress: h.ProposerAddress,
 		AppHash:         h.AppHash,
 		NumTxs:          numTxs,
+		Canonical:       result.Canonical,
 		Precommits:      result.SignedHeader.Commit.Precommits,
 	}, nil
+}
+
+// commit returns the commit of height, from memory when an earlier call read
+// it final (canonical), so a window sliding by one block costs about one call.
+func (c *Client) commit(ctx context.Context, height int) (*CommitInfo, error) {
+	c.commitsMu.Lock()
+	ci, ok := c.commits[height]
+	c.commitsMu.Unlock()
+	if ok {
+		return ci, nil
+	}
+	ci, err := c.GetCommit(ctx, height)
+	if err != nil {
+		return nil, err
+	}
+	if ci.Canonical {
+		c.commitsMu.Lock()
+		if c.commits == nil {
+			c.commits = map[int]*CommitInfo{}
+		}
+		c.commits[height] = ci
+		c.commitsMu.Unlock()
+	}
+	return ci, nil
+}
+
+// forgetCommitsBelow drops the commits kept for heights under height.
+func (c *Client) forgetCommitsBelow(height int) {
+	c.commitsMu.Lock()
+	defer c.commitsMu.Unlock()
+	for h := range c.commits {
+		if h < height {
+			delete(c.commits, h)
+		}
+	}
 }
 
 // GetSigningStats fetches the last `window` blocks (capped at 100) and returns
@@ -416,6 +457,7 @@ func (c *Client) GetSigningStats(ctx context.Context, currentHeight int, window 
 	}
 
 	startHeight := currentHeight - window + 1
+	c.forgetCommitsBelow(startHeight)
 	// Valset at the window's first block (best-effort): lets computeSigning tell
 	// an established-but-down validator from one only added mid-window. If this
 	// fails (nil), a validator down for the whole window looks never-eligible and
@@ -427,7 +469,7 @@ func (c *Client) GetSigningStats(ctx context.Context, currentHeight int, window 
 	var signers []map[string]bool
 	var proposers []string
 	for h := startHeight; h <= currentHeight; h++ {
-		commit, err := c.GetCommit(ctx, h)
+		commit, err := c.commit(ctx, h)
 		if err != nil {
 			continue
 		}
