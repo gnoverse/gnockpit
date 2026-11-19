@@ -644,8 +644,12 @@ func TestPassPausesTheBackfillWhenTheLowestStoredHeightIsRefused(t *testing.T) {
 		t.Errorf("batches = %d, want %d: the backfill pauses", len(c.batches), asked)
 	}
 	at = at.Add(gapRetry)
+	asked = len(c.batches)
 	mustPass(t, tt) // asked again: refused twice again
 	mustPass(t, tt)
+	if n := len(c.batches) - asked; n != 2 {
+		t.Errorf("batches after the pause = %d, want 2: a pause ends on a first refusal", n)
+	}
 	var reports int
 	for _, l := range tt.logs {
 		if strings.Contains(l, "refuses #3900, well below the head") {
@@ -664,6 +668,54 @@ func TestPassPausesTheBackfillWhenTheLowestStoredHeightIsRefused(t *testing.T) {
 	wantRange(t, tt.store, 2801, 4999)
 	if !tt.logged("blocks: below ok again") {
 		t.Errorf("logs = %q, want the recovery", tt.logs)
+	}
+}
+
+func TestPassPausesTheBackfillWhileTheHeadMoves(t *testing.T) {
+	c := newFakeChain(5000)
+	tt := newTestTrackerOn(t, c, newTestStore(t), Config{Pace: 0, Batch: 1100})
+	mustPass(t, tt) // 4999 to 3900
+	// The witness, 3900, is refused twice in a row going down, while the
+	// heights going up are served.
+	c.floor = 4200
+	for range 2 {
+		c.head++
+		mustPass(t, tt)
+	}
+	if !tt.logged("refuses #3900, well below the head") {
+		t.Errorf("logs = %q, want the backfill paused", tt.logs)
+	}
+}
+
+func TestPassPausesNotOnRefusalsAServedAnswerSeparates(t *testing.T) {
+	c := newFakeChain(5000)
+	tt := newTestTrackerOn(t, c, newTestStore(t), Config{Pace: 0, Batch: 1100})
+	mustPass(t, tt) // 4999 to 3900
+	// The witness, 3900, is refused, then served before 3899's refusal, then
+	// refused again: its refusals are not in a row.
+	for _, h := range []int64{3900, 3899, 3900} {
+		c.refusedOnce = h
+		mustPass(t, tt)
+	}
+	if tt.logged("refuses") {
+		t.Errorf("logs = %q, want no pause", tt.logs)
+	}
+}
+
+func TestPassReportsAPausedBackfillAsNoSourceBehind(t *testing.T) {
+	c := newFakeChain(5000)
+	tt := newTestTrackerOn(t, c, newTestStore(t), Config{Pace: 0, Batch: 1100})
+	at := t0
+	tt.now = func() time.Time { return at }
+	mustPass(t, tt) // 4999 to 3900
+	// The witness is refused first, as by a backend behind, then again
+	// minutes later: the pass that pauses reports the refusal only.
+	c.floor = 4200
+	mustPass(t, tt)
+	at = at.Add(behindReport)
+	mustPass(t, tt)
+	if !tt.logged("refuses #3900") || tt.logged("has not given") {
+		t.Errorf("logs = %q, want the pause reported, and no source behind", tt.logs)
 	}
 }
 
