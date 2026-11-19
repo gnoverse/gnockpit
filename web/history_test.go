@@ -90,6 +90,10 @@ func TestRefreshMissed(t *testing.T) {
 	if srv.missed24h[histValA] != 2 || srv.missed24h[histValB] != 0 {
 		t.Errorf("missed 24h = %v, want A 2, B 0", srv.missed24h)
 	}
+	// A proposed the 3 blocks, each at round 0.
+	if got := srv.proposals24h[histValA]; got != [2]int{3, 0} {
+		t.Errorf("A proposals 24h = %v, want 3 expected, 0 missed", got)
+	}
 	if srv.missedSince.IsZero() {
 		t.Error("missed since unset")
 	}

@@ -250,8 +250,11 @@ func TestStoreMissedByWindows(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// A nil vote counts as signed.
-	want := WindowReport{Windows: []time.Duration{time.Hour, 0}, Blocks: []int{2, 3}, Missed: map[string][]int{val15T: {1, 2}}}
+	// A nil vote counts as signed. valG0Y proposed every block, at round 0.
+	want := WindowReport{
+		Windows: []time.Duration{time.Hour, 0}, Blocks: []int{2, 3}, Missed: map[string][]int{val15T: {1, 2}},
+		ProposalsExpected: map[string][]int{valG0Y: {2, 3}}, ProposalsMissed: map[string][]int{valG0Y: {0, 0}},
+	}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("MissedByWindows() = %+v, want %+v", got, want)
 	}
@@ -365,10 +368,14 @@ func TestStoreMissedByWindowsAcrossDays(t *testing.T) {
 	}
 	// 2 h: block 12; 25 h: 8 to 12, from day 2's start; all: 1 to 12; 40 h:
 	// 6 to 12, from day 1's middle.
-	want := WindowReport{Windows: windows, Blocks: []int{1, 5, 12, 7}, Missed: map[string][]int{
-		val15T: {1, 5, 12, 7},
-		valG0Y: {1, 3, 6, 4},
-	}}
+	want := WindowReport{
+		Windows: windows, Blocks: []int{1, 5, 12, 7}, Missed: map[string][]int{
+			val15T: {1, 5, 12, 7},
+			valG0Y: {1, 3, 6, 4},
+		},
+		// valG0Y proposed every block, at round 0.
+		ProposalsExpected: map[string][]int{valG0Y: {1, 5, 12, 7}}, ProposalsMissed: map[string][]int{valG0Y: {0, 0, 0, 0}},
+	}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("MissedByWindows() =\n%+v\nwant\n%+v", got, want)
 	}
@@ -537,5 +544,49 @@ func TestNewStoreDropsTheSigningHistoryTables(t *testing.T) {
 		`SELECT COUNT(*) FROM sqlite_master WHERE name IN ('signing_blocks', 'signing_misses')`,
 	).Scan(&n); err != nil || n != 0 {
 		t.Errorf("signing history tables left: %d, %v", n, err)
+	}
+}
+
+func TestStoreMissedByWindowsCountsProposals(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	putTestSet(t, s)
+	day0 := t0.Truncate(24 * time.Hour)
+	at := func(h time.Duration) time.Time { return day0.Add(h) }
+	late := func(r Record) Record {
+		r.Round, r.Rounds = 1, []string{val15T, valG0Y}
+		return r
+	}
+	byVal := func(r Record, p string) Record { r.Proposer = p; return r }
+	recs := []Record{
+		{Height: 1, Time: at(6 * time.Hour), Proposer: valG0Y, ValsetHash: "SET"},
+		late(Record{Height: 2, Time: at(12 * time.Hour), Proposer: valG0Y, ValsetHash: "SET"}),
+		{Height: 3, Time: at(18 * time.Hour), Proposer: valG0Y, ValsetHash: "SET"},
+		byVal(Record{Height: 4, Time: at(30 * time.Hour), ValsetHash: "SET"}, val15T),
+		{Height: 5, Time: at(34 * time.Hour), Proposer: valG0Y, ValsetHash: "SET"},
+	}
+	if err := s.Write(ctx, recs); err != nil {
+		t.Fatal(err)
+	}
+	// 24 h before day 1's 11:00: from block 2, the late one, on day 0 (a
+	// partial day); day 1 from the counters.
+	got, err := s.MissedByWindows(ctx, []time.Duration{24 * time.Hour, 0}, at(35*time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantExpected := map[string][]int{valG0Y: {3, 4}, val15T: {2, 2}}
+	wantMissed := map[string][]int{valG0Y: {0, 0}, val15T: {1, 1}}
+	if !reflect.DeepEqual(got.ProposalsExpected, wantExpected) || !reflect.DeepEqual(got.ProposalsMissed, wantMissed) {
+		t.Errorf("proposals expected %v, missed %v; want %v, %v", got.ProposalsExpected, got.ProposalsMissed, wantExpected, wantMissed)
+	}
+}
+
+func TestStoreWindowProposalsSearchTheWindowOnly(t *testing.T) {
+	plan := queryPlan(t, newTestStore(t), windowProposalsQuery, 1, 2)
+	// Read on every publish for the 24 h window: its own blocks only.
+	if !slices.ContainsFunc(plan, func(d string) bool {
+		return strings.HasPrefix(d, "SEARCH b USING INTEGER PRIMARY KEY") || strings.HasPrefix(d, "SEARCH blocks USING INTEGER PRIMARY KEY")
+	}) {
+		t.Errorf("plan = %q, want a search of blocks by height", plan)
 	}
 }

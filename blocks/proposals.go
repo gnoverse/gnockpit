@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"math"
 	"slices"
 	"time"
 )
@@ -82,7 +83,7 @@ func (s *Store) fillProposals(ctx context.Context) error {
 	); err != nil {
 		return fmt.Errorf("fill round-0 proposals: %w", err)
 	}
-	late, err := lateBlocks(ctx, tx)
+	late, err := lateBlocks(ctx, tx, 0, math.MaxInt64)
 	if err != nil {
 		return err
 	}
@@ -106,14 +107,15 @@ func (s *Store) fillProposals(ctx context.Context) error {
 	return nil
 }
 
-// lateBlocks reads, in tx, the stored blocks made after round 0, with their
-// rounds' expected proposers ("" when unknown), ascending.
-func lateBlocks(ctx context.Context, tx *sql.Tx) ([]Record, error) {
+// lateBlocks reads, in tx, the stored blocks from height from to height to
+// made after round 0, with their rounds' expected proposers ("" when
+// unknown), ascending.
+func lateBlocks(ctx context.Context, tx *sql.Tx, from, to int64) ([]Record, error) {
 	var out []Record
 	index := map[int64]int{}
 	rows, err := tx.QueryContext(ctx,
 		`SELECT b.height, b.time_ms, p.address, b.round FROM blocks b
-		 JOIN blocks_validators p ON p.id = b.proposer WHERE b.round > 0 ORDER BY b.height`)
+		 JOIN blocks_validators p ON p.id = b.proposer WHERE b.height BETWEEN ? AND ? AND b.round > 0 ORDER BY b.height`, from, to)
 	if err != nil {
 		return nil, fmt.Errorf("late blocks: %w", err)
 	}
@@ -137,7 +139,7 @@ func lateBlocks(ctx context.Context, tx *sql.Tx) ([]Record, error) {
 	}
 	rows, err = tx.QueryContext(ctx,
 		`SELECT r.height, v.address FROM blocks_rounds r LEFT JOIN blocks_validators v ON v.id = r.proposer
-		 ORDER BY r.height, r.round`)
+		 WHERE r.height BETWEEN ? AND ? ORDER BY r.height, r.round`, from, to)
 	if err != nil {
 		return nil, fmt.Errorf("late block rounds: %w", err)
 	}

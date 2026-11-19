@@ -68,10 +68,13 @@ type Server struct {
 	Addr     string
 	Interval time.Duration
 
-	mu          sync.RWMutex
-	snapshot    *node.Snapshot
-	missed24h   map[string]int // val address -> blocks missed in last 24h (guarded by mu)
-	missedSince time.Time      // time of the oldest stored block; how far back missed counts reach (guarded by mu)
+	mu        sync.RWMutex
+	snapshot  *node.Snapshot
+	missed24h map[string]int // val address -> blocks missed in last 24h (guarded by mu)
+	// proposals24h is each validator's proposals in the last 24h, expected
+	// and missed (guarded by mu).
+	proposals24h map[string][2]int
+	missedSince  time.Time // time of the oldest stored block; how far back missed counts reach (guarded by mu)
 
 	etaBlockTimes blockTimeCache // times of reached blocks asked for on /api/eta
 
@@ -245,12 +248,14 @@ func (s *Server) buildVotesReport(snap *node.Snapshot) *node.VotesReport {
 	// Attach missed-24h counts and the recording-since timestamp from history.
 	s.mu.RLock()
 	missed := s.missed24h
+	proposals := s.proposals24h
 	since := s.missedSince
 	s.mu.RUnlock()
-	if missed != nil {
-		for i := range report.Validators {
-			report.Validators[i].Missed24h = missed[report.Validators[i].Address]
-		}
+	for i := range report.Validators {
+		addr := report.Validators[i].Address
+		report.Validators[i].Missed24h = missed[addr]
+		report.Validators[i].ExpectedProposals24h = proposals[addr][0]
+		report.Validators[i].MissedProposals24h = proposals[addr][1]
 	}
 	if !since.IsZero() {
 		report.MissedSince = since.UTC().Format(time.RFC3339)
@@ -721,8 +726,8 @@ func (s *Server) ensureValidatorNames(snap *node.Snapshot) {
 
 // --- Publish Loop ---
 
-// refreshMissed refreshes the cached missed-24h counts, and how far back they
-// reach, from the block history. Errors are logged and swallowed: the live
+// refreshMissed refreshes the cached missed-24h counts and proposals, and how
+// far back they reach, from the block history. Errors are logged and swallowed: the live
 // dashboard must keep working even if the history read fails.
 func (s *Server) refreshMissed(ctx context.Context) {
 	if s.Blocks == nil {
@@ -742,8 +747,13 @@ func (s *Server) refreshMissed(ctx context.Context) {
 	for addr, n := range rep.Missed {
 		missed[addr] = n[0]
 	}
+	proposals := make(map[string][2]int, len(rep.ProposalsExpected))
+	for addr, n := range rep.ProposalsExpected {
+		proposals[addr] = [2]int{n[0], rep.ProposalsMissed[addr][0]}
+	}
 	s.mu.Lock()
 	s.missed24h = missed
+	s.proposals24h = proposals
 	s.missedSince = earliest
 	s.mu.Unlock()
 }
