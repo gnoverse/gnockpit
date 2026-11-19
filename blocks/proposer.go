@@ -1,6 +1,7 @@
 package blocks
 
 import (
+	"errors"
 	"fmt"
 	"math"
 	"math/big"
@@ -172,6 +173,9 @@ func safeSubClip(a, b int64) int64 {
 // give cur (the set changed between the two heights). Rounds 1 and up come
 // from increments of cur, as consensus does on a copy at each new round.
 func roundProposers(prev, cur []node.SetMember, last int) ([]string, error) {
+	if len(cur) == 0 {
+		return nil, errors.New("empty validator set")
+	}
 	out := make([]string, last+1)
 	c, err := newPrioSet(cur)
 	if err != nil {

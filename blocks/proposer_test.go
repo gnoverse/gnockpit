@@ -123,3 +123,9 @@ func TestNewPrioSetRejectsABadAddress(t *testing.T) {
 		t.Error("newPrioSet() accepted a malformed address")
 	}
 }
+
+func TestRoundProposersRejectsAnEmptySet(t *testing.T) {
+	if _, err := roundProposers(nil, nil, 1); err == nil {
+		t.Error("roundProposers() accepted an empty validator set")
+	}
+}
