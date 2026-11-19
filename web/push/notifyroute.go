@@ -31,6 +31,9 @@ func (m *Manager) SetNotifyConfig(cfg NotifyConfig) error {
 			}
 			return fmt.Errorf("target %d: %s", i+1, m.notifyErrorText(err, urls))
 		}
+		if m.sendTimeout > 0 {
+			sender.Timeout = m.sendTimeout
+		}
 		targets = append(targets, notifyTarget{route: r, sender: sender, fingerprint: notifyFingerprint(r.URL)})
 	}
 	m.notifyMu.Lock()

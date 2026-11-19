@@ -1,6 +1,8 @@
 package push
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"slices"
 	"strings"
 	"testing"
@@ -276,4 +278,28 @@ func TestManagerSendsWhileTheChainNameChanges(t *testing.T) {
 		m.NotifyValsetChange(blocks.ValsetChange{Height: 5, Time: time.Now(), SizeBefore: 1, SizeAfter: 1}, func(a string) string { return a })
 	}
 	<-done
+}
+
+func TestSendsGiveUpAfterTheSendTimeout(t *testing.T) {
+	release := make(chan struct{})
+	hung := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { <-release }))
+	t.Cleanup(hung.Close)
+	t.Cleanup(func() { close(release) })
+	m := newTestManager(t, false)
+	captureLog(t)
+	m.SetSendTimeout(100 * time.Millisecond)
+	if _, err := m.db.SaveDevice(Subscription{ID: "d", Endpoint: hung.URL, P256dh: testP256dh, Auth: testAuth},
+		[]SubscriptionAlert{{AlertType: AlertChainStuck}}); err != nil {
+		t.Fatal(err)
+	}
+	sent := make(chan struct{})
+	go func() {
+		m.NotifyAlert(Alert{Type: AlertChainStuck, Firing: true, Title: "Chain stuck"})
+		close(sent)
+	}()
+	select {
+	case <-sent:
+	case <-time.After(3 * time.Second):
+		t.Fatal("NotifyAlert still waits on a push endpoint that never answers")
+	}
 }

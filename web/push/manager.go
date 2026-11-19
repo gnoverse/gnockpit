@@ -14,6 +14,10 @@ import (
 	"github.com/gnoverse/gnockpit/node"
 )
 
+// DefaultSendTimeout is how long a push or webhook send may take unless
+// SetSendTimeout says otherwise: Shoutrrr's own bound.
+const DefaultSendTimeout = 10 * time.Second
+
 // vapidSubject is the VAPID JWT "sub" claim identifying this server.
 // webpush-go prepends "mailto:" unless the value starts with "https:", so we
 // use the project URL directly to avoid needing a real email address. Apple
@@ -36,6 +40,7 @@ type Manager struct {
 	notifyModTime   time.Time      // its modification time when last read
 	notifyErr       string         // the last reload error logged
 	now             func() time.Time
+	sendTimeout     time.Duration // how long a push or webhook send may take
 	redactSecrets   bool
 }
 
@@ -62,6 +67,7 @@ func NewManager(db *DB, chainStuckSecs, maxMissedInARow int) (*Manager, error) {
 		chainStuckSecs:  chainStuckSecs,
 		maxMissedInARow: maxMissedInARow,
 		now:             time.Now,
+		sendTimeout:     DefaultSendTimeout,
 	}, nil
 }
 
@@ -92,6 +98,10 @@ func (m *Manager) DB() *DB { return m.db }
 
 // SetPublicURL sets the public-facing URL appended to Shoutrrr alert messages.
 func (m *Manager) SetPublicURL(url string) { m.publicURL = url }
+
+// SetSendTimeout bounds how long a push or webhook send may take, so an
+// endpoint that never answers holds no caller. Call before sending.
+func (m *Manager) SetSendTimeout(d time.Duration) { m.sendTimeout = d }
 
 // SetRedactSecrets sets whether the Shoutrrr errors the Manager logs or returns
 // are stripped of notification URL secrets (see redactNotifySecrets); when off,
@@ -172,6 +182,7 @@ func (m *Manager) sendPush(sub Subscription, a Alert) {
 			Auth:   sub.Auth,
 		},
 	}, &webpush.Options{
+		HTTPClient:      &http.Client{Timeout: m.sendTimeout},
 		VAPIDPublicKey:  m.vapidPublicKey,
 		VAPIDPrivateKey: m.vapidPrivateKey,
 		Subscriber:      vapidSubject,

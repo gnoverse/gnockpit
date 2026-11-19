@@ -6,8 +6,6 @@ import (
 	"fmt"
 	"slices"
 	"strings"
-
-	"github.com/containrrr/shoutrrr"
 )
 
 // NotifyTarget describes a configured Shoutrrr notification URL without
@@ -47,8 +45,10 @@ func (m *Manager) SendTestNotify(index int, message string) error {
 	if index < 0 || index >= len(targets) {
 		return fmt.Errorf("notify target index %d out of range (%d configured)", index, len(targets))
 	}
-	if err := shoutrrr.Send(targets[index].route.URL, message); err != nil {
-		return fmt.Errorf("send test notification: %s", m.notifyErrorText(err, targetURLs(targets)))
+	for _, err := range targets[index].sender.Send(message, nil) {
+		if err != nil {
+			return fmt.Errorf("send test notification: %s", m.notifyErrorText(err, targetURLs(targets)))
+		}
 	}
 	return nil
 }

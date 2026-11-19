@@ -34,6 +34,7 @@ var (
 	flagMaxMissedInARow int
 	flagNamesPath       string
 	flagNotifyConfig    string
+	flagSendTimeout     time.Duration
 	flagRedactSecret    bool
 	flagPublicURL       string
 	flagGeoIPPath       string
@@ -83,6 +84,7 @@ func main() {
 	flag.IntVar(&flagHistoryBatch, "history-batch", blocks.DefaultBatch, "commits asked in one JSON-RPC batch while filling the block history; halved until restart when the first -rpc refuses a batch, for 10 minutes when one times out")
 	flag.IntVar(&flagChainStuckSecs, "chain-stuck-secs", 30, "seconds without a new block before the chain-stuck alert fires")
 	flag.IntVar(&flagMaxMissedInARow, "max-missed-in-a-row", 10, "consecutive blocks a validator must miss to be flagged down (alert fires + counted inactive) and must then sign to recover")
+	flag.DurationVar(&flagSendTimeout, "send-timeout", push.DefaultSendTimeout, "how long a push notification or webhook send may take before it is given up")
 	flag.StringVar(&flagNotifyConfig, "notify-config", "", "notification config file (JSON): the Shoutrrr URLs and the alerts each receives; reread when it changes")
 	flag.BoolVar(&flagRedactSecret, "redact-secret", false, "strip notification URL secrets (tokens, webhook IDs) from logged Shoutrrr errors; off by default: errors are logged verbatim")
 	flag.StringVar(&flagPublicURL, "public-url", "", "public URL of this gnockpit instance, appended to external notification messages")
@@ -159,6 +161,10 @@ func run() error {
 		return fmt.Errorf("init push manager: %w", err)
 	}
 	pushMgr.SetRedactSecrets(flagRedactSecret)
+	if flagSendTimeout <= 0 {
+		return fmt.Errorf("invalid -send-timeout %s: want more than 0", flagSendTimeout)
+	}
+	pushMgr.SetSendTimeout(flagSendTimeout)
 	if flagNotifyConfig != "" {
 		if err := pushMgr.LoadNotifyConfig(flagNotifyConfig); err != nil {
 			return fmt.Errorf("invalid -notify-config: %w", err)
