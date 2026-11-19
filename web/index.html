@@ -6246,6 +6246,7 @@
                     if (m < 1) return '< 1 min'
                     if (m < 60) return '≈ ' + m + ' min'
                     var h = Math.floor(m / 60)
+                    if (h >= 48) return '≈ ' + Math.round(h / 24) + ' d'
                     if (h >= 10) return '≈ ' + h + ' h'
                     return (
                         '≈ ' +
