@@ -15,8 +15,8 @@ import (
 	"time"
 )
 
-// The signing_* tables held the forward-only signing history the block
-// history replaces; they are dropped.
+// The schema drops signing_blocks and signing_misses where a database has
+// them: blocks_absences holds the same per-block misses, back to genesis.
 const schema = `
 CREATE TABLE IF NOT EXISTS blocks (
 	height  INTEGER PRIMARY KEY,
