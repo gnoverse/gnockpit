@@ -20,6 +20,9 @@ import (
 const (
 	// batchSize is how many commits one JSON-RPC batch asks for.
 	batchSize = 100
+	// timeoutCut is how long a batch size halved by a timeout holds: a slow
+	// answer can be transient, unlike a refusal of the batch's size.
+	timeoutCut = 10 * time.Minute
 	// backfillPace is the wait between passes while heights are left below
 	// the stored range: about one batch a second.
 	backfillPace = time.Second
@@ -68,10 +71,13 @@ type Tracker struct {
 
 	sleep func(context.Context, time.Duration) error
 	logf  func(format string, args ...any)
+	now   func() time.Time
 
 	// Owned by the goroutine running passes.
-	batch   int
-	lastErr map[string]string
+	batch    int       // commits per batch
+	maxBatch int       // the size the source refused half of; batch grows back to it
+	regrowAt time.Time // when batch, cut by a timeout, grows back; zero: not cut
+	lastErr  map[string]string
 
 	mu       sync.RWMutex
 	progress Progress
@@ -80,12 +86,14 @@ type Tracker struct {
 // NewTracker returns a tracker reading source into store. Run starts it.
 func NewTracker(store *Store, source Source) *Tracker {
 	return &Tracker{
-		store:   store,
-		source:  source,
-		sleep:   sleepCtx,
-		logf:    log.Printf,
-		batch:   batchSize,
-		lastErr: map[string]string{},
+		store:    store,
+		source:   source,
+		sleep:    sleepCtx,
+		logf:     log.Printf,
+		now:      time.Now,
+		batch:    batchSize,
+		maxBatch: batchSize,
+		lastErr:  map[string]string{},
 	}
 }
 
@@ -135,6 +143,9 @@ func (t *Tracker) pass(ctx context.Context) (more bool, err error) {
 	if err := t.followChain(ctx, head.ChainID); err != nil {
 		return false, err
 	}
+	if !t.regrowAt.IsZero() && !t.now().Before(t.regrowAt) {
+		t.batch, t.regrowAt = t.maxBatch, time.Time{}
+	}
 	// The head's own commit is final only once the next block carries it.
 	top := head.Height - 1
 	if top < 1 {
@@ -174,14 +185,19 @@ func (t *Tracker) pass(ctx context.Context) (more bool, err error) {
 // fill stores the commits of heights, which run outward from the stored
 // range: up for the head, down for the backfill. It returns how many it
 // stored: the first ones, up to a height the source refused or whose commit
-// is not final yet. A batch refused whole, or too slow to answer, halves the
-// batch size and stores nothing.
+// is not final yet. A batch refused whole halves the batch size for good; one
+// too slow to answer, for timeoutCut. Either stores nothing.
 func (t *Tracker) fill(ctx context.Context, heights []int64, head node.ChainHead, down bool) (int, error) {
 	commits, cerr := t.commits(ctx, heights)
 	var he *node.HeightError
 	if cerr != nil && !errors.As(cerr, &he) {
 		if (node.IsRefusal(cerr) || isTimeout(cerr)) && len(heights) > 1 {
 			t.batch = max(1, len(heights)/2)
+			if node.IsRefusal(cerr) {
+				t.maxBatch = t.batch
+			} else {
+				t.regrowAt = t.now().Add(timeoutCut)
+			}
 			t.logf("blocks: a batch of %d commits failed (%v), asking %d at a time", len(heights), cerr, t.batch)
 			return 0, nil
 		}
@@ -420,7 +436,7 @@ func (t *Tracker) followChain(ctx context.Context, chainID string) error {
 	if stored != "" {
 		t.logf("blocks: chain is %s, dropping the block history of %s", chainID, stored)
 	}
-	t.batch = batchSize
+	t.batch, t.maxBatch, t.regrowAt = batchSize, batchSize, time.Time{}
 	return t.store.Reset(ctx, chainID)
 }
 

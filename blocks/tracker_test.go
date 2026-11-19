@@ -315,23 +315,48 @@ func TestPassRetriesARefusalNearTheHead(t *testing.T) {
 	wantRange(t, tt.store, 400, 499)
 }
 
-func TestPassHalvesABatchTheSourceRefuses(t *testing.T) {
-	c := newFakeChain(250)
-	c.maxBatch = 30
-	tt := newTestTracker(t, c)
-	for range 3 {
-		mustPass(t, tt)
-	}
-	wantRange(t, tt.store, 225, 249)
+func batchSizes(c *fakeChain) []int {
 	var sizes []int
 	for _, b := range c.batches {
 		sizes = append(sizes, len(b))
 	}
-	if !slices.Equal(sizes, []int{100, 50, 25}) {
-		t.Errorf("batch sizes = %v, want [100 50 25]", sizes)
+	return sizes
+}
+
+func TestPassHalvesABatchTheSourceRefuses(t *testing.T) {
+	c := newFakeChain(250)
+	c.maxBatch = 30
+	tt := newTestTracker(t, c)
+	at := t0
+	tt.now = func() time.Time { return at }
+	for range 3 {
+		mustPass(t, tt)
 	}
+	wantRange(t, tt.store, 225, 249)
 	if !tt.logged("asking 50 at a time") || !tt.logged("asking 25 at a time") {
 		t.Errorf("logs = %q, want each halving", tt.logs)
+	}
+	// A refusal is the source's limit: the batch stays under it for good.
+	at = at.Add(timeoutCut)
+	mustPass(t, tt)
+	if sizes := batchSizes(c); !slices.Equal(sizes, []int{100, 50, 25, 25}) {
+		t.Errorf("batch sizes = %v, want [100 50 25 25]", sizes)
+	}
+}
+
+func TestPassRestoresTheBatchATimeoutCut(t *testing.T) {
+	c := newFakeChain(400)
+	c.fail = []error{timeoutError{}}
+	tt := newTestTracker(t, c)
+	at := t0
+	tt.now = func() time.Time { return at }
+	mustPass(t, tt)
+	mustPass(t, tt)
+	// A slow answer can be transient: the cut lasts timeoutCut.
+	at = at.Add(timeoutCut)
+	mustPass(t, tt)
+	if sizes := batchSizes(c); !slices.Equal(sizes, []int{100, 50, 100}) {
+		t.Errorf("batch sizes = %v, want [100 50 100]", sizes)
 	}
 }
 
