@@ -573,16 +573,30 @@ func TestPassDropsTheHistoryOfAnotherChain(t *testing.T) {
 	}
 }
 
+func TestProgressRateIgnoresAnEmptyStore(t *testing.T) {
+	c := newFakeChain(1000)
+	c.maxBatch = 50
+	tt := newTestTracker(t, c)
+	at := t0
+	tt.now = func() time.Time { return at }
+	mustPass(t, tt) // the batch of 100 is refused whole: the store stays empty
+	at = at.Add(10 * time.Second)
+	mustPass(t, tt) // 999..950
+	if r := tt.Progress().Rate; r != 0 {
+		t.Errorf("Rate after the first stored batch = %v, want 0: an empty store is no starting height", r)
+	}
+	at = at.Add(10 * time.Second)
+	mustPass(t, tt) // 949..900
+	if r := tt.Progress().Rate; r != 5 {
+		t.Errorf("Rate = %v, want 5 blocks/s", r)
+	}
+}
+
 func TestProgressMeasuresTheFillRate(t *testing.T) {
-	ctx := context.Background()
 	c := newFakeChain(1000)
 	tt := newTestTracker(t, c)
 	at := t0
 	tt.now = func() time.Time { return at }
-	// Run publishes the empty store before its first pass.
-	if err := tt.publish(ctx); err != nil {
-		t.Fatal(err)
-	}
 	mustPass(t, tt) // 999..900
 	if r := tt.Progress().Rate; r != 0 {
 		t.Errorf("Rate after one pass = %v, want 0: nothing to measure yet", r)
