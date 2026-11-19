@@ -21,11 +21,8 @@ type HTTPStatusError struct {
 	RPC        *RPCError
 }
 
-func newHTTPStatusError(url string, resp *http.Response, body []byte) *HTTPStatusError {
-	e := &HTTPStatusError{Method: http.MethodGet, URL: url, StatusCode: resp.StatusCode}
-	if resp.Request != nil {
-		e.Method = resp.Request.Method
-	}
+func newHTTPStatusError(method, url string, resp *http.Response, body []byte) *HTTPStatusError {
+	e := &HTTPStatusError{Method: method, URL: url, StatusCode: resp.StatusCode}
 	if secs, err := strconv.Atoi(resp.Header.Get("Retry-After")); err == nil && secs > 0 {
 		e.RetryAfter = time.Duration(secs) * time.Second
 	}

@@ -82,7 +82,7 @@ func (c *Client) send(ctx context.Context, method, url string, payload []byte) (
 		return nil, err
 	}
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		return nil, newHTTPStatusError(url, resp, respBody)
+		return nil, newHTTPStatusError(method, url, resp, respBody)
 	}
 	return respBody, nil
 }
