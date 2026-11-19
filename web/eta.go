@@ -2,7 +2,6 @@ package web
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
@@ -137,11 +136,6 @@ type etaHistory struct {
 	Complete bool   `json:"complete"`
 }
 
-// etaErrorBody is the /api/eta payload for a request it cannot answer.
-type etaErrorBody struct {
-	Error string `json:"error"`
-}
-
 // etaError is a request /api/eta cannot answer, with its HTTP status.
 type etaError struct {
 	status int
@@ -168,29 +162,17 @@ func (s *Server) handleETA(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) serveETA(w http.ResponseWriter, r *http.Request, now time.Time) {
-	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("Access-Control-Allow-Origin", "*")
-	w.Header().Set("Cache-Control", "no-cache")
-	var payload any
-	status := http.StatusOK
 	rep, err := s.etaReport(r.Context(), r.URL.Query(), now)
-	payload = rep
 	if err != nil {
-		status = http.StatusInternalServerError
+		status := http.StatusInternalServerError
 		var ee *etaError
 		if errors.As(err, &ee) {
 			status = ee.status
 		}
-		payload = etaErrorBody{Error: err.Error()}
-	}
-	body, err := json.MarshalIndent(payload, "", "  ")
-	if err != nil {
-		log.Printf("eta: encode: %v", err)
-		http.Error(w, "internal error", http.StatusInternalServerError)
+		serveJSON(w, "eta", status, errorBody{Error: err.Error()})
 		return
 	}
-	w.WriteHeader(status)
-	w.Write(body)
+	serveJSON(w, "eta", http.StatusOK, rep)
 }
 
 // etaRequest is a parsed /api/eta query: a target height or time (neither
