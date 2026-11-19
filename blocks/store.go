@@ -93,6 +93,9 @@ CREATE TABLE IF NOT EXISTS blocks_vote_delays (
 CREATE TABLE IF NOT EXISTS blocks_event_gaps (
 	height INTEGER PRIMARY KEY -- a validator set change whose events are not read yet
 );
+CREATE TABLE IF NOT EXISTS blocks_valset_changes (
+	height INTEGER PRIMARY KEY -- the block's validator set differs from the block below's
+);
 CREATE TABLE IF NOT EXISTS blocks_meta (
 	key   TEXT PRIMARY KEY,
 	value TEXT NOT NULL
@@ -102,8 +105,9 @@ DROP TABLE IF EXISTS signing_blocks;
 `
 
 const (
-	metaChainID = "chain_id"
-	metaFloor   = "floor"
+	metaChainID       = "chain_id"
+	metaFloor         = "floor"
+	metaChangesFilled = "valset_changes_filled" // blocks_valset_changes covers every stored block
 )
 
 // Store persists the block history. Times are kept to the millisecond.
@@ -117,7 +121,11 @@ func NewStore(ctx context.Context, db *sql.DB) (*Store, error) {
 	if _, err := db.ExecContext(ctx, schema); err != nil {
 		return nil, fmt.Errorf("init block history schema: %w", err)
 	}
-	return &Store{db: db}, nil
+	s := &Store{db: db}
+	if err := s.fillValsetChanges(ctx); err != nil {
+		return nil, err
+	}
+	return s, nil
 }
 
 // ---- Blocks
@@ -135,10 +143,15 @@ func (s *Store) Write(ctx context.Context, recs []Record) error {
 	if err != nil {
 		return err
 	}
+	heights := make([]int64, 0, len(recs))
 	for _, r := range recs {
 		if err := writeRecord(ctx, tx, ids, r); err != nil {
 			return err
 		}
+		heights = append(heights, r.Height)
+	}
+	if err := markValsetChanges(ctx, tx, heights); err != nil {
+		return err
 	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit blocks: %w", err)
@@ -460,14 +473,14 @@ func (s *Store) Reset(ctx context.Context, chainID string) error {
 	for _, table := range []string{
 		"blocks", "blocks_validators", "blocks_valsets", "blocks_valset_members", "blocks_absences",
 		"blocks_rounds", "blocks_flags", "blocks_events", "blocks_event_gaps", "blocks_missed_days", "blocks_vote_delays",
-		"blocks_meta",
+		"blocks_valset_changes", "blocks_meta",
 	} {
 		if _, err := tx.ExecContext(ctx, "DELETE FROM "+table); err != nil {
 			return fmt.Errorf("reset %s: %w", table, err)
 		}
 	}
 	if _, err := tx.ExecContext(ctx,
-		`INSERT INTO blocks_meta(key, value) VALUES(?, ?)`, metaChainID, chainID,
+		`INSERT INTO blocks_meta(key, value) VALUES(?, ?), (?, ?)`, metaChainID, chainID, metaChangesFilled, "1",
 	); err != nil {
 		return fmt.Errorf("reset chain id: %w", err)
 	}
