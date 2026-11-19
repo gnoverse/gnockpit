@@ -51,6 +51,12 @@ type Source interface {
 
 var _ Source = (*node.Client)(nil)
 
+// errNotYet ends a fill at a height the source cannot give final yet: a node
+// behind the one that gave the head (a load balancer's lagging backend)
+// refuses it, or gives its own commit for its latest height rather than the
+// next block's. A later pass asks again.
+var errNotYet = errors.New("not final at the source yet")
+
 // direction is the way a fill runs from the stored range.
 type direction int
 
@@ -191,10 +197,13 @@ func (t *Tracker) pass(ctx context.Context) (more bool, err error) {
 	}
 	for high < top {
 		n, err := t.fill(ctx, heightsUp(high+1, min(high+int64(t.batch), top)), head, upward)
+		high += int64(n)
+		if errors.Is(err, errNotYet) {
+			break // the source has not got further yet
+		}
 		if err != nil {
 			return false, err
 		}
-		high += int64(n)
 	}
 	floor, err := t.store.Floor(ctx)
 	if err != nil {
@@ -204,7 +213,7 @@ func (t *Tracker) pass(ctx context.Context) (more bool, err error) {
 		return false, nil
 	}
 	n, err := t.fill(ctx, heightsDown(low-1, max(1, floor, low-int64(t.batch))), head, downward)
-	if err != nil {
+	if err != nil && !errors.Is(err, errNotYet) {
 		return false, err
 	}
 	if floor, err = t.store.Floor(ctx); err != nil {
@@ -215,9 +224,9 @@ func (t *Tracker) pass(ctx context.Context) (more bool, err error) {
 
 // fill stores the commits of heights, which run outward from the stored
 // range in dir. It returns how many it stored: the first ones, up to a height
-// the source refused or whose commit is not final yet. A batch refused whole
-// halves the batch size for good; one too slow to answer, for timeoutCut.
-// Either stores nothing.
+// the source refused or whose commit is not final yet (errNotYet near the
+// head). A batch refused whole halves the batch size for good; one too slow
+// to answer, for timeoutCut. Either stores nothing.
 func (t *Tracker) fill(ctx context.Context, heights []int64, head node.ChainHead, dir direction) (int, error) {
 	commits, cerr := t.commits(ctx, heights)
 	var he *node.HeightError
@@ -239,7 +248,7 @@ func (t *Tracker) fill(ctx context.Context, heights []int64, head node.ChainHead
 	// block's commit, which can carry late precommits, is the one to store.
 	for i, c := range commits {
 		if !c.Canonical {
-			commits, cerr = commits[:i], fmt.Errorf("height %d: commit not final yet", c.Height)
+			commits, cerr = commits[:i], fmt.Errorf("height %d: %w", c.Height, errNotYet)
 			break
 		}
 	}
@@ -255,17 +264,22 @@ func (t *Tracker) fill(ctx context.Context, heights []int64, head node.ChainHead
 		return 0, err
 	}
 	t.events(ctx, recs)
-	if cerr == nil {
-		return len(recs), nil
+	if cerr == nil || errors.Is(cerr, errNotYet) {
+		return len(recs), cerr
 	}
-	// The backfill met a height the source refuses, well below the head: the
-	// one above it is the oldest the source keeps.
-	if dir == downward && node.IsRefusal(cerr) && head.Height-he.Height > floorMargin {
-		if err := t.store.SetFloor(ctx, he.Height+1); err != nil {
-			return len(recs), err
+	if he != nil && node.IsRefusal(cerr) {
+		if head.Height-he.Height <= floorMargin {
+			return len(recs), fmt.Errorf("height %d: %w", he.Height, errNotYet)
 		}
-		t.logf("blocks: the source serves no block below #%d", he.Height+1)
-		return len(recs), nil
+		// The backfill met a height the source refuses, well below the
+		// head: the one above it is the oldest the source keeps.
+		if dir == downward {
+			if err := t.store.SetFloor(ctx, he.Height+1); err != nil {
+				return len(recs), err
+			}
+			t.logf("blocks: the source serves no block below #%d", he.Height+1)
+			return len(recs), nil
+		}
 	}
 	return len(recs), cerr
 }

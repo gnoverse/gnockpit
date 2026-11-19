@@ -325,17 +325,38 @@ func TestPassStopsBeforeACommitNotFinalYet(t *testing.T) {
 	tt := newTestTracker(t, c)
 	mustPass(t, tt)
 	// A backend one block behind the one that gave the head: its latest
-	// height, 252, is the tracker's top, served with its own commit.
+	// height, 252, is the tracker's top, served with its own commit. The pass
+	// stops below it, without an error, and goes on with the backfill.
 	c.head, c.lagging = 253, 1
-	if _, err := tt.pass(context.Background()); err == nil {
-		t.Fatal("pass() = nil, want the commit of 252 not final yet")
+	mustPass(t, tt)
+	wantRange(t, tt.store, 50, 251)
+	if len(tt.logs) != 0 {
+		t.Errorf("logs = %q, want none: a lagging backend is routine", tt.logs)
 	}
-	wantRange(t, tt.store, 150, 251)
 	c.lagging = 0
 	mustPass(t, tt)
 	if b := storedBlock(t, tt.store, 252); len(b.Absences) != 0 {
 		t.Errorf("block 252 = %+v, want it stored from the next block's commit, without absence", b)
 	}
+}
+
+func TestPassWaitsQuietlyForAHeightNearTheHead(t *testing.T) {
+	c := newFakeChain(500)
+	c.lagging = 10 // a backend 10 blocks behind the one that gave the head
+	tt := newTestTracker(t, c)
+	if !mustPass(t, tt) {
+		t.Error("pass() reported nothing left below")
+	}
+	wantRange(t, tt.store, 0, 0)
+	if f, _ := tt.store.Floor(context.Background()); f != 0 {
+		t.Errorf("Floor() = %d, want none: the refusal is near the head", f)
+	}
+	if len(tt.logs) != 0 {
+		t.Errorf("logs = %q, want none: a lagging backend is routine", tt.logs)
+	}
+	c.lagging = 0
+	mustPass(t, tt)
+	wantRange(t, tt.store, 400, 499)
 }
 
 func TestPassWaitsOutARateLimitOnEveryRead(t *testing.T) {
@@ -353,22 +374,6 @@ func TestPassWaitsOutARateLimitOnEveryRead(t *testing.T) {
 	if got := storedEvents(t, tt.store, 200); len(got) != 1 {
 		t.Errorf("events of 200 = %v, want one", got)
 	}
-}
-
-func TestPassRetriesARefusalNearTheHead(t *testing.T) {
-	c := newFakeChain(500)
-	c.lagging = 10 // a backend 10 blocks behind the one that gave the head
-	tt := newTestTracker(t, c)
-	var he *node.HeightError
-	if _, err := tt.pass(context.Background()); !errors.As(err, &he) || he.Height != 499 {
-		t.Fatalf("pass() = %v, want the refusal of 499", err)
-	}
-	if f, _ := tt.store.Floor(context.Background()); f != 0 {
-		t.Errorf("Floor() = %d, want none: the refusal is near the head", f)
-	}
-	c.lagging = 0
-	mustPass(t, tt)
-	wantRange(t, tt.store, 400, 499)
 }
 
 func batchSizes(c *fakeChain) []int {
