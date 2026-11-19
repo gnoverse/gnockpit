@@ -106,12 +106,13 @@ type Tracker struct {
 	now   func() time.Time
 
 	// Owned by the goroutine running passes.
-	batch    int       // commits per batch
-	maxBatch int       // the size the source refused half of; batch grows back to it
-	regrowAt time.Time // when batch, cut by a timeout, grows back; zero: not cut
-	marks    []lowMark // the lowest stored height at each publish of the last rateWindow
-	gapsAt   time.Time // when the event gaps are read again
-	lastErr  map[string]string
+	batch        int       // commits per batch
+	maxBatch     int       // the size the source refused half of; batch grows back to it
+	regrowAt     time.Time // when batch, cut by a timeout, grows back; zero: not cut
+	marks        []lowMark // the lowest stored height at each publish of the last rateWindow
+	floorChecked bool      // the recorded floor was checked against the source since start
+	gapsAt       time.Time // when the event gaps are read again
+	lastErr      map[string]string
 
 	mu       sync.RWMutex
 	progress Progress
@@ -183,6 +184,11 @@ func (t *Tracker) pass(ctx context.Context) (more bool, err error) {
 	}
 	if err := t.followChain(ctx, head.ChainID); err != nil {
 		return false, err
+	}
+	if !t.floorChecked {
+		if t.floorChecked, err = t.recheckFloor(ctx); err != nil {
+			return false, err
+		}
 	}
 	t.retryEventGaps(ctx)
 	if !t.regrowAt.IsZero() && !t.now().Before(t.regrowAt) {
@@ -499,6 +505,30 @@ func (t *Tracker) retryEventGaps(ctx context.Context) {
 	for _, h := range gaps {
 		t.readEvents(ctx, h)
 	}
+}
+
+// recheckFloor asks the source, once per start, for the height under the
+// recorded floor: a source changed for an archive node serves it, and the
+// floor is cleared for the backfill to go on below. It reports whether the
+// check concluded; a failed read is retried on the next pass.
+func (t *Tracker) recheckFloor(ctx context.Context) (bool, error) {
+	floor, err := t.store.Floor(ctx)
+	if err != nil || floor <= 1 {
+		return err == nil, err
+	}
+	_, err = t.commits(ctx, []int64{floor - 1})
+	var he *node.HeightError
+	switch {
+	case errors.As(err, &he) && node.IsRefusal(err):
+		return true, nil // still the oldest block the source keeps
+	case err != nil:
+		return false, fmt.Errorf("height below the floor #%d: %w", floor, err)
+	}
+	if err := t.store.ClearFloor(ctx); err != nil {
+		return false, err
+	}
+	t.logf("blocks: the source serves blocks below #%d, filling down to genesis", floor)
+	return true, nil
 }
 
 // setEvents keeps a block's validator set events: ValidatorAdded,

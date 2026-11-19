@@ -376,6 +376,28 @@ func TestPassWaitsOutARateLimitOnEveryRead(t *testing.T) {
 	}
 }
 
+func TestPassRechecksTheFloorAtStart(t *testing.T) {
+	c := newFakeChain(2300)
+	c.floor = 1000
+	tt := newTestTracker(t, c)
+	for i := 0; mustPass(t, tt); i++ {
+		if i == 20 {
+			t.Fatal("the backfill never ended")
+		}
+	}
+	// The source becomes an archive node, and gnockpit restarts.
+	c.floor = 0
+	tt = newTestTrackerOn(t, c, tt.store, DefaultConfig())
+	mustPass(t, tt)
+	if f, _ := tt.store.Floor(context.Background()); f != 0 {
+		t.Errorf("Floor() = %d, want none: the source serves the heights below", f)
+	}
+	wantRange(t, tt.store, 900, 2299)
+	if !tt.logged("the source serves blocks below #1000") {
+		t.Errorf("logs = %q, want the lowered floor", tt.logs)
+	}
+}
+
 func batchSizes(c *fakeChain) []int {
 	var sizes []int
 	for _, b := range c.batches {
