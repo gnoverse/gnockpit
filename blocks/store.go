@@ -593,23 +593,33 @@ type WindowReport struct {
 // MissedByWindows returns, for each window up to now, the stored blocks and
 // each validator's missed ones: absent, or precommitted for another block. A
 // window of zero or less means all the history.
+//
+// The stored heights run unbroken (the tracker fills outward from one range)
+// and block times grow with height, so a window's blocks are the heights from
+// its first one to the highest: counted without reading them.
 func (s *Store) MissedByWindows(ctx context.Context, windows []time.Duration, now time.Time) (WindowReport, error) {
 	rep := WindowReport{Windows: windows, Blocks: make([]int, len(windows)), Missed: map[string][]int{}}
+	_, high, err := s.Range(ctx)
+	if err != nil {
+		return rep, err
+	}
 	for i, w := range windows {
 		var cutoff int64
 		if w > 0 {
 			cutoff = now.Add(-w).UnixMilli()
 		}
-		var from sql.NullInt64
-		if err := s.db.QueryRowContext(ctx,
-			`SELECT MIN(height), COUNT(*) FROM blocks WHERE time_ms >= ?`, cutoff,
-		).Scan(&from, &rep.Blocks[i]); err != nil {
-			return rep, fmt.Errorf("count blocks: %w", err)
-		}
-		if !from.Valid {
+		var from int64
+		err := s.db.QueryRowContext(ctx,
+			`SELECT height FROM blocks WHERE time_ms >= ? ORDER BY time_ms LIMIT 1`, cutoff,
+		).Scan(&from)
+		if errors.Is(err, sql.ErrNoRows) {
 			continue
 		}
-		rows, err := s.db.QueryContext(ctx, windowMissesQuery, from.Int64, Absent, OtherBlock)
+		if err != nil {
+			return rep, fmt.Errorf("first block of the %s window: %w", w, err)
+		}
+		rep.Blocks[i] = int(high - from + 1)
+		rows, err := s.db.QueryContext(ctx, windowMissesQuery, from, Absent, OtherBlock)
 		if err != nil {
 			return rep, fmt.Errorf("query misses: %w", err)
 		}
