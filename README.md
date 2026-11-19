@@ -204,13 +204,14 @@ chain will reach at a given time, with a margin and the drift from the first
 estimate. It is built for coordinated upgrades: picking a halt height for a
 target time, then counting down to it.
 
-- **Dashboard** — **⏱ Block ETA** in the header opens a planner (height → time or
+- **Dashboard** — **Block ETA** in the header opens a planner (height → time or
   time → height). **Show countdown** puts the target in the page link
   (`/?eta=<height>&since=<RFC 3339 time>&label=<text>`), and anyone opening the
   link sees the same card: countdown, ETA in UTC and local time, 80% and 95%
   ranges, drift from the original estimate, the ETA over time, and the ETA at the
-  pace of the last hour, 24 h, 7 days, 30 days and the whole history. Nothing is
-  stored server-side; ✕ removes the target from the link.
+  pace of the last hour, 24 h, 7 days, 30 days and the whole history. Its compact
+  view keeps one line and the ranges as a bar. Nothing is stored server-side; ✕
+  removes the target from the link.
 - **Scheduled halt** — gnockpit reads the halt governance sets on chain
   (`node:p:halt_height` and `node:p:halt_min_version`; a params query, answered
   even with `rpc.allow_code_execution = false`). While a halt is ahead of the
