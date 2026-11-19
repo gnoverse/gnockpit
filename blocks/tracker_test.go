@@ -32,6 +32,7 @@ type fakeChain struct {
 	proposer    map[int64]string // header proposer per height, default the expected one
 	events      map[int64][]node.BlockEvent
 	refusedOnce int64           // this height is refused once, then served; 0: none
+	refused     map[int64]bool  // heights refused
 	broken      map[int64]error // a batch asking one of these heights fails whole with its error
 	setFail     []error         // errors ValidatorSet returns first, in order
 	emptySets   int             // empty sets ValidatorSet answers first
@@ -152,6 +153,9 @@ func (c *fakeChain) Commits(_ context.Context, heights []int64) ([]node.Commit, 
 	}
 	var out []node.Commit
 	for _, h := range heights {
+		if c.refused[h] {
+			return out, &node.HeightError{Height: h, Err: &node.RPCError{Code: -32603, Message: "Internal error", Data: "refused"}}
+		}
 		if h == c.refusedOnce {
 			c.refusedOnce = 0
 			return out, &node.HeightError{Height: h, Err: &node.RPCError{Code: -32603, Message: "Internal error", Data: "flaky backend"}}
@@ -509,6 +513,42 @@ func TestPassFailsOnTheBackfillsErrorBehindALaggingHead(t *testing.T) {
 	}
 }
 
+func TestPassSetsNoFloorGoingUp(t *testing.T) {
+	c := newFakeChain(300)
+	tt := newTestTracker(t, c)
+	mustPass(t, tt) // 299..200
+	// Back after a long downtime, the source refuses a height well below its
+	// head, after serving the one below it: that is no floor, which lies below.
+	c.head, c.refused = 5000, map[int64]bool{350: true}
+	if _, err := tt.pass(context.Background()); err == nil || !strings.Contains(err.Error(), "height 350") {
+		t.Fatalf("pass() = %v, want the refusal of 350", err)
+	}
+	// Asked first in the next answer, 350's refusal shows nothing more.
+	mustPass(t, tt)
+	if f, _ := tt.store.Floor(context.Background()); f != 0 {
+		t.Errorf("Floor() = %d, want none", f)
+	}
+}
+
+func TestPassRestoresTheBatchToTheRefusedCeiling(t *testing.T) {
+	c := newFakeChain(2300)
+	c.maxBatch = 30
+	tt := newTestTracker(t, c)
+	at := t0
+	tt.now = func() time.Time { return at }
+	for range 3 { // 100 refused, 50 refused, 25 served
+		mustPass(t, tt)
+	}
+	c.fail = []error{timeoutError{}}
+	mustPass(t, tt) // 25 time out: 12 for timeoutCut
+	mustPass(t, tt)
+	at = at.Add(timeoutCut)
+	mustPass(t, tt) // back to 25, the size the source accepts, not 100
+	if sizes := batchSizes(c); !slices.Equal(sizes, []int{100, 50, 25, 25, 12, 25}) {
+		t.Errorf("batch sizes = %v, want [100 50 25 25 12 25]", sizes)
+	}
+}
+
 func TestPassWaitsOutARateLimitOnEveryRead(t *testing.T) {
 	c := newFakeChain(250)
 	c.change = 200
@@ -740,6 +780,10 @@ func TestPassChecksEveryThousandthBlock(t *testing.T) {
 			}
 			if got := storedFlag(t, tt.store, 1000) != ""; got != tc.flagged {
 				t.Errorf("1000 flagged = %v, want %v", got, tc.flagged)
+			}
+			// A check at round 0 flags; it keeps no round proposers.
+			if got := storedRounds(t, tt.store, 1000); len(got) != 0 {
+				t.Errorf("rounds of 1000 = %v, want none", got)
 			}
 		})
 	}

@@ -269,4 +269,9 @@ func TestHistoryVoteDelays(t *testing.T) {
 	if !reflect.DeepEqual(body["vote_delays"], want) {
 		t.Errorf("vote_delays =\n%v\nwant\n%v", body["vote_delays"], want)
 	}
+	// One day is today alone.
+	_, body = getHistory(t, srv, "?days=1")
+	if days := body["vote_delays"].(map[string]any)["days"].([]any); len(days) != 1 || days[0].(map[string]any)["day"] != today.Time.Format(time.DateOnly) {
+		t.Errorf("days of ?days=1 = %v, want today alone", days)
+	}
 }
