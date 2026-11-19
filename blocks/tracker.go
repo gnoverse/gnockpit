@@ -103,7 +103,7 @@ type Tracker struct {
 	floorSeen    int64         // a floor one answer showed, set when a second shows it; 0: none
 	behindSince  time.Time     // since when passes have met heights not final at the source; zero: none
 	belowSeen    int64         // a height one answer refused first, well below the head; a second pauses the backfill; 0: none
-	belowAt      time.Time     // until when the backfill pauses for a source refusing it; not after now: not paused
+	belowAt      time.Time     // until when the backfill pauses, the first height of its answers refused twice; not after now: not paused
 	setRefused   map[int64]int // heights whose set reads refused, well below the head: unserved from the second
 	gapsAt       time.Time     // when the event gaps are read again
 	lastErr      map[string]string
@@ -233,7 +233,7 @@ func (t *Tracker) pass(ctx context.Context) (more bool, err error) {
 		return false, nil
 	}
 	if t.now().Before(t.belowAt) {
-		return false, nil // the source refuses the lowest stored height: passes go at the sync interval
+		return false, nil // the source refused the first height of its answers twice: passes go at the sync interval
 	}
 	// The lowest stored height opens the batch as a witness, when there is
 	// one and the batch has room for it: a height refused right after a
@@ -258,10 +258,11 @@ func (t *Tracker) pass(ctx context.Context) (more bool, err error) {
 // fill stores the commits of heights, which run outward from the stored
 // range in dir, asked after witness, a stored height, when it is not 0. It
 // returns how many it stored: the first ones, up to a height the source
-// refused or whose commit is not final yet (errNotYet when the answer does
-// not show the source's oldest block). A batch refused whole halves the batch
-// size until restart; one too slow to answer, for timeoutCut. Either stores
-// nothing.
+// refused or whose commit is not final yet. A refusal a later pass may see
+// served (near the head, or a first sighting well below it) gives errNotYet;
+// one that sets the floor or pauses the backfill, nil. A batch refused whole
+// halves the batch size until restart; one too slow to answer, for
+// timeoutCut. Either stores nothing.
 func (t *Tracker) fill(ctx context.Context, heights []int64, head node.ChainHead, dir direction, witness int64) (int, error) {
 	asked := heights
 	if witness > 0 {
@@ -298,10 +299,7 @@ func (t *Tracker) fill(ctx context.Context, heights []int64, head node.ChainHead
 	}
 	if dir == downward && served > 0 {
 		t.belowSeen = 0
-		if !t.belowAt.IsZero() {
-			t.belowAt = time.Time{}
-			t.report("below", nil)
-		}
+		t.report("below", nil)
 	}
 	// A commit the node does not mark canonical is its own commit for its
 	// latest height (a backend behind the one that gave the head); the next
