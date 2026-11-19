@@ -34,6 +34,7 @@ type Manager struct {
 	notifyPath      string         // the notification config file; "" when none
 	notifyModTime   time.Time      // its modification time when last read
 	notifyErr       string         // the last reload error logged
+	now             func() time.Time
 	redactSecrets   bool
 }
 
@@ -59,6 +60,7 @@ func NewManager(db *DB, chainStuckSecs, maxMissedInARow int) (*Manager, error) {
 		vapidPrivateKey: priv,
 		chainStuckSecs:  chainStuckSecs,
 		maxMissedInARow: maxMissedInARow,
+		now:             time.Now,
 	}, nil
 }
 

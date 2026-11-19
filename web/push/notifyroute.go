@@ -107,15 +107,19 @@ func (m *Manager) notifyTargets(a Alert) {
 	if len(targets) == 0 {
 		return
 	}
-	msg := FormatAlert(m.chainName, m.publicURL, a)
 	for _, t := range targets {
-		if !t.route.Wants(a) {
-			continue
+		if t.route.Wants(a) {
+			m.sendTarget(t, a, targets)
 		}
-		for _, err := range t.sender.Send(msg, nil) {
-			if err != nil {
-				log.Printf("notify: %s", m.notifyErrorText(err, targetURLs(targets)))
-			}
+	}
+}
+
+// sendTarget sends a to t, one of targets, whose URLs a failed send's log
+// is stripped of.
+func (m *Manager) sendTarget(t notifyTarget, a Alert, targets []notifyTarget) {
+	for _, err := range t.sender.Send(FormatAlert(m.chainName, m.publicURL, a), nil) {
+		if err != nil {
+			log.Printf("notify: %s", m.notifyErrorText(err, targetURLs(targets)))
 		}
 	}
 }

@@ -68,6 +68,12 @@ func initSchema(db *sql.DB) error {
 			lead            TEXT NOT NULL DEFAULT '',
 			PRIMARY KEY (subscription_id, alert_type, entity_id)
 		);
+		CREATE TABLE IF NOT EXISTS push_sent (
+			owner      TEXT NOT NULL, -- device:<id> or target:<fingerprint>
+			alert_type TEXT NOT NULL,
+			key        TEXT NOT NULL, -- <chain>:<height>
+			PRIMARY KEY (owner, alert_type, key)
+		) WITHOUT ROWID;
 	`); err != nil {
 		return err
 	}
@@ -237,6 +243,17 @@ func migrateDevices(db *sql.DB) error {
 		}
 	}
 	return nil
+}
+
+// MarkSent records that the alert of type t keyed key went to owner, and
+// reports whether it had not yet.
+func (d *DB) MarkSent(owner string, t AlertType, key string) (bool, error) {
+	res, err := d.db.Exec(`INSERT OR IGNORE INTO push_sent (owner, alert_type, key) VALUES (?, ?, ?)`, owner, string(t), key)
+	if err != nil {
+		return false, fmt.Errorf("mark %s sent to %s: %w", t, owner, err)
+	}
+	n, err := res.RowsAffected()
+	return n == 1, err
 }
 
 // SubscribersForAlert returns all subscriptions opted in for the given alert + entity combination.

@@ -22,6 +22,7 @@ type Alert struct {
 	Type     AlertType
 	EntityID string // empty for global alerts, EntityIDLocal for local node, NodeID for peers
 	Firing   bool   // true = problem detected, false = recovery
+	Notice   bool   // a one-off event, Firing: no recovery follows
 	Title    string
 	Body     string
 }

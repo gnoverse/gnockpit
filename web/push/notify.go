@@ -8,7 +8,10 @@ import (
 // If publicURL is non-empty, it is appended as a link on its own line.
 func FormatAlert(chainName, publicURL string, a Alert) string {
 	icon := "🚨"
-	if !a.Firing {
+	switch {
+	case a.Notice:
+		icon = "🔔"
+	case !a.Firing:
 		icon = "✅"
 	}
 	var msg string
