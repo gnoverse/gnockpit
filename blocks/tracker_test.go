@@ -34,6 +34,7 @@ type fakeChain struct {
 	refusedOnce int64           // this height is refused once, then served; 0: none
 	broken      map[int64]error // a batch asking one of these heights fails whole with its error
 	setFail     []error         // errors ValidatorSet returns first, in order
+	emptySets   int             // empty sets ValidatorSet answers first
 	eventFail   []error         // errors BlockEvents returns first, in order
 
 	sets       [][]node.SetMember // sets[h-1] is the set at h
@@ -170,6 +171,10 @@ func (c *fakeChain) ValidatorSet(_ context.Context, h int64) ([]node.SetMember, 
 		err := c.setFail[0]
 		c.setFail = c.setFail[1:]
 		return nil, err
+	}
+	if c.emptySets > 0 {
+		c.emptySets--
+		return []node.SetMember{}, nil
 	}
 	return slices.Clone(c.setAt(h)), nil
 }
@@ -673,6 +678,22 @@ func TestPassFailsABatchWhoseSetLookupFails(t *testing.T) {
 	}
 	// A block without its set cannot be stored: the batch is retried whole.
 	wantRange(t, tt.store, 0, 0)
+}
+
+func TestPassRefusesAnEmptyValidatorSet(t *testing.T) {
+	c := newFakeChain(250)
+	c.emptySets = 1
+	tt := newTestTracker(t, c)
+	if _, err := tt.pass(context.Background()); err == nil || !strings.Contains(err.Error(), "empty") {
+		t.Fatalf("pass() = %v, want the empty set refused", err)
+	}
+	mustPass(t, tt)
+	if b := storedBlock(t, tt.store, 249); len(b.Absences) != 0 {
+		t.Fatalf("block 249 = %+v", b)
+	}
+	if set, ok, err := tt.store.Valset(context.Background(), "SET1"); err != nil || !ok || len(set) != 3 {
+		t.Errorf("Valset(SET1) = %v, %v, %v; want its 3 members", set, ok, err)
+	}
 }
 
 func TestPassStoresTheHeightsWhenTheirEventsFail(t *testing.T) {

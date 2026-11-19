@@ -414,6 +414,9 @@ func (t *Tracker) members(ctx context.Context, c node.Commit) ([]Member, error) 
 	if err != nil {
 		return nil, fmt.Errorf("validator set at %d: %w", c.Height, err)
 	}
+	if len(got) == 0 {
+		return nil, fmt.Errorf("validator set at %d: empty answer", c.Height)
+	}
 	set = make([]Member, len(got))
 	for i, m := range got {
 		set[i] = Member{Address: m.Address, PubKey: m.PubKey, Power: m.Power}

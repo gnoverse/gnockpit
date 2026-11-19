@@ -137,6 +137,18 @@ func TestStoreReadsAbsencesInSetOrder(t *testing.T) {
 	}
 }
 
+func TestStorePutValsetRejectsAnEmptySet(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	if err := s.PutValset(ctx, "SET", nil); err == nil {
+		t.Error("PutValset() of an empty set succeeded")
+	}
+	putTestSet(t, s)
+	if members, ok, err := s.Valset(ctx, "SET"); err != nil || !ok || !reflect.DeepEqual(members, testSet) {
+		t.Errorf("Valset(SET) = %+v, %v, %v; want the set stored after the refusal", members, ok, err)
+	}
+}
+
 func TestStoreWriteNeedsTheSet(t *testing.T) {
 	s := newTestStore(t)
 	if err := s.Write(context.Background(), []Record{rec(10)}); err == nil {

@@ -123,8 +123,11 @@ func NewStore(ctx context.Context, db *sql.DB) (*Store, error) {
 // ---- Validator sets
 
 // PutValset stores the members of the validator set with hash, unless it is
-// stored.
+// stored. A set has members: an empty one is refused, not stored for good.
 func (s *Store) PutValset(ctx context.Context, hash string, members []Member) error {
+	if len(members) == 0 {
+		return fmt.Errorf("validator set %s: no member", hash)
+	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("begin tx: %w", err)
