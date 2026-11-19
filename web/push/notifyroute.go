@@ -58,8 +58,10 @@ func (m *Manager) LoadNotifyConfig(path string) error {
 }
 
 // ReloadNotifyConfigIfChanged rereads the notification config file when its
-// modification time changed. A file that cannot be read, parsed or sent by
-// is logged once, and the config in force stays.
+// modification time differs from the config in force's. A file that cannot
+// be read, parsed or sent by is logged once, and the config in force stays;
+// it is read again at each call until it loads, so a fix written within the
+// same clock tick is not missed.
 func (m *Manager) ReloadNotifyConfigIfChanged() {
 	if m.notifyPath == "" {
 		return
@@ -69,11 +71,10 @@ func (m *Manager) ReloadNotifyConfigIfChanged() {
 		m.reloadFailed(err)
 		return
 	}
-	if info.ModTime().Equal(m.notifyModTime) {
+	if info.ModTime().Equal(m.notifyModTime) && m.notifyErr == "" {
 		return
 	}
-	m.notifyModTime = info.ModTime()
-	cfg, _, err := readNotifyConfig(m.notifyPath)
+	cfg, mod, err := readNotifyConfig(m.notifyPath)
 	if err == nil {
 		err = m.SetNotifyConfig(cfg)
 	}
@@ -81,7 +82,7 @@ func (m *Manager) ReloadNotifyConfigIfChanged() {
 		m.reloadFailed(err)
 		return
 	}
-	m.notifyErr = ""
+	m.notifyModTime, m.notifyErr = mod, ""
 }
 
 func (m *Manager) reloadFailed(err error) {

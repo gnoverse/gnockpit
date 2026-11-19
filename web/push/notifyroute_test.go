@@ -159,3 +159,31 @@ func TestNotifyTargetsListTheirAlerts(t *testing.T) {
 		t.Errorf("NotifyTargets() = %+v, want one target with chain_stuck and valset_changed", targets)
 	}
 }
+
+func TestManagerRereadsAFixedConfigOfTheSameModTime(t *testing.T) {
+	host, h := hookServer(t)
+	path := filepath.Join(t.TempDir(), "notify.json")
+	at := time.Now().Add(-time.Hour)
+	writeNotifyConfig(t, path, `{"targets": [`+target(host, "/a", `["chain_stuck"]`)+`]}`, at)
+	m := newTestManager(t, false)
+	captureLog(t)
+	if err := m.LoadNotifyConfig(path); err != nil {
+		t.Fatal(err)
+	}
+	// An editor truncates, then writes, within one tick of a coarse clock.
+	tick := at.Add(time.Minute)
+	writeNotifyConfig(t, path, ``, tick)
+	m.ReloadNotifyConfigIfChanged()
+	writeNotifyConfig(t, path, `{"targets": [`+target(host, "/c", `["chain_stuck"]`)+`]}`, tick)
+	m.ReloadNotifyConfigIfChanged()
+	m.NotifyAlert(Alert{Type: AlertChainStuck, Firing: true})
+	if got := h.got(); !slices.Equal(got, []string{"/c"}) {
+		t.Errorf("posts = %v, want /c: the fixed file is read though its time did not change", got)
+	}
+}
+
+func TestParseNotifyConfigRejectsTrailingData(t *testing.T) {
+	if _, err := ParseNotifyConfig([]byte(`{"targets": []} {"targets": []}`)); err == nil {
+		t.Error("ParseNotifyConfig accepted a second value after the config")
+	}
+}

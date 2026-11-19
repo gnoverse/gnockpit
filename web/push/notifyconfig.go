@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"slices"
 	"strconv"
 	"strings"
@@ -109,6 +110,9 @@ func ParseNotifyConfig(data []byte) (NotifyConfig, error) {
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&file); err != nil {
 		return NotifyConfig{}, err
+	}
+	if _, err := dec.Token(); err != io.EOF {
+		return NotifyConfig{}, errors.New("data after the config's object")
 	}
 	cfg := NotifyConfig{Targets: make([]NotifyRoute, 0, len(file.Targets))}
 	for i, t := range file.Targets {
