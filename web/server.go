@@ -75,6 +75,9 @@ type Server struct {
 	// and missed (guarded by mu).
 	proposals24h map[string][2]int
 	missedSince  time.Time // time of the oldest stored block; how far back missed counts reach (guarded by mu)
+	// valopers is each operator's valopers profile, by operator address, as
+	// the last registry refresh read it (guarded by mu).
+	valopers map[string]node.Valoper
 
 	etaBlockTimes blockTimeCache // times of reached blocks asked for on /api/eta
 
@@ -797,20 +800,12 @@ func (s *Server) publishLoop(ctx context.Context) {
 	}
 }
 
-// valoperRefreshLoop refreshes validator names from the on-chain
+// valoperRefreshLoop refreshes the valopers profiles from the on-chain
 // r/gnops/valopers registry: once at startup, then on a slow timer. The
-// registry enumeration is one RPC per valoper, so it must never run in the
-// snapshot loop. Names land in the registry (non-overwriting / upgrading
-// unknown-val-N) and the next snapshot's ensureValidatorNames picks them up.
+// registry enumeration is a few RPCs per valoper, so it must never run in the
+// snapshot loop.
 func (s *Server) valoperRefreshLoop(ctx context.Context) {
-	refresh := func() {
-		names, err := s.Client.FetchValoperNames(ctx)
-		if err != nil {
-			log.Printf("valoper name refresh failed: %v", err)
-			return
-		}
-		s.Client.Names.SeedFromValopers(names)
-	}
+	refresh := func() { s.refreshValopers(ctx) }
 	refresh()
 
 	ticker := time.NewTicker(valoperRefreshInterval)
@@ -823,6 +818,42 @@ func (s *Server) valoperRefreshLoop(ctx context.Context) {
 			refresh()
 		}
 	}
+}
+
+// refreshValopers reads every valopers profile: it keeps them for the
+// validator page and seeds validator names from them (non-overwriting /
+// upgrading unknown-val-N; the next snapshot's ensureValidatorNames picks
+// them up). A profile whose state vm/qeval did not answer is kept without
+// it, logged once per refresh.
+func (s *Server) refreshValopers(ctx context.Context) {
+	vals, err := s.Client.FetchValopers(ctx)
+	if err != nil {
+		log.Printf("valoper refresh failed: %v", err)
+		return
+	}
+	byOperator := make(map[string]node.Valoper, len(vals))
+	names := map[string]string{}
+	var noState int
+	var firstErr string
+	for _, v := range vals {
+		byOperator[v.Operator] = v
+		if v.SigningAddress != "" {
+			names[v.SigningAddress] = v.Moniker
+		}
+		if v.State == nil {
+			if noState == 0 {
+				firstErr = v.StateError
+			}
+			noState++
+		}
+	}
+	if noState > 0 {
+		log.Printf("valoper state unavailable for %d of %d: %s", noState, len(vals), firstErr)
+	}
+	s.mu.Lock()
+	s.valopers = byOperator
+	s.mu.Unlock()
+	s.Client.Names.SeedFromValopers(names)
 }
 
 // geoIPRefreshLoop keeps the IP-geolocation database current: it checks daily

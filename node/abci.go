@@ -8,6 +8,7 @@ import (
 	neturl "net/url"
 	"regexp"
 	"strconv"
+	"strings"
 	"sync"
 )
 
@@ -92,9 +93,22 @@ func (c *Client) paramString(ctx context.Context, key string) (string, error) {
 var (
 	// Home render: "* [Moniker](/r/gnops/valopers:g1<operator>) - [profile](...)".
 	valoperListRe = regexp.MustCompile(`\[([^\]]+)\]\(/r/gnops/valopers:(g1[a-z0-9]+)\)`)
-	// Detail render: "- Signing Address: g1<signing>".
-	valoperSignRe = regexp.MustCompile(`Signing Address:\s*(g1[a-z0-9]+)`)
+	qevalBoolRe   = regexp.MustCompile(`^\((true|false) bool\)$`)
+	qevalIntRe    = regexp.MustCompile(`^\((-?[0-9]+) int64\)$`)
 )
+
+// Valoper is a validator operator's profile in the valopers realm.
+type Valoper struct {
+	Operator, Moniker, Description, SigningAddress, SigningPubKey, ServerType string
+	State                                                                     *ValoperState // nil when vm/qeval did not answer
+	StateError                                                                string        // why, when State is nil
+}
+
+// ValoperState is what the realm keeps about a profile beyond its render.
+type ValoperState struct {
+	KeepRunning        bool  // the operator wants its validator running in the set
+	LastRotationHeight int64 // the height its signing key last changed, or its registration's
+}
 
 // parseValoperList extracts operator address → moniker from a valopers home
 // render page.
@@ -109,22 +123,89 @@ func parseValoperList(md string) map[string]string {
 	return out
 }
 
-// parseValoperSigning extracts the signing (consensus) address from a valoper
-// detail render, or "" if none is present.
-func parseValoperSigning(md string) string {
-	if m := valoperSignRe.FindStringSubmatch(md); m != nil {
-		return m[1]
+// parseValoperDetail reads a valoper's detail render: "## <moniker>", the
+// description lines up to the first "- <field>: <value>" line, then its
+// fields. ok needs a moniker and an operator.
+func parseValoperDetail(md string) (Valoper, bool) {
+	var v Valoper
+	var desc []string
+	inDesc := false
+	for _, line := range strings.Split(md, "\n") {
+		switch {
+		case strings.HasPrefix(line, "## ") && v.Moniker == "":
+			v.Moniker, inDesc = strings.TrimSpace(line[3:]), true
+		case strings.HasPrefix(line, "- "):
+			inDesc = false
+			key, value, ok := strings.Cut(line[2:], ":")
+			if !ok {
+				continue
+			}
+			value = strings.TrimSpace(value)
+			switch strings.TrimSpace(key) {
+			case "Operator Address":
+				v.Operator = value
+			case "Signing Address":
+				v.SigningAddress = value
+			case "Signing PubKey":
+				v.SigningPubKey = value
+			case "Server Type":
+				v.ServerType = value
+			}
+		case inDesc:
+			desc = append(desc, line)
+		}
 	}
-	return ""
+	v.Description = strings.TrimSpace(strings.Join(desc, "\n"))
+	return v, v.Moniker != "" && v.Operator != ""
 }
 
-// FetchValoperNames enumerates the on-chain valoper registry and returns a map
-// of signing (consensus) address → moniker. It pages the home render for
-// operators + monikers, then fetches each operator's detail for its signing
-// address. This is one query per registered valoper — call it on a slow timer,
-// never in the snapshot hot path.
-func (c *Client) FetchValoperNames(ctx context.Context) (map[string]string, error) {
-	// 1. Page the home render → operator address → moniker.
+// parseQevalBool reads a vm/qeval answer for a bool: "(true bool)".
+func parseQevalBool(s string) (bool, error) {
+	m := qevalBoolRe.FindStringSubmatch(strings.TrimSpace(s))
+	if m == nil {
+		return false, fmt.Errorf("not a bool: %q", s)
+	}
+	return m[1] == "true", nil
+}
+
+// parseQevalInt reads a vm/qeval answer for an int64: "(37395 int64)".
+func parseQevalInt(s string) (int64, error) {
+	m := qevalIntRe.FindStringSubmatch(strings.TrimSpace(s))
+	if m == nil {
+		return 0, fmt.Errorf("not an int64: %q", s)
+	}
+	return strconv.ParseInt(m[1], 10, 64)
+}
+
+// valoperState reads, with vm/qeval, the realm's keep-running flag and last
+// rotation height of an operator's profile.
+func (c *Client) valoperState(ctx context.Context, operator string) (*ValoperState, error) {
+	expr := valopersRealm + `.GetByAddr(address("` + operator + `"))`
+	keep, err := c.abciQuery(ctx, "vm/qeval", expr+".KeepRunning")
+	if err != nil {
+		return nil, err
+	}
+	rot, err := c.abciQuery(ctx, "vm/qeval", expr+".LastRotationHeight")
+	if err != nil {
+		return nil, err
+	}
+	var st ValoperState
+	if st.KeepRunning, err = parseQevalBool(string(keep)); err != nil {
+		return nil, fmt.Errorf("keep running of %s: %w", operator, err)
+	}
+	if st.LastRotationHeight, err = parseQevalInt(string(rot)); err != nil {
+		return nil, fmt.Errorf("last rotation of %s: %w", operator, err)
+	}
+	return &st, nil
+}
+
+// FetchValopers enumerates the on-chain valoper registry and returns each
+// operator's profile, with its state when vm/qeval answers. It pages the
+// home render for operators, then reads each operator's detail render and
+// state: three queries per valoper, so call it on a slow timer, never in the
+// snapshot hot path. A profile whose render does not parse is left out.
+func (c *Client) FetchValopers(ctx context.Context) ([]Valoper, error) {
+	// 1. Page the home render → operator addresses.
 	operators := map[string]string{}
 	var pageErr error
 	for page := 1; page <= 100; page++ {
@@ -146,18 +227,16 @@ func (c *Client) FetchValoperNames(ctx context.Context) (map[string]string, erro
 		}
 	}
 	// Surface an error only if nothing was collected; a partial result from one
-	// flaky page is still useful for best-effort name enrichment.
+	// flaky page is still useful.
 	if len(operators) == 0 && pageErr != nil {
 		return nil, pageErr
 	}
 
-	// 2. Resolve each operator's signing address from its detail render,
-	//    with bounded concurrency.
-	type entry struct{ sign, moniker string }
-	out := make(chan entry)
+	// 2. Read each operator's profile and state, with bounded concurrency.
+	out := make(chan Valoper)
 	sem := make(chan struct{}, 8)
 	var wg sync.WaitGroup
-	for op, mon := range operators {
+	for op := range operators {
 		wg.Go(func() {
 			select {
 			case sem <- struct{}{}:
@@ -169,21 +248,24 @@ func (c *Client) FetchValoperNames(ctx context.Context) (map[string]string, erro
 			if err != nil {
 				return
 			}
-			sign := parseValoperSigning(md)
-			if sign == "" {
+			v, ok := parseValoperDetail(md)
+			if !ok {
 				return
 			}
+			if v.State, err = c.valoperState(ctx, op); err != nil {
+				v.StateError = err.Error()
+			}
 			select {
-			case out <- entry{sign, mon}:
+			case out <- v:
 			case <-ctx.Done():
 			}
 		})
 	}
 	go func() { wg.Wait(); close(out) }()
 
-	byAddr := map[string]string{}
-	for e := range out {
-		byAddr[e.sign] = e.moniker
+	var vals []Valoper
+	for v := range out {
+		vals = append(vals, v)
 	}
-	return byAddr, nil
+	return vals, nil
 }

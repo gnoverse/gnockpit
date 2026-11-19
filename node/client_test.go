@@ -540,11 +540,81 @@ func TestRPCCandidates(t *testing.T) {
 	}
 }
 
-func TestFetchValoperNames(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// abci_query data is base64("gno.land/r/gnops/valopers:<renderPath>").
+// onyxValoperRender is gno.land/r/gnops/valopers:g1078xslm886lv9ad4w5zxxfg8nt07gprk5kwcak
+// on onyx, read 2026-11-19.
+const onyxValoperRender = `Valoper's details:
+## Santala-Research
+Independent validator, in crypto since 2017. Ran sapphire-1 and pearl-1 testnets with Horcrux 2-of-3 and sentries. https://santala-research.com
+
+- Operator Address: g1078xslm886lv9ad4w5zxxfg8nt07gprk5kwcak
+- Signing Address: g175u88cs9ts5hnl542kke3zg6z9dtffutqn4lq3
+- Signing PubKey: gpub1pggj7ard9eg82cjtv4u52epjx56nzwgjyg9zp7vwpyly9eqdupn9sayy5rarpgj0frffwn40z74pjrppersv58afdcvsp5
+- Server Type: cloud
+
+[Profile link](/r/demo/profile:u/g1078xslm886lv9ad4w5zxxfg8nt07gprk5kwcak)
+`
+
+func TestParseValoperDetail(t *testing.T) {
+	got, ok := parseValoperDetail(onyxValoperRender)
+	want := Valoper{
+		Operator:       "g1078xslm886lv9ad4w5zxxfg8nt07gprk5kwcak",
+		Moniker:        "Santala-Research",
+		Description:    "Independent validator, in crypto since 2017. Ran sapphire-1 and pearl-1 testnets with Horcrux 2-of-3 and sentries. https://santala-research.com",
+		SigningAddress: "g175u88cs9ts5hnl542kke3zg6z9dtffutqn4lq3",
+		SigningPubKey:  "gpub1pggj7ard9eg82cjtv4u52epjx56nzwgjyg9zp7vwpyly9eqdupn9sayy5rarpgj0frffwn40z74pjrppersv58afdcvsp5",
+		ServerType:     "cloud",
+	}
+	if !ok || !reflect.DeepEqual(got, want) {
+		t.Errorf("parseValoperDetail(onyx) = %+v, %v; want %+v", got, ok, want)
+	}
+	two := strings.Replace(onyxValoperRender, "testnets with", "testnets\nwith", 1)
+	if got, _ := parseValoperDetail(two); got.Description != "Independent validator, in crypto since 2017. Ran sapphire-1 and pearl-1 testnets\nwith Horcrux 2-of-3 and sentries. https://santala-research.com" {
+		t.Errorf("two-line description = %q, want both lines", got.Description)
+	}
+	if _, ok := parseValoperDetail("- Operator Address: g1op\n"); ok {
+		t.Error("a render without a moniker parsed")
+	}
+}
+
+func TestParseQeval(t *testing.T) {
+	if b, err := parseQevalBool("(true bool)"); err != nil || !b {
+		t.Errorf(`parseQevalBool("(true bool)") = %v, %v; want true`, b, err)
+	}
+	if b, err := parseQevalBool("(false bool)"); err != nil || b {
+		t.Errorf(`parseQevalBool("(false bool)") = %v, %v; want false`, b, err)
+	}
+	if n, err := parseQevalInt("(37395 int64)"); err != nil || n != 37395 {
+		t.Errorf(`parseQevalInt("(37395 int64)") = %v, %v; want 37395`, n, err)
+	}
+	for _, in := range []string{"valoper does not exist", "(1 int64", "(yes bool)"} {
+		if _, err := parseQevalBool(in); err == nil {
+			t.Errorf("parseQevalBool(%q) succeeded, want an error", in)
+		}
+		if _, err := parseQevalInt(in); err == nil {
+			t.Errorf("parseQevalInt(%q) succeeded, want an error", in)
+		}
+	}
+}
+
+// valopersRPC answers the valopers realm's home page, two profiles and their
+// state; g1opb's state query is refused.
+func valopersRPC(t *testing.T) *httptest.Server {
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		raw, _ := base64.StdEncoding.DecodeString(strings.Trim(r.URL.Query().Get("data"), `"`))
 		arg := string(raw)
+		if strings.Contains(r.URL.Query().Get("path"), "qeval") {
+			switch {
+			case strings.Contains(arg, "g1opb"):
+				fmt.Fprint(w, `{"jsonrpc":"2.0","result":{"response":{"ResponseBase":{"Error":{"@type":"/abci.StringError","value":"valoper does not exist"},"Data":null}}}}`)
+				return
+			case strings.HasSuffix(arg, ".KeepRunning"):
+				arg = "(true bool)"
+			case strings.HasSuffix(arg, ".LastRotationHeight"):
+				arg = "(37395 int64)"
+			}
+			fmt.Fprintf(w, `{"jsonrpc":"2.0","result":{"response":{"ResponseBase":{"Error":null,"Data":%q}}}}`, base64.StdEncoding.EncodeToString([]byte(arg)))
+			return
+		}
 		var md string
 		switch {
 		case strings.HasSuffix(arg, "valopers:"): // home page 1
@@ -555,23 +625,34 @@ func TestFetchValoperNames(t *testing.T) {
 		case strings.HasSuffix(arg, "?page=2"): // beyond the end
 			md = "no valopers"
 		case strings.HasSuffix(arg, ":g1opa"):
-			md = "## Alice\n- Operator Address: g1opa\n- Signing Address: g1signa\n"
+			md = "## Alice\nAlice's node.\n\n- Operator Address: g1opa\n- Signing Address: g1signa\n- Server Type: cloud\n"
 		case strings.HasSuffix(arg, ":g1opb"):
 			md = "## Bob\n- Operator Address: g1opb\n- Signing Address: g1signb\n"
 		}
-		enc := base64.StdEncoding.EncodeToString([]byte(md))
-		fmt.Fprintf(w, `{"jsonrpc":"2.0","result":{"response":{"ResponseBase":{"Error":null,"Data":%q}}}}`, enc)
+		fmt.Fprintf(w, `{"jsonrpc":"2.0","result":{"response":{"ResponseBase":{"Error":null,"Data":%q}}}}`, base64.StdEncoding.EncodeToString([]byte(md)))
 	}))
-	defer srv.Close()
+}
 
-	c := NewClient(srv.URL, 5*time.Second)
-	got, err := c.FetchValoperNames(context.Background())
+func TestFetchValopers(t *testing.T) {
+	srv := valopersRPC(t)
+	defer srv.Close()
+	got, err := NewClient(srv.URL, 5*time.Second).FetchValopers(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := map[string]string{"g1signa": "Alice", "g1signb": "Bob"}
-	if !reflect.DeepEqual(got, want) {
-		t.Errorf("FetchValoperNames = %v, want %v", got, want)
+	slices.SortFunc(got, func(a, b Valoper) int { return strings.Compare(a.Operator, b.Operator) })
+	if len(got) != 2 {
+		t.Fatalf("valopers = %+v, want Alice and Bob", got)
+	}
+	alice, bob := got[0], got[1]
+	if alice.Moniker != "Alice" || alice.SigningAddress != "g1signa" || alice.Description != "Alice's node." || alice.ServerType != "cloud" {
+		t.Errorf("Alice = %+v", alice)
+	}
+	if alice.State == nil || !alice.State.KeepRunning || alice.State.LastRotationHeight != 37395 {
+		t.Errorf("Alice state = %+v, want keep running, last rotation 37395", alice.State)
+	}
+	if bob.State != nil || !strings.Contains(bob.StateError, "valoper does not exist") {
+		t.Errorf("Bob state = %+v, error %q; want none and the node's reason", bob.State, bob.StateError)
 	}
 }
 
@@ -664,9 +745,9 @@ func TestRPCErrorsSurface(t *testing.T) {
 		}))
 		defer srv.Close()
 
-		_, err := NewClient(srv.URL, 5*time.Second).FetchValoperNames(context.Background())
+		_, err := NewClient(srv.URL, 5*time.Second).FetchValopers(context.Background())
 		if err == nil || !strings.Contains(err.Error(), "rpc.allow_code_execution = false") {
-			t.Errorf("FetchValoperNames() error = %v, want the node's refusal", err)
+			t.Errorf("FetchValopers() error = %v, want the node's refusal", err)
 		}
 	})
 }
