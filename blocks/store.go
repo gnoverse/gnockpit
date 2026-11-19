@@ -16,10 +16,11 @@ import (
 )
 
 // The schema stores each validator address once, in blocks_validators, and
-// refers to it by id elsewhere, and keeps no index beside the tables' keys: an
-// absence is a few bytes, not an address and two index entries. It drops signing_blocks and signing_misses where a
-// database has them: blocks_absences holds the same per-block misses, back to
-// genesis.
+// refers to it by id elsewhere (blocks_events, a few rows per set change,
+// keeps its addresses as text), and keeps no index beside the tables' keys: an
+// absence is a few bytes, not an address and two index entries. It drops
+// signing_blocks and signing_misses where a database has them: blocks_absences
+// holds the same per-block misses, back to genesis.
 const schema = `
 CREATE TABLE IF NOT EXISTS blocks_validators (
 	id      INTEGER PRIMARY KEY,

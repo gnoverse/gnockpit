@@ -42,7 +42,7 @@ type historyFilled struct {
 	To       int64   `json:"to"`
 	Floor    int64   `json:"floor,omitempty"`
 	Complete bool    `json:"complete"`
-	Rate     float64 `json:"rate,omitempty"` // heights filled per second while filling
+	Rate     float64 `json:"rate,omitempty"` // heights added below From per second while filling
 }
 
 type historyBlock struct {
@@ -55,8 +55,8 @@ type historyBlock struct {
 	Absent     []string `json:"absent"`
 	Nil        []string `json:"nil"`
 	OtherBlock []string `json:"other_block"`
-	// Rounds is the expected proposer of rounds 0 to Round, "" when unknown:
-	// for a block finalized after round 0, and every 1,000th block.
+	// Rounds is the expected proposer of rounds 0 to Round, "" when unknown,
+	// for a block finalized after round 0.
 	Rounds    []string          `json:"rounds,omitempty"`
 	Flag      string            `json:"flag,omitempty"`       // why the block's proposer check failed
 	SetChange *historySetChange `json:"set_change,omitempty"` // the events behind the validator set the block opens

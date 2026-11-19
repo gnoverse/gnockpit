@@ -12,14 +12,14 @@ node/            — RPC client + types (pure data layer, no UI)
   client.go      — HTTP client for Tendermint RPC (/status, /net_info, /validators, etc.)
   sources.go     — Sources: an ordered set of RPC endpoints polled together; best-source pick for global data + peer union/dedup (MergePeers)
   ip.go          — public-IP validation (IsPublicIP): only public IPs are ever geolocated or displayed
-  types.go       — All data types (Status, Peer, Validator, Snapshot, SigningStats, etc.)
+  types.go       — snapshot and dashboard types (Status, Peer, Validator, Snapshot, SigningStats, etc.)
   validators.go  — NameRegistry: maps validator addresses ↔ monikers, persists to JSON
   geoip.go       — DB-IP City Lite: IP → coordinates + country (auto-downloaded, monthly)
   asn.go         — DB-IP ASN Lite: IP → ASN + cloud provider (auto-downloaded, monthly)
   batch.go       — JSON-RPC batches (one POST, several calls); HeightError
-  blockhistory.go — commits (one, or a batch), validator sets with priorities, block events: the block history's and the live window's reads
+  blockhistory.go — Commit/Precommit, SetMember, BlockEvent and their reads: commits (one, or a batch), validator sets with priorities, block events
 blocks/          — block history since genesis: per-height facts in SQLite, filled from the primary source (shares the push DB handle)
-  store.go       — blocks, validator sets, absences (absent / nil / other block), round proposers, flags, set events + event gaps, daily vote-delay histograms; each address once (blocks_validators), the rest by id, no index beside the keys; missed-block windows (first block found by bisecting heights)
+  store.go       — blocks, validator sets, absences (absent / nil / other block), round proposers, flags, set events + event gaps, daily vote-delay histograms; each address once (blocks_validators), the rest by id (blocks_events keeps text addresses), no index beside the keys; missed-block windows (first block found by bisecting heights)
   record.go      — a commit + its validator set → a Record: absence kinds, vote delays from tm2's weighted median time
   proposer.go    — port of tm2's proposer-priority increment: the expected proposer of each round
   tracker.go     — fill loop (Data Flow #7)
@@ -51,9 +51,7 @@ web/             — Web dashboard + HTTP API
     - Each pass stores the heights up to head − 1 (the head's commit is final only once the next block carries it), then one batch below the stored range, newest first; `--history-pace` between passes while backfilling, 5 s once complete.
     - A non-canonical commit, or a refusal within 1,000 blocks of the head (a lagging load-balanced backend), ends that direction quietly until the next pass; a refusal further down sets the floor, re-checked once per start.
     - A batch refused whole halves `--history-batch` for good; one timing out, for 10 minutes. HTTP 429 waits `Retry-After` on every read.
-    - One `/validators` per new `validators_hash`; the sets at h−1 and h for a block finalized after round 0 and every 1,000th block (expected round proposers, from the port of tm2's proposer priorities).
-    - Set-change events from `/block_results` at H−2; a failed read becomes an event gap, read again every 10 minutes.
-    - `Progress.Rate`: heights/s over the last 5 min, for `/api/history` and Network State's header (share filled, time left).
+    - One `/validators` per new `validators_hash`; the sets at h−1 and h for a block finalized after round 0 (round proposers kept) and every 1,000th (checked only); set-change events from `/block_results` at H−2, a failed read kept as an event gap and read again every 10 minutes.
 
 ### NameRegistry (validators.go)
 
@@ -76,8 +74,8 @@ Fetches the last N blocks (default 100), extracts:
 - Sign rate per validator (signed/total as percentage)
 
 This is a live 100-block window; the commits the node marks `canonical` (final)
-are kept in memory, so a refresh fetches one or two (the new head, and the one
-before it, now final). Longer-term **missed-block counts** come from the
+are kept in memory, so a refresh fetches only the heights not yet read final:
+one or two when the window slid by one block. Longer-term **missed-block counts** come from the
 `blocks` store (Data Flow #7) via `MissedByWindows`.
 
 ### HTTP API (CORS-open JSON)
@@ -101,7 +99,7 @@ Everything is auto-detected or configurable via flags. The tool works on any gno
 
 ### RPC errors
 
-`rpcGet` returns a `*node.HTTPStatusError` (with `RetryAfter`) for a non-2xx answer; `rpcGetJSON` wraps a `*node.RPCError` for a JSON-RPC `error` envelope, which gno sends with HTTP 200 (e.g. a height out of range). `node.IsRefusal` tells a node refusing a call (JSON-RPC error) from one failing to answer (transport error, HTTP error status). Decode RPC results through `rpcGetJSON` so neither passes silently.
+`rpcGet` returns a `*node.HTTPStatusError` (with `RetryAfter`) for a non-2xx answer; `rpcGetJSON` wraps a `*node.RPCError` for a JSON-RPC `error` envelope, which gno sends with HTTP 200 (e.g. a height out of range). `node.IsRefusal` tells a node refusing a call (JSON-RPC error) from one failing to answer (transport error, HTTP error status). Decode RPC results through `rpcGetJSON` (one call) or `rpcBatch` (a batch: a refusal of the whole batch is a wrapped `*RPCError`, a call's own error is in its answer) so neither passes silently.
 
 ### Single HTML file
 
@@ -131,7 +129,7 @@ Each card has `<h2 data-section="name">` that toggles `.collapsed` class. State 
 ### Adding a new RPC data source
 
 1. Add the fetch method to `node/client.go`
-2. Add types to `node/types.go`
+2. Add types to `node/types.go` (or beside their read, as in `blockhistory.go`)
 3. Call it in `web/server.go: fetchSnapshot()`
 4. Broadcast it in the publish loop
 5. Handle the WebSocket message in `web/index.html`

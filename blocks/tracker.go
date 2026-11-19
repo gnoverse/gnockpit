@@ -346,7 +346,8 @@ func (t *Tracker) blockEvents(ctx context.Context, height int64) (evs []node.Blo
 
 // record builds the record of a commit against the validator set it names,
 // with the expected proposer of each round when it was finalized after round
-// 0, or when its height is a checked one.
+// 0. Such a block, and every checkEvery-th one, has its proposer checked and is
+// flagged when no round expects it.
 func (t *Tracker) record(ctx context.Context, c node.Commit) (Record, error) {
 	set, err := t.members(ctx, c)
 	if err != nil {
