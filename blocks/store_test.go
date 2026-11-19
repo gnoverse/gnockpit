@@ -148,23 +148,23 @@ func TestStoreWriteCountsAHeightOnce(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
 	putTestSet(t, s)
-	r := rec(10)
-	r.Delays = []Delay{{valG0Y, 300}, {val15T, -1200}}
+	r := rec(10, Absence{val15T, Absent})
+	r.Delays = []Delay{{valG0Y, 300}}
 	for range 2 {
 		if err := s.Write(ctx, []Record{r}); err != nil {
 			t.Fatal(err)
 		}
+	}
+	if got, err := s.MissedByWindows(ctx, []time.Duration{0}, t0.Add(time.Hour)); err != nil || !reflect.DeepEqual(got.Missed, map[string][]int{val15T: {1}}) {
+		t.Errorf("missed = %v, %v; want %s 1", got.Missed, err, val15T)
 	}
 	day := t0.Truncate(24 * time.Hour)
 	got, err := s.VoteDelays(ctx, day, day)
 	if err != nil {
 		t.Fatal(err)
 	}
-	// -1200 ms falls in ≤ -1000, 300 ms in [250, 1000).
-	want := []DayDelays{
-		{Day: day, Address: val15T, Votes: 1, SumMs: -1200, Buckets: [DelayBuckets]int64{0: 1}},
-		{Day: day, Address: valG0Y, Votes: 1, SumMs: 300, Buckets: [DelayBuckets]int64{3: 1}},
-	}
+	// 300 ms falls in [250, 1000).
+	want := []DayDelays{{Day: day, Address: valG0Y, Votes: 1, SumMs: 300, Buckets: [DelayBuckets]int64{3: 1}}}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("VoteDelays() =\n%+v\nwant\n%+v", got, want)
 	}
@@ -267,7 +267,7 @@ func queryPlan(t *testing.T, s *Store, query string, args ...any) []string {
 }
 
 func TestStoreMissedByWindowsSearchesTheWindowOnly(t *testing.T) {
-	plan := queryPlan(t, newTestStore(t), windowMissesQuery, 1, Absent, OtherBlock)
+	plan := queryPlan(t, newTestStore(t), windowMissesQuery, 1, 2, Absent, OtherBlock)
 	// The 24h window is read on every publish: it must cost its own blocks'
 	// absences, not a pass over the whole history's.
 	if !slices.ContainsFunc(plan, func(d string) bool {
@@ -313,6 +313,69 @@ func TestStoreMissedByWindowsFindsEachWindowsFirstBlock(t *testing.T) {
 	}
 	if !slices.Equal(got.Blocks, []int{0}) {
 		t.Errorf("window blocks an hour later = %v, want [0]", got.Blocks)
+	}
+}
+
+// writeDays stores blocks 1 to 12, every 6 h from the UTC day of t0: val15T
+// absent from each, valG0Y precommitting another block on even heights and
+// nil on odd ones.
+func writeDays(t *testing.T, s *Store) time.Time {
+	t.Helper()
+	day0 := t0.Truncate(24 * time.Hour)
+	recs := make([]Record, 12)
+	for i := range recs {
+		h := int64(i + 1)
+		kind := Nil
+		if h%2 == 0 {
+			kind = OtherBlock
+		}
+		r := rec(h, Absence{valG0Y, kind}, Absence{val15T, Absent})
+		r.Time = day0.Add(time.Duration(h) * 6 * time.Hour)
+		recs[i] = r
+	}
+	if err := s.Write(context.Background(), recs); err != nil {
+		t.Fatal(err)
+	}
+	return day0
+}
+
+func TestStoreMissedByWindowsAcrossDays(t *testing.T) {
+	s := newTestStore(t)
+	putTestSet(t, s)
+	day0 := writeDays(t, s)
+	now := day0.Add(12*6*time.Hour + time.Hour) // day 3, 01:00
+	windows := []time.Duration{2 * time.Hour, 25 * time.Hour, 0, 40 * time.Hour}
+	got, err := s.MissedByWindows(context.Background(), windows, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 2 h: block 12; 25 h: 8 to 12, from day 2's start; all: 1 to 12; 40 h:
+	// 6 to 12, from day 1's middle.
+	want := WindowReport{Windows: windows, Blocks: []int{1, 5, 12, 7}, Missed: map[string][]int{
+		val15T: {1, 5, 12, 7},
+		valG0Y: {1, 3, 6, 4},
+	}}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("MissedByWindows() =\n%+v\nwant\n%+v", got, want)
+	}
+}
+
+func TestStoreMissedTotalsReadTheDayCounters(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	putTestSet(t, s)
+	writeDays(t, s)
+	// The whole history's misses come from the per-day counters, not from
+	// every stored absence: without the absences, they stand.
+	if _, err := s.db.ExecContext(ctx, `DELETE FROM blocks_absences`); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.MissedByWindows(ctx, []time.Duration{0}, t0.Add(10*24*time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := map[string][]int{val15T: {12}, valG0Y: {6}}; !reflect.DeepEqual(got.Missed, want) {
+		t.Errorf("missed = %v, want %v", got.Missed, want)
 	}
 }
 

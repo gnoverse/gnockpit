@@ -75,6 +75,12 @@ CREATE TABLE IF NOT EXISTS blocks_events (
 	applied       INTEGER NOT NULL,
 	PRIMARY KEY (height, idx)
 );
+CREATE TABLE IF NOT EXISTS blocks_missed_days (
+	day       INTEGER NOT NULL,
+	validator INTEGER NOT NULL,
+	missed    INTEGER NOT NULL, -- absent or other-block precommits in the day's stored blocks
+	PRIMARY KEY (day, validator)
+) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS blocks_vote_delays (
 	day       INTEGER NOT NULL,
 	validator INTEGER NOT NULL,
@@ -328,6 +334,21 @@ func writeRecord(ctx context.Context, tx *sql.Tx, ids *validatorIDs, r Record) e
 		}
 	}
 	day := dayOf(r.Time)
+	for _, a := range r.Absences {
+		if a.Kind != Absent && a.Kind != OtherBlock {
+			continue
+		}
+		vid, err := ids.id(ctx, a.Address)
+		if err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx,
+			`INSERT INTO blocks_missed_days(day, validator, missed) VALUES(?, ?, 1)
+			 ON CONFLICT(day, validator) DO UPDATE SET missed = missed + 1`, day, vid,
+		); err != nil {
+			return fmt.Errorf("count miss %d/%s: %w", r.Height, a.Address, err)
+		}
+	}
 	for _, d := range r.Delays {
 		vid, err := ids.id(ctx, d.Address)
 		if err != nil {
@@ -356,8 +377,12 @@ const rangeQuery = `SELECT (SELECT MIN(height) FROM blocks), (SELECT MAX(height)
 
 // Range returns the lowest and highest stored heights, 0 and 0 when none is.
 func (s *Store) Range(ctx context.Context) (low, high int64, err error) {
+	return storedRange(ctx, s.db)
+}
+
+func storedRange(ctx context.Context, q queryRower) (low, high int64, err error) {
 	var lo, hi sql.NullInt64
-	if err := s.db.QueryRowContext(ctx, rangeQuery).Scan(&lo, &hi); err != nil {
+	if err := q.QueryRowContext(ctx, rangeQuery).Scan(&lo, &hi); err != nil {
 		return 0, 0, fmt.Errorf("block range: %w", err)
 	}
 	return lo.Int64, hi.Int64, nil
@@ -581,10 +606,17 @@ func dayOf(t time.Time) int64 { return t.UTC().Unix() / secondsPerDay }
 // ---- Missed-block windows
 
 // windowMissesQuery counts each validator's absent and other-block precommits
-// from a height on, searching the absences by height.
+// in a span of heights, searching the absences by height.
 const windowMissesQuery = `SELECT blocks_validators.address, COUNT(*) FROM blocks_absences
 	JOIN blocks_validators ON blocks_validators.id = blocks_absences.validator
-	WHERE blocks_absences.height >= ? AND blocks_absences.kind IN (?, ?) GROUP BY blocks_absences.validator`
+	WHERE blocks_absences.height BETWEEN ? AND ? AND blocks_absences.kind IN (?, ?)
+	GROUP BY blocks_absences.validator`
+
+// dayMissesQuery sums each validator's misses from the per-day counters, from
+// a UTC day on.
+const dayMissesQuery = `SELECT blocks_validators.address, SUM(blocks_missed_days.missed) FROM blocks_missed_days
+	JOIN blocks_validators ON blocks_validators.id = blocks_missed_days.validator
+	WHERE blocks_missed_days.day >= ? GROUP BY blocks_missed_days.validator`
 
 // WindowReport holds missed-block counts across windows: Blocks[i] and
 // Missed[addr][i] correspond to Windows[i].
@@ -601,19 +633,46 @@ type WindowReport struct {
 // The stored heights run unbroken (the tracker fills outward from one range)
 // and block times grow with height, so a window's first block is found by
 // bisecting the heights, and its blocks are counted from it to the highest
-// without reading them.
+// without reading them. Its misses are read from the absences of its first,
+// partial UTC day, and from the per-day counters after it; a window from the
+// lowest stored block reads only the counters. The report is read in one
+// transaction, so concurrent writes do not skew it.
 func (s *Store) MissedByWindows(ctx context.Context, windows []time.Duration, now time.Time) (WindowReport, error) {
 	rep := WindowReport{Windows: windows, Blocks: make([]int, len(windows)), Missed: map[string][]int{}}
-	low, high, err := s.Range(ctx)
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		return rep, fmt.Errorf("begin read: %w", err)
+	}
+	defer tx.Rollback()
+	low, high, err := storedRange(ctx, tx)
 	if err != nil {
 		return rep, err
+	}
+	add := func(i int, query string, args ...any) error {
+		rows, err := tx.QueryContext(ctx, query, args...)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var addr string
+			var n int
+			if err := rows.Scan(&addr, &n); err != nil {
+				return err
+			}
+			if rep.Missed[addr] == nil {
+				rep.Missed[addr] = make([]int, len(windows))
+			}
+			rep.Missed[addr][i] += n
+		}
+		return rows.Err()
 	}
 	for i, w := range windows {
 		var cutoff int64
 		if w > 0 {
 			cutoff = now.Add(-w).UnixMilli()
 		}
-		from, ok, err := s.firstFrom(ctx, cutoff, low, high)
+		from, ok, err := firstFrom(ctx, tx, cutoff, low, high)
 		if err != nil {
 			return rep, fmt.Errorf("first block of the %s window: %w", w, err)
 		}
@@ -621,51 +680,61 @@ func (s *Store) MissedByWindows(ctx context.Context, windows []time.Duration, no
 			continue
 		}
 		rep.Blocks[i] = int(high - from + 1)
-		rows, err := s.db.QueryContext(ctx, windowMissesQuery, from, Absent, OtherBlock)
+		fromMs, err := timeOf(ctx, tx, from)
 		if err != nil {
-			return rep, fmt.Errorf("query misses: %w", err)
+			return rep, err
 		}
-		for rows.Next() {
-			var addr string
-			var n int
-			if err := rows.Scan(&addr, &n); err != nil {
-				rows.Close()
-				return rep, fmt.Errorf("scan miss: %w", err)
+		firstDay := dayOf(time.UnixMilli(fromMs))
+		countedFrom := firstDay
+		if from > low {
+			// The first day is partial: its misses come from its absences.
+			last := high
+			next, ok, err := firstFrom(ctx, tx, (firstDay+1)*secondsPerDay*1000, from, high)
+			if err != nil {
+				return rep, fmt.Errorf("first block after the %s window's first day: %w", w, err)
 			}
-			if rep.Missed[addr] == nil {
-				rep.Missed[addr] = make([]int, len(windows))
+			if ok {
+				last = next - 1
 			}
-			rep.Missed[addr][i] = n
+			if err := add(i, windowMissesQuery, from, last, Absent, OtherBlock); err != nil {
+				return rep, fmt.Errorf("misses of the %s window's first day: %w", w, err)
+			}
+			countedFrom = firstDay + 1
 		}
-		rows.Close()
-		if err := rows.Err(); err != nil {
-			return rep, fmt.Errorf("iterate misses: %w", err)
+		if err := add(i, dayMissesQuery, countedFrom); err != nil {
+			return rep, fmt.Errorf("misses of the %s window: %w", w, err)
 		}
 	}
 	return rep, nil
 }
 
+// queryRower runs a query for one row: a *sql.DB or a *sql.Tx.
+type queryRower interface {
+	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
+}
+
+// timeOf returns the block time of the stored height, in Unix ms.
+func timeOf(ctx context.Context, q queryRower, h int64) (ms int64, err error) {
+	if err := q.QueryRowContext(ctx, `SELECT time_ms FROM blocks WHERE height = ?`, h).Scan(&ms); err != nil {
+		return 0, fmt.Errorf("time of %d: %w", h, err)
+	}
+	return ms, nil
+}
+
 // firstFrom returns the lowest of the stored heights low to high whose block
 // time is cutoffMs or later, bisecting them: they run unbroken and block
 // times grow with height. ok is false when no stored block is that late.
-func (s *Store) firstFrom(ctx context.Context, cutoffMs, low, high int64) (from int64, ok bool, err error) {
+func firstFrom(ctx context.Context, q queryRower, cutoffMs, low, high int64) (from int64, ok bool, err error) {
 	if high == 0 {
 		return 0, false, nil
 	}
-	timeOf := func(h int64) (ms int64, err error) {
-		err = s.db.QueryRowContext(ctx, `SELECT time_ms FROM blocks WHERE height = ?`, h).Scan(&ms)
-		if err != nil {
-			return 0, fmt.Errorf("time of %d: %w", h, err)
-		}
-		return ms, nil
-	}
-	last, err := timeOf(high)
+	last, err := timeOf(ctx, q, high)
 	if err != nil || last < cutoffMs {
 		return 0, false, err
 	}
 	for low < high {
 		mid := low + (high-low)/2
-		ms, err := timeOf(mid)
+		ms, err := timeOf(ctx, q, mid)
 		if err != nil {
 			return 0, false, err
 		}
@@ -795,7 +864,8 @@ func (s *Store) Reset(ctx context.Context, chainID string) error {
 	defer tx.Rollback()
 	for _, table := range []string{
 		"blocks", "blocks_validators", "blocks_valsets", "blocks_valset_members", "blocks_absences",
-		"blocks_rounds", "blocks_flags", "blocks_events", "blocks_event_gaps", "blocks_vote_delays", "blocks_meta",
+		"blocks_rounds", "blocks_flags", "blocks_events", "blocks_event_gaps", "blocks_missed_days", "blocks_vote_delays",
+		"blocks_meta",
 	} {
 		if _, err := tx.ExecContext(ctx, "DELETE FROM "+table); err != nil {
 			return fmt.Errorf("reset %s: %w", table, err)
