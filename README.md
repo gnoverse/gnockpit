@@ -46,7 +46,9 @@ appear for the same peer, the earlier `-rpc` in flag order wins.
 | `-addr`                 | `0.0.0.0`                  | Bind address                                                                                                                                                         |
 | `-interval`             | `5s`                       | Dashboard refresh interval                                                                                                                                           |
 | `-v`                    | false                      | Verbose HTTP logging                                                                                                                                                 |
-| `--db-path`             | `/tmp/gnockpit.db`         | SQLite database for push notifications, the block history and block-ETA history (see Push Notifications, Block history, Block ETA)                                   |
+| `--db-path`             | `/tmp/gnockpit.db`         | SQLite database for push notifications, the block history and block-ETA history; keep it on a persistent path (see Push Notifications, Block history, Block ETA)     |
+| `--history-pace`        | `1s`                       | Wait between the batches that fill the block history back to genesis; `0` for none (see Block history)                                                               |
+| `--history-batch`       | `100`                      | Commits asked in one JSON-RPC batch while filling the block history; halved while the first `-rpc` refuses or times out (see Block history)                          |
 | `--chain-stuck-secs`    | `30`                       | Seconds without a new block before the chain-stuck alert fires                                                                                                       |
 | `--notify`              | (none)                     | Shoutrrr notification URL (repeatable); see External Notifications                                                                                                   |
 | `--redact-secret`       | false                      | Strip notification URL secrets from logged Shoutrrr errors; see External Notifications                                                                               |
@@ -191,18 +193,31 @@ location, which is accurate when gnockpit runs alongside the node.
 ## Block history
 
 gnockpit records every block since genesis in the SQLite database
-(`--db-path`): its time, proposer and voting round, the validator set that
-signed it, and which members of that set did not sign it for the block
-(absent, nil, or a vote for another block). It follows the chain head from
-the first `-rpc` and, in between, fills the older blocks newest first, in
-JSON-RPC batches of 100 commits at about 100 blocks a second (mainnet's 1.6M
-blocks in about 5 hours, the last 24 hours in minutes). The history powers the missed-block counts over
-1h / 24h / 7d / 30d / total windows (the validators table and `/api/stats`,
-where `recorded_since` says how far back it reaches; a nil vote counts as
-signed, a vote for another block as missed) and `/api/history`. While it
-fills, Network State's header shows how much is filled and, once the server
-has measured the fill rate, the time left.
-Pointing gnockpit at another chain drops it.
+(`--db-path`; on a temporary path, a reboot means filling it again).
+
+- **Recorded** — each block's time, proposer and round, the validator set that
+  signed it, and the members of that set that did not sign it for the block:
+  absent, or a precommit for nil or for another block. Also each validator's
+  vote delays (how far its precommit's time is from the commit's
+  voting-power-weighted median time), as daily histograms; the expected
+  proposer of each round, for a block finalized after round 0 and as a check
+  on every 1,000th block; and the events behind each validator set change.
+- **Fill** — gnockpit follows the chain head from the first `-rpc` and, in
+  between, fills the older blocks newest first, in JSON-RPC batches of
+  `--history-batch` commits with `--history-pace` between them: at the
+  defaults (100 commits, 1 s), at most about 100 blocks a second, so mainnet's
+  1.6M blocks take at least 4.5 hours. A batch the node refuses whole, or that
+  times out, is halved; HTTP 429 pauses for as long as `Retry-After` asks (a
+  minute without one). The history is complete once it reaches block 1, or the
+  oldest block the node serves; gnockpit asks below that block again at each
+  start, in case the node changed. Pointing gnockpit at another chain drops the
+  history.
+- **Used by** — the validators table's Missed 24h and `/api/stats`' 1h / 24h /
+  7d / 30d / total windows (`recorded_since` says how far back they reach): an
+  absence or a precommit for another block counts as missed, a precommit for
+  nil as signed; and [`/api/history`](#apihistory). While the history fills,
+  Network State's header shows how much is filled and, once the server has
+  measured the fill rate, the time left.
 
 ## Block ETA
 
@@ -246,8 +261,8 @@ All endpoints are CORS-open JSON, for building external badges/dashboards.
 | -------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `/api/status`  | Health summary (`status`/`chain`/`height`/`reason`/`time`) plus live network state, the last 100 blocks with signing status, and per-peer / per-validator column data, including `name`, `country`, `city`, `lat`/`lon` and cloud `provider`. A validator's location and provider are its matched peer's. Unknown fields are omitted; when only one of `lat`/`lon` is present, the other is 0. |
 | `/api/stats`   | Aggregate stats: per-validator missed-block windows, cloud-provider and country aggregates, validator-set health, and the Nakamoto coefficient.                                                                                                                                                                                                                                                |
-| `/api/eta`     | Block ETAs: when a height is expected, which height a time reaches, or the scheduled halt (see below).                                                                                                                                                                                                                                                                                         |
-| `/api/history` | The block history: how far back it reaches and, for a range of heights, each block's proposer, round and the validators that did not sign it (see below).                                                                                                                                                                                                                                      |
+| `/api/eta`     | Block ETAs: when a height is expected, which height a time reaches, or the scheduled halt; see [`/api/eta`](#apieta).                                                                                                                                                                                                                                                                          |
+| `/api/history` | The block history: how far back it reaches, the blocks of a range of heights with the validators that did not sign each for it, and daily vote delays; see [`/api/history`](#apihistory).                                                                                                                                                                                                      |
 | `/api`         | Raw internal snapshot dump (unstable shape; for debugging).                                                                                                                                                                                                                                                                                                                                    |
 | `/badge.svg`   | SVG status badge.                                                                                                                                                                                                                                                                                                                                                                              |
 
@@ -293,18 +308,22 @@ curl -s 'http://localhost:8080/api/eta?time=<RFC 3339 time after the newest bloc
 
 ### `/api/history`
 
-| Query            | Answer                                                                                                                                                                                                                                                                                                                                                                       |
-| ---------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| none             | `chain` and `filled`: `from` and `to` (the lowest and highest stored heights), `from_time`, `floor` (the oldest block the first `-rpc` serves, when it refused an older one), `complete` (`from` is 1, or the floor) and `rate` (heights filled per second over the last 5 minutes; left out until measured, when the fill has not moved in that window, and once complete). |
-| `?from=H1&to=H2` | The same, plus `blocks[]` (`height`, `time`, `proposer`, `round`, `txs`, `valset` and the `absent`, `nil` and `other_block` signers) and `valsets` (each set's members, `address` and `power`). At most 1,000 heights; heights outside `filled` are left out.                                                                                                                |
+The query picks what comes back, and the queries combine. Times are RFC 3339
+UTC to the millisecond.
 
-Times are RFC 3339 UTC to the millisecond. A nil vote is a precommit for no
-block; `other_block`, a precommit for another block than the one committed.
-Errors come as `{"error": "…"}`: 400 for a malformed range, 503 when the history
-is disabled.
+| Query            | Answer                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| ---------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| none             | `chain` and `filled`: `from` and `to` (the lowest and highest stored heights), `from_time` (the time of block `from`; left out while nothing is stored), `floor` (the oldest block the first `-rpc` serves, when it refused an older one), `complete` (`from` is 1, or the floor) and `rate` (heights filled per second over the last 5 minutes; left out until measured, when the fill has not moved in that window, and once complete).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| `?from=H1&to=H2` | The same, plus `blocks[]` and `valsets` for at most 1,000 heights. Heights outside `filled` are left out: a range the history does not hold gives an empty `blocks` and `valsets`. Each block has `height`, `time`, `proposer`, `round`, `txs`, `valset` (the hash of its validator set, a key of `valsets`) and the members that did not sign it for the block: `absent`, `nil` (a precommit for no block) and `other_block` (a precommit for another block). A block finalized after round 0, and every 1,000th block, also has `rounds`: the expected proposer of rounds 0 to `round`, `""` where unknown; `flag` says why its proposer check failed, when it did. A block that opens a new validator set has `set_change`: `source`, the block its events were read from, and `events` (`type`, `operator`, `address` or `old_address` and `new_address`, `power`, `applied`). `valsets` gives each set's members in set order: `address`, `pub_key` and `power`. |
+| `?days=N`        | The same, plus `vote_delays` for the last N UTC days, today included (N from 1 to 31): `edges_ms`, the edges of the delay buckets in ms (bucket i holds the delays between edges i−1 and i; a delay on an edge falls in the bucket farther from 0), and `days[]`, each with `day` (`YYYY-MM-DD`) and, per validator, `address`, `votes`, `mean_ms` and `buckets`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+
+Errors come as `{"error": "…"}`: 400 for a malformed query (a range that is not
+two heights from 1, or over 1,000 heights; `days` outside 1–31), 500 when the
+database read fails.
 
 ```bash
 curl -s 'http://localhost:8080/api/history?from=1183000&to=1183010'
+curl -s 'http://localhost:8080/api/history?days=7'
 ```
 
 ## Features
@@ -319,7 +338,7 @@ curl -s 'http://localhost:8080/api/history?from=1183000&to=1183010'
 - HTTP API — CORS-open `/api/status`, `/api/stats`, `/api/eta` and `/api/history` for external badges, dashboards and scripts
 - Alerts — browser push (PWA) and external notifications (Discord, Telegram, …) for chain-stuck and missed-blocks
 - Recent blocks — the last 100 blocks with signing visualization
-- Block history — every block since genesis: proposer, round, and which validators did not sign it for the block and how (`/api/history`)
+- Block history — every block since genesis: proposer, round, the validators that did not sign it for the block and how, vote delays, expected round proposers and validator set changes (`/api/history`)
 
 ## License
 

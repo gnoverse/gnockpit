@@ -17,12 +17,12 @@ node/            — RPC client + types (pure data layer, no UI)
   geoip.go       — DB-IP City Lite: IP → coordinates + country (auto-downloaded, monthly)
   asn.go         — DB-IP ASN Lite: IP → ASN + cloud provider (auto-downloaded, monthly)
   batch.go       — JSON-RPC batches (one POST, several calls); HeightError
-  blockhistory.go — commits in batches, validator sets with priorities, block events: the block history's reads
+  blockhistory.go — commits (one, or a batch), validator sets with priorities, block events: the block history's and the live window's reads
 blocks/          — block history since genesis: per-height facts in SQLite, filled from the primary source (shares the push DB handle)
-  store.go       — blocks, validator sets, absences (absent / nil / other block), round proposers, flags, set events, vote-delay counters; missed-block windows
+  store.go       — blocks, validator sets, absences (absent / nil / other block), round proposers, flags, set events + event gaps, daily vote-delay histograms; each address once (blocks_validators), the rest by id; missed-block windows
   record.go      — a commit + its validator set → a Record: absence kinds, vote delays from tm2's weighted median time
   proposer.go    — port of tm2's proposer-priority increment: the expected proposer of each round
-  tracker.go     — loop: head first, then one batch of 100 commits below (~100 blocks/s); set lookups once per hash; rounds; events at set changes
+  tracker.go     — fill loop (Data Flow #7)
 eta/             — block ETAs: sampled block times + estimator + halt tracking (shares the push DB handle)
   store.go       — eta_block_times (every 100th height), chain id, backfill floor, first sighting of each halt
   model.go       — pure estimator: pace of the last 3000 blocks; 80/95% ranges from the predictor's past errors (30-day lookback)
@@ -32,7 +32,7 @@ web/             — Web dashboard + HTTP API
   status.go      — /api/status: health + curated network state / recent blocks / peer + validator columns
   stats.go       — /api/stats: missed-block windows, provider/country aggregates, set health, Nakamoto
   eta.go         — /api/eta: ETA of a height, height at a time, or the scheduled halt (model from eta.Tracker)
-  history.go     — /api/history: the block history's reach, and the blocks of a height range (≤ 1,000)
+  history.go     — /api/history: the block history's reach, the blocks of a height range (≤ 1,000), daily vote delays (≤ 31 days)
   analytics.go   — Optional third-party analytics snippet (--analytics), injected before </body>; off by default
   index.html     — Single-page dashboard (embedded via go:embed, vanilla JS, no framework)
 ```
@@ -45,9 +45,15 @@ web/             — Web dashboard + HTTP API
 2. Each cycle calls `fetchSnapshot()` which polls every configured source (`node/sources.go: Poll`): global chain data (status, validators, consensus, signing) comes from the freshest reachable source; peers are unioned across all reachable sources and deduped by node ID (`MergePeers`) before their RPCs are probed. All sources down → `snap.Error` drives the "connecting to sources" banner.
 3. The snapshot is broadcast to all connected WebSocket clients as typed messages: `status`, `peers`, `votes`, `checks`, `signing`
 4. `index.html` receives these messages and updates the DOM in-place
-5. Each cycle also geolocates peers (`geoip`) and resolves their cloud provider (`asn`) — using each peer's resolved public IP only (peers with no usable public IP are geolocated to nothing and bucketed "Unknown" on the map) — and refreshes the missed-24h counts from the `blocks` store. This powers the network map and the Country/Provider columns; the `blocks` store powers the per-validator missed-block windows (1h/24h/7d/30d/total). Validators inherit the country/provider of their correlated peer (matched via `ValAddress`), so validators no source is peered with have none.
+5. Each cycle also geolocates peers (`geoip`) and resolves their cloud provider (`asn`) — using each peer's resolved public IP only (peers with no usable public IP are geolocated to nothing and bucketed "Unknown" on the map) — and refreshes the missed-24h counts from the `blocks` store (#7). This powers the network map and the Country/Provider columns. Validators inherit the country/provider of their correlated peer (matched via `ValAddress`), so validators no source is peered with have none.
 6. Separately, `eta.Tracker` (started in `main.go`) runs its own loop on the primary source: every minute, and back to back while backfilling, it reads the chain head, drops the stored history if the chain id changed, reads the halt params, and fetches the missing every-100th block times newest-first. `/api/eta` combines its model with the snapshot's newest block; the dashboard's ETA cards poll `/api/eta` every 10 s and tick the countdown locally in between. The link card's target lives only in the page link (`?eta=&since=&label=`); the halt card's comes from the chain params; the "original" estimate is recomputed from the stored history as of `since`.
-7. Separately, `blocks.Tracker` (started in `main.go`) fills the block history from the primary source: each pass stores the heights up to the chain head − 1 (the head's commit is final only once the next block carries it), then one batch of 100 commits below the stored range, newest first: about a batch a second until height 1, or the oldest block the source serves, then a pass every 5 s. It reads each validator set once (by `validators_hash`); the sets at h−1 and h for a block finalized after round 0 and for every 1,000th block (the expected proposer of each round, from the port of tm2's proposer priorities); and the events behind each set change from `/block_results` two blocks below it. A batch refused whole halves the batch size for good; one timing out, for 10 minutes. `/api/history` reads its progress and fill rate (heights/s over the last 5 min); Network State's header shows the share filled and the time left while it fills.
+7. Separately, `blocks.Tracker` (started in `main.go`) fills the block history from the primary source. Deltas worth knowing:
+    - Each pass stores the heights up to head − 1 (the head's commit is final only once the next block carries it), then one batch below the stored range, newest first; `--history-pace` between passes while backfilling, 5 s once complete.
+    - A non-canonical commit, or a refusal within 1,000 blocks of the head (a lagging load-balanced backend), ends that direction quietly until the next pass; a refusal further down sets the floor, re-checked once per start.
+    - A batch refused whole halves `--history-batch` for good; one timing out, for 10 minutes. HTTP 429 waits `Retry-After` on every read.
+    - One `/validators` per new `validators_hash`; the sets at h−1 and h for a block finalized after round 0 and every 1,000th block (expected round proposers, from the port of tm2's proposer priorities).
+    - Set-change events from `/block_results` at H−2; a failed read becomes an event gap, read again every 10 minutes.
+    - `Progress.Rate`: heights/s over the last 5 min, for `/api/history` and Network State's header (share filled, time left).
 
 ### NameRegistry (validators.go)
 
@@ -64,24 +70,22 @@ The registry persists to a JSON file (`--names` flag) so discoveries survive res
 
 Fetches the last N blocks (default 100), extracts:
 
-- Who signed each block (from `last_commit.precommits`)
+- Who signed each block (from `/commit`'s precommits, which finalize that height; one for the block or for nil signs it, an empty slot or one for another block misses it, as in the block history)
 - Who proposed each block (from `header.proposer_address`)
 - Block timestamps → compute per-proposer average block time
 - Sign rate per validator (signed/total as percentage)
 
 This is a live 100-block window; the commits the node marks `canonical` (final)
-are kept in memory, so a refresh fetches about one. Longer-term **missed-block
-counts** come from the `blocks` store instead (Data Flow #7): it holds every
-block since genesis with its absences, and aggregates over
-1h/24h/7d/30d/total via `MissedByWindows`, counting absent and other-block
-precommits as missed.
+are kept in memory, so a refresh fetches one or two (the new head, and the one
+before it, now final). Longer-term **missed-block counts** come from the
+`blocks` store (Data Flow #7) via `MissedByWindows`.
 
 ### HTTP API (CORS-open JSON)
 
 - `/api/status` (status.go) — health summary (retrocompat `status`/`chain`/`height`/`reason`/`time`) plus `network`, `recent_blocks` (last 100), and per-`peers`/`validators` column data.
 - `/api/stats` (stats.go) — per-validator missed-block windows, provider + country aggregates, validator-set health, Nakamoto coefficient.
 - `/api/eta` (eta.go) — `?height=` (+`since` for original/drift/trail), `?time=`, or none for the on-chain halt.
-- `/api/history` (history.go) — the block history's reach (`filled`), and for `?from=&to=` (≤ 1,000 heights) each block's proposer, round, absent / nil / other-block signers and the validator sets.
+- `/api/history` (history.go) — the block history's reach (`filled`); `?from=&to=` (≤ 1,000 heights): blocks with absent / nil / other-block members, round proposers, flags, set changes, and the validator sets; `?days=N` (≤ 31): daily vote-delay histograms.
 - `/api` (server.go) — raw `Snapshot` dump (unstable shape; debugging).
 - Also: `/badge.svg`, `/ws`, `/api/boot`, `/api/push/*`, `/api/notify/*`.
 
@@ -146,7 +150,7 @@ Each card has `<h2 data-section="name">` that toggles `.collapsed` class. State 
 go test ./...
 ```
 
-Tests are minimal — focused on JSON parsing and name registry logic. The web UI is tested manually.
+Go tests cover the RPC parsing, the stores, the trackers (fake sources) and the HTTP handlers. The web UI is tested manually.
 
 ## Deployment
 

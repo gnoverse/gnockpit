@@ -31,8 +31,8 @@ var statsWindows = []struct {
 }
 
 // Stats is gnockpit's aggregate network statistics, exposed at /api/stats for
-// external dashboards. It is derived from the latest snapshot plus recorded
-// block-signing history.
+// external dashboards. It is derived from the latest snapshot and the block
+// history.
 type Stats struct {
 	Time          string         `json:"time"`
 	Chain         string         `json:"chain,omitempty"`
