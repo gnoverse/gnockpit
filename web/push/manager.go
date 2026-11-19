@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	webpush "github.com/SherClockHolmes/webpush-go"
@@ -27,7 +28,7 @@ type Manager struct {
 	vapidPrivateKey string
 	chainStuckSecs  int
 	maxMissedInARow int
-	chainName       string
+	chainName       atomic.Pointer[string] // written by the publish loop, read by every sender
 	publicURL       string
 	notifyMu        sync.RWMutex
 	targets         []notifyTarget // the notification config's targets; guarded by notifyMu
@@ -76,7 +77,12 @@ func (m *Manager) MaxMissedInARow() int { return m.maxMissedInARow }
 func (m *Manager) MissingBlocksFiring() map[string]bool { return m.detector.MissingBlocksFiring() }
 
 // ChainName returns the last observed chain network ID.
-func (m *Manager) ChainName() string { return m.chainName }
+func (m *Manager) ChainName() string {
+	if n := m.chainName.Load(); n != nil {
+		return *n
+	}
+	return ""
+}
 
 // VAPIDPublicKey returns the VAPID public key for use in browser push subscriptions.
 func (m *Manager) VAPIDPublicKey() string { return m.vapidPublicKey }
@@ -105,7 +111,8 @@ func (m *Manager) notifyErrorText(err error, urls []string) string {
 // EvaluateAndNotify detects alert transitions from snap and delivers push notifications.
 func (m *Manager) EvaluateAndNotify(snap *node.Snapshot) {
 	if snap.Status != nil && snap.Status.NodeInfo.Network != "" {
-		m.chainName = snap.Status.NodeInfo.Network
+		name := snap.Status.NodeInfo.Network
+		m.chainName.Store(&name)
 	}
 	for _, a := range m.detector.Detect(snap) {
 		m.NotifyAlert(a)
@@ -150,8 +157,8 @@ type pushPayload struct {
 
 func (m *Manager) sendPush(sub Subscription, a Alert) {
 	title := a.Title
-	if m.chainName != "" {
-		title = m.chainName + " - " + title
+	if chain := m.ChainName(); chain != "" {
+		title = chain + " - " + title
 	}
 	payload, err := json.Marshal(pushPayload{Title: title, Body: a.Body})
 	if err != nil {

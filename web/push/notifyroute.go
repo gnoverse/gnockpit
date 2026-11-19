@@ -117,7 +117,7 @@ func (m *Manager) notifyTargets(a Alert) {
 // sendTarget sends a to t, one of targets, whose URLs a failed send's log
 // is stripped of.
 func (m *Manager) sendTarget(t notifyTarget, a Alert, targets []notifyTarget) {
-	for _, err := range t.sender.Send(FormatAlert(m.chainName, m.publicURL, a), nil) {
+	for _, err := range t.sender.Send(FormatAlert(m.ChainName(), m.publicURL, a), nil) {
 		if err != nil {
 			log.Printf("notify: %s", m.notifyErrorText(err, targetURLs(targets)))
 		}

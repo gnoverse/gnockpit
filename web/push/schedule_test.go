@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/gnoverse/gnockpit/blocks"
+	"github.com/gnoverse/gnockpit/node"
 )
 
 // Keys of a real browser push subscription: sends encrypt to them.
@@ -254,4 +255,25 @@ func TestEvaluateScheduleFiresATimeReminderOnceReached(t *testing.T) {
 	if got := h.got(); !slices.Equal(got, []string{"/dev"}) {
 		t.Errorf("posts once reached = %v, want the device", got)
 	}
+}
+
+// Run under -race: the publish loop records the chain's name while the block
+// history's goroutine sends a set change.
+func TestManagerSendsWhileTheChainNameChanges(t *testing.T) {
+	host, _ := hookServer(t)
+	m := newTestManager(t, false)
+	captureLog(t)
+	sendTo(t, m, host, "/target", map[AlertType]AlertOptions{AlertValsetChanged: {}})
+	snap := &node.Snapshot{Status: &node.Status{NodeInfo: node.NodeInfo{Network: "test-1"}}}
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for range 20 {
+			m.EvaluateAndNotify(snap)
+		}
+	}()
+	for range 20 {
+		m.NotifyValsetChange(blocks.ValsetChange{Height: 5, Time: time.Now(), SizeBefore: 1, SizeAfter: 1}, func(a string) string { return a })
+	}
+	<-done
 }
