@@ -519,6 +519,127 @@
             .table-wrap {
                 overflow-x: auto;
             }
+            /* ---- Validators card views */
+            .view-seg {
+                display: inline-flex;
+                border: 1px solid var(--border);
+                border-radius: 6px;
+                overflow: hidden;
+                font-size: 12px;
+            }
+            .view-seg button {
+                font: inherit;
+                color: var(--fg2);
+                background: none;
+                border: 0;
+                padding: 3px 10px;
+                cursor: pointer;
+            }
+            .view-seg button + button {
+                border-left: 1px solid var(--border);
+            }
+            .view-seg button[aria-pressed='true'] {
+                color: var(--fg);
+                background: var(--bg);
+            }
+            #validators-timeline {
+                display: none;
+                font-size: 13px;
+            }
+            #validators-card.view-timeline #validators-timeline {
+                display: block;
+            }
+            #validators-card.view-timeline .table-wrap,
+            #validators-card.view-timeline #validators-cards {
+                display: none !important;
+            }
+            #validators-card.view-timeline #validators-compact-label {
+                visibility: hidden;
+            }
+            .vt-row {
+                display: grid;
+                grid-template-columns: 24ch 18px minmax(0, 1fr) auto;
+                gap: 4px 10px;
+                align-items: baseline;
+                padding: 6px 2px;
+                border-bottom: 1px solid var(--border);
+            }
+            .vt-row .h,
+            .vt-row .n,
+            .vt-row .p {
+                color: var(--fg2);
+                font-variant-numeric: tabular-nums;
+                white-space: nowrap;
+            }
+            .vt-row .k {
+                text-align: center;
+                font-weight: 600;
+            }
+            .vt-row .w {
+                min-width: 0;
+                overflow: hidden;
+                text-overflow: ellipsis;
+                white-space: nowrap;
+            }
+            .vt-add {
+                color: var(--green);
+            }
+            .vt-rm {
+                color: var(--red);
+            }
+            .vt-pow {
+                color: var(--yellow);
+            }
+            .vt-rot {
+                color: var(--blue);
+            }
+            .vt-gen {
+                color: var(--fg2);
+            }
+            .vt-pend {
+                color: var(--yellow);
+                font-size: 11px;
+                margin-left: 6px;
+            }
+            .vt-foot {
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                gap: 10px;
+                padding: 8px 2px 0;
+                color: var(--fg2);
+                font-size: 12px;
+            }
+            .vt-foot button {
+                font: inherit;
+                color: var(--fg2);
+                background: none;
+                border: 1px solid var(--border);
+                border-radius: 4px;
+                padding: 2px 10px;
+                cursor: pointer;
+            }
+            @media (max-width: 640px) {
+                .vt-row {
+                    grid-template-columns: 18px minmax(0, 1fr);
+                }
+                .vt-row .k {
+                    grid-row: 1;
+                }
+                .vt-row .w {
+                    white-space: normal;
+                }
+                .vt-row .h {
+                    grid-column: 2;
+                    grid-row: 2;
+                    font-size: 12px;
+                }
+                .vt-row .n {
+                    grid-column: 2;
+                    grid-row: 3;
+                    font-size: 12px;
+                }
+            }
             /* ---- Network map */
             .map-layout {
                 display: flex;
@@ -1732,6 +1853,14 @@
                     <h2 id="validators-header" data-section="validators">
                         Validators
                     </h2>
+                    <span class="view-seg" id="validators-view">
+                        <button data-view="live" aria-pressed="true">
+                            Live
+                        </button>
+                        <button data-view="timeline" aria-pressed="false">
+                            Timeline
+                        </button>
+                    </span>
                     <label class="compact-label" id="validators-compact-label"
                         ><input
                             type="checkbox"
@@ -1838,6 +1967,7 @@
                             </tbody>
                         </table>
                     </div>
+                    <div id="validators-timeline"></div>
                 </div>
             </div>
 
@@ -6294,6 +6424,275 @@
                     }
                     setTimeout(poll, SYNC_POLL_MS)
                 })()
+            })()
+        </script>
+        <script>
+            // ---- Validator set timeline
+            // The validators card's Timeline view lists the validator set
+            // changes the block history holds, newest first, from
+            // /api/history?changes=; its first page is read again while shown.
+            ;(function () {
+                var VALSET_POLL_MS = 30000
+                var PAGE = 50
+                var VIEW_KEY = 'gnockpit-validators-view'
+                var card = $('validators-card')
+                var list = $('validators-timeline')
+                var seg = $('validators-view')
+                var view = 'live'
+                var changes = []
+                var next = 0
+                var filled = null
+                var timer = null
+
+                function el(tag, cls, text) {
+                    var e = document.createElement(tag)
+                    if (cls) e.className = cls
+                    if (text != null) e.textContent = text
+                    return e
+                }
+                function short(a) {
+                    return a.length > 16 ? a.slice(0, 8) + '…' + a.slice(-4) : a
+                }
+                function who(m) {
+                    return m.moniker || short(m.address)
+                }
+                function ago(iso) {
+                    var m = Math.round((Date.now() - Date.parse(iso)) / 60000)
+                    if (m < 1) return 'just now'
+                    if (m < 60) return m + ' min ago'
+                    var h = Math.round(m / 60)
+                    if (h < 48) return h + ' h ago'
+                    return Math.round(h / 24) + ' d ago'
+                }
+                function utc(iso) {
+                    return iso.slice(0, 16).replace('T', ' ') + ' UTC'
+                }
+                // names lists members, their names in bold: [text, bold] pairs.
+                function names(ms) {
+                    var out = []
+                    ms.forEach(function (m, i) {
+                        if (i > 0)
+                            out.push([
+                                i === ms.length - 1 ? ' and ' : ', ',
+                                false,
+                            ])
+                        out.push([who(m), true])
+                    })
+                    return out
+                }
+                function powers(ms) {
+                    var same = ms.every(function (m) {
+                        return m.power === ms[0].power
+                    })
+                    if (same)
+                        return (
+                            'power ' +
+                            ms[0].power +
+                            (ms.length > 1 ? ' each' : '')
+                        )
+                    return (
+                        'power ' +
+                        ms
+                            .map(function (m) {
+                                return m.power
+                            })
+                            .join(', ')
+                    )
+                }
+                // parts splits a change into its lines: one per kind, and one
+                // per member whose power changed or key rotated.
+                function parts(c) {
+                    if (c.genesis)
+                        return [
+                            {
+                                k: '◆',
+                                cls: 'vt-gen',
+                                what: [['Genesis set', true]],
+                                p: '',
+                            },
+                        ]
+                    var out = []
+                    if (c.added.length)
+                        out.push({
+                            k: '+',
+                            cls: 'vt-add',
+                            what: names(c.added).concat([[' joined', false]]),
+                            p: powers(c.added),
+                        })
+                    if (c.removed.length)
+                        out.push({
+                            k: '−',
+                            cls: 'vt-rm',
+                            what: names(c.removed).concat([[' left', false]]),
+                            p: powers(c.removed),
+                        })
+                    c.repowered.forEach(function (m) {
+                        out.push({
+                            k: '↕',
+                            cls: 'vt-pow',
+                            what: [
+                                [who(m), true],
+                                [' power ' + m.before + ' → ' + m.after, false],
+                            ],
+                            p: '',
+                        })
+                    })
+                    c.rotated.forEach(function (r) {
+                        out.push({
+                            k: '⇄',
+                            cls: 'vt-rot',
+                            what: [
+                                [r.moniker || short(r.new_address), true],
+                                [' rotated its key', false],
+                            ],
+                            p:
+                                short(r.old_address) +
+                                ' → ' +
+                                short(r.new_address),
+                        })
+                    })
+                    return out
+                }
+                function size(c) {
+                    if (c.size_before === c.size_after || c.genesis)
+                        return c.size_after + ' validators'
+                    return c.size_before + ' → ' + c.size_after + ' validators'
+                }
+                function rows(c) {
+                    return parts(c).map(function (part, i) {
+                        var r = el('div', 'vt-row')
+                        var h = el(
+                            'span',
+                            'h',
+                            i
+                                ? ''
+                                : '#' +
+                                      c.height.toLocaleString('en-US') +
+                                      ' · ' +
+                                      ago(c.time)
+                        )
+                        h.title = utc(c.time)
+                        r.appendChild(h)
+                        r.appendChild(el('span', 'k ' + part.cls, part.k))
+                        var w = el('span', 'w')
+                        part.what.forEach(function (seg) {
+                            w.appendChild(
+                                seg[1]
+                                    ? el('b', null, seg[0])
+                                    : document.createTextNode(seg[0])
+                            )
+                        })
+                        if (part.p) {
+                            w.appendChild(document.createTextNode(' '))
+                            w.appendChild(el('span', 'p', part.p))
+                        }
+                        if (!i && c.events_pending)
+                            w.appendChild(
+                                el('span', 'vt-pend', 'events pending')
+                            )
+                        r.appendChild(w)
+                        r.appendChild(el('span', 'n', i ? '' : size(c)))
+                        return r
+                    })
+                }
+                function render() {
+                    list.replaceChildren()
+                    changes.forEach(function (c) {
+                        rows(c).forEach(function (r) {
+                            list.appendChild(r)
+                        })
+                    })
+                    if (!changes.length)
+                        list.appendChild(
+                            el(
+                                'div',
+                                'vt-foot',
+                                'No validator set change in the history yet'
+                            )
+                        )
+                    var foot = el('div', 'vt-foot')
+                    foot.appendChild(
+                        el(
+                            'span',
+                            null,
+                            filled && filled.to && !filled.complete
+                                ? 'history reaches back to #' +
+                                      filled.from.toLocaleString('en-US') +
+                                      ': older changes appear as it fills'
+                                : ''
+                        )
+                    )
+                    if (next) {
+                        var more = el('button', null, 'older')
+                        more.addEventListener('click', older)
+                        foot.appendChild(more)
+                    }
+                    list.appendChild(foot)
+                }
+                async function load(before) {
+                    var q = '/api/history?changes=' + PAGE
+                    if (before) q += '&before=' + before
+                    var r = await fetch(q)
+                    if (!r.ok) throw new Error(r.status)
+                    return r.json()
+                }
+                // refresh reads the first page again, keeping the older pages
+                // read below it.
+                async function refresh() {
+                    try {
+                        var r = await load()
+                        var fresh = r.changes || []
+                        var low = fresh.length
+                            ? fresh[fresh.length - 1].height
+                            : Infinity
+                        var kept = changes.filter(function (c) {
+                            return c.height < low
+                        })
+                        if (!kept.length) next = r.next_before || 0
+                        changes = fresh.concat(kept)
+                        filled = r.filled
+                        render()
+                    } catch (e) {}
+                }
+                async function older() {
+                    try {
+                        var r = await load(next)
+                        changes = changes.concat(r.changes || [])
+                        next = r.next_before || 0
+                        filled = r.filled
+                        render()
+                    } catch (e) {}
+                }
+                function poll() {
+                    refresh().finally(function () {
+                        if (view === 'timeline')
+                            timer = setTimeout(poll, VALSET_POLL_MS)
+                    })
+                }
+                function setView(v) {
+                    view = v
+                    card.classList.toggle('view-timeline', v === 'timeline')
+                    seg.querySelectorAll('button').forEach(function (b) {
+                        b.setAttribute(
+                            'aria-pressed',
+                            String(b.dataset.view === v)
+                        )
+                    })
+                    try {
+                        localStorage.setItem(VIEW_KEY, v)
+                    } catch (e) {}
+                    clearTimeout(timer)
+                    if (v === 'timeline') poll()
+                }
+                seg.addEventListener('click', function (e) {
+                    var b = e.target.closest('button')
+                    if (b) setView(b.dataset.view)
+                })
+                var saved = 'live'
+                try {
+                    saved = localStorage.getItem(VIEW_KEY) || 'live'
+                } catch (e) {}
+                setView(saved === 'timeline' ? 'timeline' : 'live')
             })()
         </script>
     </body>
