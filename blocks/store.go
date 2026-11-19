@@ -350,10 +350,14 @@ func writeRecord(ctx context.Context, tx *sql.Tx, ids *validatorIDs, r Record) e
 	return nil
 }
 
+// rangeQuery reads the lowest and highest stored heights. Each in its own
+// subquery, SQLite reads one end of the key; together in one, every row.
+const rangeQuery = `SELECT (SELECT MIN(height) FROM blocks), (SELECT MAX(height) FROM blocks)`
+
 // Range returns the lowest and highest stored heights, 0 and 0 when none is.
 func (s *Store) Range(ctx context.Context) (low, high int64, err error) {
 	var lo, hi sql.NullInt64
-	if err := s.db.QueryRowContext(ctx, `SELECT MIN(height), MAX(height) FROM blocks`).Scan(&lo, &hi); err != nil {
+	if err := s.db.QueryRowContext(ctx, rangeQuery).Scan(&lo, &hi); err != nil {
 		return 0, 0, fmt.Errorf("block range: %w", err)
 	}
 	return lo.Int64, hi.Int64, nil

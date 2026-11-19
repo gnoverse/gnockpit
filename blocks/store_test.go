@@ -243,9 +243,10 @@ func TestStoreMissedByWindows(t *testing.T) {
 	}
 }
 
-func TestStoreMissedByWindowsSearchesTheWindowOnly(t *testing.T) {
-	s := newTestStore(t)
-	rows, err := s.db.QueryContext(context.Background(), "EXPLAIN QUERY PLAN "+windowMissesQuery, 1, Absent, OtherBlock)
+// queryPlan returns the details of SQLite's plan for query.
+func queryPlan(t *testing.T, s *Store, query string, args ...any) []string {
+	t.Helper()
+	rows, err := s.db.QueryContext(context.Background(), "EXPLAIN QUERY PLAN "+query, args...)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -262,12 +263,27 @@ func TestStoreMissedByWindowsSearchesTheWindowOnly(t *testing.T) {
 	if err := rows.Err(); err != nil {
 		t.Fatal(err)
 	}
+	return plan
+}
+
+func TestStoreMissedByWindowsSearchesTheWindowOnly(t *testing.T) {
+	plan := queryPlan(t, newTestStore(t), windowMissesQuery, 1, Absent, OtherBlock)
 	// The 24h window is read on every publish: it must cost its own blocks'
 	// absences, not a pass over the whole history's.
 	if !slices.ContainsFunc(plan, func(d string) bool {
 		return strings.HasPrefix(d, "SEARCH blocks_absences") && strings.Contains(d, "height>?")
 	}) {
 		t.Errorf("plan = %q, want a search of blocks_absences by height", plan)
+	}
+}
+
+func TestStoreRangeReadsTwoHeights(t *testing.T) {
+	// Range runs on every pass and window: it must read the lowest and the
+	// highest height, not every stored block.
+	if plan := queryPlan(t, newTestStore(t), rangeQuery); slices.ContainsFunc(plan, func(d string) bool {
+		return strings.HasPrefix(d, "SCAN blocks")
+	}) {
+		t.Errorf("plan = %q, want no scan of blocks", plan)
 	}
 }
 
