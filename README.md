@@ -199,9 +199,9 @@ JSON-RPC batches of 100 commits at about 100 blocks a second (mainnet's 1.6M
 blocks in about 5 hours, the last 24 hours in minutes). The history powers the missed-block counts over
 1h / 24h / 7d / 30d / total windows (the validators table and `/api/stats`,
 where `recorded_since` says how far back it reaches; a nil vote counts as
-signed, a vote for another block as missed) and `/api/history`. Network
-State's "block history" row shows how far back it reaches. Pointing gnockpit
-at another chain drops it.
+signed, a vote for another block as missed) and `/api/history`. While it
+fills, Network State's header shows how much is filled and the time left.
+Pointing gnockpit at another chain drops it.
 
 ## Block ETA
 
