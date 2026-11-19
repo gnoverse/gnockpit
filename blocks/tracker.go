@@ -37,6 +37,9 @@ const (
 	floorMargin = 1000
 	// rateWindow is the span Progress.Rate is measured over.
 	rateWindow = 5 * time.Minute
+	// gapRetry spaces the retries of the validator set changes whose events
+	// could not be read.
+	gapRetry = 10 * time.Minute
 	// setsRealm prefixes the realms whose events change the validator set.
 	setsRealm = "gno.land/r/sys/validators/"
 )
@@ -107,6 +110,7 @@ type Tracker struct {
 	maxBatch int       // the size the source refused half of; batch grows back to it
 	regrowAt time.Time // when batch, cut by a timeout, grows back; zero: not cut
 	marks    []lowMark // the lowest stored height at each publish of the last rateWindow
+	gapsAt   time.Time // when the event gaps are read again
 	lastErr  map[string]string
 
 	mu       sync.RWMutex
@@ -180,6 +184,7 @@ func (t *Tracker) pass(ctx context.Context) (more bool, err error) {
 	if err := t.followChain(ctx, head.ChainID); err != nil {
 		return false, err
 	}
+	t.retryEventGaps(ctx)
 	if !t.regrowAt.IsZero() && !t.now().Before(t.regrowAt) {
 		t.batch, t.regrowAt = t.maxBatch, time.Time{}
 	}
@@ -410,8 +415,8 @@ func (t *Tracker) rounds(ctx context.Context, r *Record) error {
 
 // events reads the events behind each validator set change met in recs, or
 // at the stored height just above them, from the block two below the change,
-// where tm2 took the updates from. A failure is logged: the heights stay
-// stored, without those events.
+// where tm2 took the updates from. A failed read is logged and recorded as an
+// event gap: the heights stay stored, and a later pass reads it again.
 func (t *Tracker) events(ctx context.Context, recs []Record) {
 	if len(recs) == 0 {
 		return
@@ -453,17 +458,19 @@ func (t *Tracker) events(ctx context.Context, recs []Record) {
 }
 
 // readEvents stores the validator set events behind the change at height,
-// read from the block two below it.
+// read from the block two below it, or records the change as an event gap.
 func (t *Tracker) readEvents(ctx context.Context, height int64) {
 	source := height - 2
 	got, err := t.blockEvents(ctx, source)
-	if err != nil {
-		t.report("events", fmt.Errorf("events of %d: %w", source, err))
-		return
+	var evs []Event
+	if err == nil {
+		evs, err = setEvents(got)
 	}
-	evs, err := setEvents(got)
 	if err != nil {
 		t.report("events", fmt.Errorf("events of %d: %w", source, err))
+		if err := t.store.AddEventGap(ctx, height); err != nil {
+			t.report("events", err)
+		}
 		return
 	}
 	if len(evs) == 0 {
@@ -474,6 +481,24 @@ func (t *Tracker) readEvents(ctx context.Context, height int64) {
 		return
 	}
 	t.report("events", nil)
+}
+
+// retryEventGaps reads again, every gapRetry, the events of the validator
+// set changes whose read failed.
+func (t *Tracker) retryEventGaps(ctx context.Context) {
+	now := t.now()
+	if now.Before(t.gapsAt) {
+		return
+	}
+	t.gapsAt = now.Add(gapRetry)
+	gaps, err := t.store.EventGaps(ctx)
+	if err != nil {
+		t.report("events", err)
+		return
+	}
+	for _, h := range gaps {
+		t.readEvents(ctx, h)
+	}
 }
 
 // setEvents keeps a block's validator set events: ValidatorAdded,

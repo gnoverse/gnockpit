@@ -577,6 +577,32 @@ func TestPassStoresTheHeightsWhenTheirEventsFail(t *testing.T) {
 	if !tt.logged("blocks: events: events of 198: block_results unavailable") {
 		t.Errorf("logs = %q, want the failed read of 198", tt.logs)
 	}
+	if gaps, err := tt.store.EventGaps(context.Background()); err != nil || !slices.Equal(gaps, []int64{200}) {
+		t.Errorf("EventGaps() = %v, %v; want [200]", gaps, err)
+	}
+}
+
+func TestPassRetriesTheEventsItCouldNotRead(t *testing.T) {
+	c := newFakeChain(250)
+	c.change = 200
+	c.events[198] = addedEvents
+	c.eventFail = []error{errors.New("block_results unavailable")}
+	tt := newTestTracker(t, c)
+	at := t0
+	tt.now = func() time.Time { return at }
+	mustPass(t, tt)
+	mustPass(t, tt) // before gapRetry: no new read
+	if !slices.Equal(c.eventCalls, []int64{198}) {
+		t.Errorf("event calls = %v, want [198]", c.eventCalls)
+	}
+	at = at.Add(gapRetry)
+	mustPass(t, tt)
+	if got := storedEvents(t, tt.store, 200); !slices.Equal(got, []string{"ValidatorAdded " + valH97 + " 10 from 198"}) {
+		t.Errorf("events of 200 = %v", got)
+	}
+	if gaps, err := tt.store.EventGaps(context.Background()); err != nil || len(gaps) != 0 {
+		t.Errorf("EventGaps() = %v, %v; want none", gaps, err)
+	}
 }
 
 func TestPassLogsASetChangeWithoutEvents(t *testing.T) {
