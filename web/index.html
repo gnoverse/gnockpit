@@ -335,6 +335,10 @@
                 grid-template-columns: 1fr 1fr;
                 gap: 8px 32px;
             }
+            /* Columns of unequal length keep their rows packed at the top. */
+            .ns-grid .kv {
+                align-content: start;
+            }
             .card-header-row {
                 display: flex;
                 align-items: center;
@@ -1530,6 +1534,11 @@
                                 data-compact="hide"
                                 >-</span
                             >
+                            <span class="k" data-compact="hide"
+                                >block history</span
+                            ><span class="v" id="ns-history" data-compact="hide"
+                                >-</span
+                            >
                         </div>
                         <div class="kv">
                             <span class="k">consensus</span
@@ -1752,7 +1761,7 @@
                                         data-sort="missed24h"
                                         style="cursor: pointer"
                                         class="info-btn"
-                                        data-popover="Blocks this validator missed in the last 24h (forward-only recording; may be partial early on)"
+                                        data-popover="Blocks this validator missed in the last 24h: absent from the commit, or a vote for another block (a nil vote counts as signed)"
                                     >
                                         Missed 24h
                                     </th>
@@ -2832,7 +2841,7 @@
                         }
                         tr.appendChild(missed100Td)
 
-                        // Missed 24h (from signing history; 0 until history accrues)
+                        // Missed 24h (from the block history)
                         var missedTd = document.createElement('td')
                         var missed24h = v.missed_24h
                         if (typeof missed24h === 'number') {
@@ -6136,6 +6145,62 @@
                     haltCard.redraw()
                     linkCard.redraw()
                 })
+            })()
+        </script>
+        <script>
+            // ---- Block history
+            // Network State's "block history" row: how far back the history
+            // reaches, from /api/history.
+            ;(function () {
+                var HISTORY_POLL_MS = 30000
+                var DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
+                var MONS = [
+                    'Jan',
+                    'Feb',
+                    'Mar',
+                    'Apr',
+                    'May',
+                    'Jun',
+                    'Jul',
+                    'Aug',
+                    'Sep',
+                    'Oct',
+                    'Nov',
+                    'Dec',
+                ]
+                function day(iso) {
+                    var d = new Date(iso)
+                    return (
+                        DAYS[d.getUTCDay()] +
+                        ' ' +
+                        d.getUTCDate() +
+                        ' ' +
+                        MONS[d.getUTCMonth()] +
+                        ' ' +
+                        d.getUTCFullYear()
+                    )
+                }
+                function progress(f) {
+                    if (!f.to) return 'starting'
+                    if (f.complete) return 'complete since ' + day(f.from_time)
+                    var lowest = Math.max(1, f.floor || 0)
+                    var pct = Math.floor(
+                        ((f.to - f.from + 1) / (f.to - lowest + 1)) * 100
+                    )
+                    return 'back to ' + day(f.from_time) + ' · ' + pct + '%'
+                }
+                ;(async function poll() {
+                    var el = $('ns-history')
+                    try {
+                        var rep = await (await fetch('/api/history')).json()
+                        el.textContent = rep.error
+                            ? rep.error
+                            : progress(rep.filled)
+                    } catch (e) {
+                        el.textContent = '-'
+                    }
+                    setTimeout(poll, HISTORY_POLL_MS)
+                })()
             })()
         </script>
     </body>
