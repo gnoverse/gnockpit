@@ -309,7 +309,7 @@ func (t *Tracker) fill(ctx context.Context, heights []int64, head node.ChainHead
 	}
 	recs := make([]Record, 0, len(commits))
 	for _, c := range commits {
-		r, err := t.record(ctx, c)
+		r, err := t.record(ctx, c, head.Height)
 		if err != nil {
 			return 0, err
 		}
@@ -424,7 +424,7 @@ func (t *Tracker) blockEvents(ctx context.Context, height int64) (evs []node.Blo
 // with the expected proposer of each round when it was finalized after round
 // 0. Such a block, and every checkEvery-th one, has its proposer checked and is
 // flagged when no round expects it.
-func (t *Tracker) record(ctx context.Context, c node.Commit) (Record, error) {
+func (t *Tracker) record(ctx context.Context, c node.Commit, head int64) (Record, error) {
 	set, err := t.members(ctx, c)
 	if err != nil {
 		return Record{}, err
@@ -436,7 +436,7 @@ func (t *Tracker) record(ctx context.Context, c node.Commit) (Record, error) {
 	if r.Round == 0 && r.Height%checkEvery != 0 {
 		return r, nil
 	}
-	if err := t.rounds(ctx, &r); err != nil {
+	if err := t.rounds(ctx, &r, head); err != nil {
 		return Record{}, err
 	}
 	return r, nil
@@ -468,15 +468,23 @@ func (t *Tracker) members(ctx context.Context, c node.Commit) ([]Member, error) 
 
 // rounds fills r's expected proposer of each round, from the validator sets
 // at the height below and at the height, and flags r when round 0's proposer
-// is unknown or no round's expected proposer is r's proposer.
-func (t *Tracker) rounds(ctx context.Context, r *Record) error {
+// is unknown or no round's expected proposer is r's proposer. A set below the
+// source refuses well below the head (a block at the oldest it keeps) leaves
+// round 0's proposer unknown; near the head, the refusal comes from a backend
+// behind, and the read fails for a later pass.
+func (t *Tracker) rounds(ctx context.Context, r *Record, head int64) error {
 	cur, err := t.validatorSet(ctx, r.Height)
 	if err != nil {
 		return fmt.Errorf("validator set at %d: %w", r.Height, err)
 	}
 	var prev []node.SetMember
+	var prevRefused bool
 	if r.Height > 1 {
-		if prev, err = t.validatorSet(ctx, r.Height-1); err != nil {
+		prev, err = t.validatorSet(ctx, r.Height-1)
+		switch {
+		case node.IsRefusal(err) && head-(r.Height-1) > floorMargin:
+			prev, prevRefused = nil, true
+		case err != nil:
 			return fmt.Errorf("validator set at %d: %w", r.Height-1, err)
 		}
 	}
@@ -488,6 +496,8 @@ func (t *Tracker) rounds(ctx context.Context, r *Record) error {
 		r.Rounds = proposers
 	}
 	switch {
+	case prevRefused:
+		r.Flag = fmt.Sprintf("round 0's proposer unknown: the source does not serve the set at #%d", r.Height-1)
 	case proposers[0] == "":
 		r.Flag = "round 0's proposer unknown: one increment of the set below does not give this one"
 	case !slices.Contains(proposers, r.Proposer):

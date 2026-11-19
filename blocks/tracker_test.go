@@ -35,6 +35,7 @@ type fakeChain struct {
 	broken      map[int64]error // a batch asking one of these heights fails whole with its error
 	setFail     []error         // errors ValidatorSet returns first, in order
 	emptySets   int             // empty sets ValidatorSet answers first
+	setRefused  map[int64]bool  // heights whose set the source refuses
 	eventFail   []error         // errors BlockEvents returns first, in order
 
 	sets       [][]node.SetMember // sets[h-1] is the set at h
@@ -171,6 +172,9 @@ func (c *fakeChain) ValidatorSet(_ context.Context, h int64) ([]node.SetMember, 
 		err := c.setFail[0]
 		c.setFail = c.setFail[1:]
 		return nil, err
+	}
+	if c.setRefused[h] {
+		return nil, &node.RPCError{Code: -32603, Message: "Internal error", Data: fmt.Sprintf("height %d not available", h)}
 	}
 	if c.emptySets > 0 {
 		c.emptySets--
@@ -677,6 +681,36 @@ func TestPassFlagsABlockNoRoundOfWhichExpectsItsProposer(t *testing.T) {
 	mustPass(t, tt)
 	if reason := storedFlag(t, tt.store, 200); !strings.Contains(reason, "no round's expected proposer") {
 		t.Errorf("flag of 200 = %q, want the missing round", reason)
+	}
+}
+
+func TestPassFlagsALateBlockWhoseSetBelowIsRefused(t *testing.T) {
+	c := newFakeChain(2300)
+	c.round[1000] = 1
+	c.setRefused = map[int64]bool{999: true}
+	tt := newTestTrackerOn(t, c, newTestStore(t), Config{Pace: 0, Batch: 2400})
+	mustPass(t, tt)
+	wantRange(t, tt.store, 1, 2299)
+	if got := storedRounds(t, tt.store, 1000); len(got) != 2 || got[0] != "" || got[1] != c.expected(1000, 1) {
+		t.Errorf("rounds of 1000 = %v, want round 0 unknown, round 1 expected", got)
+	}
+	if reason := storedFlag(t, tt.store, 1000); !strings.Contains(reason, "the source does not serve the set at #999") {
+		t.Errorf("flag of 1000 = %q, want the refused set below", reason)
+	}
+}
+
+func TestPassRetriesALateBlockWhoseSetBelowIsRefusedNearTheHead(t *testing.T) {
+	c := newFakeChain(250)
+	c.round[200] = 1
+	c.setRefused = map[int64]bool{199: true} // a lagging backend's refusal
+	tt := newTestTracker(t, c)
+	if _, err := tt.pass(context.Background()); err == nil {
+		t.Fatal("pass() = nil, want the set at 199 retried, not 200 flagged for good")
+	}
+	c.setRefused = nil
+	mustPass(t, tt)
+	if reason := storedFlag(t, tt.store, 200); reason != "" {
+		t.Errorf("flag of 200 = %q, want none", reason)
 	}
 }
 
