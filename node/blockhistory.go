@@ -16,6 +16,7 @@ type Commit struct {
 	Time           time.Time
 	Proposer       string
 	NumTxs         int
+	AppHash        string
 	ValidatorsHash string
 	BlockHash      string       // the committed block's id
 	Canonical      bool         // read from the next block, so final
@@ -39,6 +40,7 @@ type commitJSON struct {
 			Time            time.Time `json:"time"`
 			ProposerAddress string    `json:"proposer_address"`
 			NumTxs          string    `json:"num_txs"`
+			AppHash         string    `json:"app_hash"`
 			ValidatorsHash  string    `json:"validators_hash"`
 		} `json:"header"`
 		Commit struct {
@@ -73,6 +75,7 @@ func (j commitJSON) commit() (Commit, error) {
 		Time:           h.Time,
 		Proposer:       h.ProposerAddress,
 		NumTxs:         txs,
+		AppHash:        h.AppHash,
 		ValidatorsHash: h.ValidatorsHash,
 		BlockHash:      j.SignedHeader.Commit.BlockID.Hash,
 		Canonical:      j.Canonical,
@@ -101,9 +104,18 @@ func (j commitJSON) commit() (Commit, error) {
 	return c, nil
 }
 
+// Commit reads the commit of height (/commit).
+func (c *Client) Commit(ctx context.Context, height int64) (Commit, error) {
+	var j commitJSON
+	if err := c.rpcGetJSON(ctx, fmt.Sprintf("/commit?height=%d", height), &j); err != nil {
+		return Commit{}, err
+	}
+	return j.commit()
+}
+
 // Commits reads the commits of heights in one JSON-RPC batch, in heights'
-// order. A height the node refuses ends the result there, with a
-// *HeightError wrapping its *RPCError.
+// order. A height the node refuses, or whose commit does not decode, ends the
+// result there, with a *HeightError wrapping the cause.
 func (c *Client) Commits(ctx context.Context, heights []int64) ([]Commit, error) {
 	calls := make([]rpcCall, len(heights))
 	for i, h := range heights {
