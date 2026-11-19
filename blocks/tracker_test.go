@@ -411,12 +411,15 @@ func TestPassWaitsQuietlyForAHeightNearTheHead(t *testing.T) {
 func TestPassSetsNoFloorBehindABackendFarBehind(t *testing.T) {
 	c := newFakeChain(5000)
 	tt := newTestTrackerOn(t, c, newTestStore(t), Config{Pace: 0, Batch: 1100})
+	at := t0
+	tt.now = func() time.Time { return at }
 	mustPass(t, tt) // 4999 to 3900
 	// A backend 2,000 blocks behind refuses every height above its own,
-	// the batch's first among them.
+	// the lowest stored height among them, pass after pass.
 	c.lagging = 2000
-	if !mustPass(t, tt) {
-		t.Error("pass() reported nothing left below")
+	for range 3 {
+		mustPass(t, tt)
+		at = at.Add(gapRetry)
 	}
 	if f, _ := tt.store.Floor(context.Background()); f != 0 || tt.Progress().Complete {
 		t.Errorf("Floor() = %d, complete %v; want no floor", f, tt.Progress().Complete)
@@ -465,7 +468,7 @@ func TestPassRechecksTheFloorWithoutHoldingTheHead(t *testing.T) {
 	mustPass(t, tt)
 	var checks int
 	for _, b := range c.batches {
-		if slices.Equal(b, []int64{1000, 999}) {
+		if slices.Equal(b, []int64{999}) {
 			checks++
 		}
 	}
@@ -523,8 +526,10 @@ func TestPassSetsNoFloorGoingUp(t *testing.T) {
 	if _, err := tt.pass(context.Background()); err == nil || !strings.Contains(err.Error(), "height 350") {
 		t.Fatalf("pass() = %v, want the refusal of 350", err)
 	}
-	// Asked first in the next answer, 350's refusal shows nothing more.
-	mustPass(t, tt)
+	// Asked first in the next answer, far below the head: still an error.
+	if _, err := tt.pass(context.Background()); err == nil {
+		t.Fatal("pass() = nil, want the refusal of 350 again")
+	}
 	if f, _ := tt.store.Floor(context.Background()); f != 0 {
 		t.Errorf("Floor() = %d, want none", f)
 	}
@@ -546,6 +551,91 @@ func TestPassRestoresTheBatchToTheRefusedCeiling(t *testing.T) {
 	mustPass(t, tt) // back to 25, the size the source accepts, not 100
 	if sizes := batchSizes(c); !slices.Equal(sizes, []int{100, 50, 25, 25, 12, 25}) {
 		t.Errorf("batch sizes = %v, want [100 50 25 25 12 25]", sizes)
+	}
+}
+
+func TestPassFillsASourceThatTakesOneCallABatch(t *testing.T) {
+	c := newFakeChain(2300)
+	c.floor, c.maxBatch = 1000, 1
+	tt := newTestTrackerOn(t, c, newTestStore(t), Config{Pace: 0, Batch: 1})
+	for i := 0; mustPass(t, tt); i++ {
+		if i == 1400 {
+			t.Fatal("the backfill never ended")
+		}
+	}
+	wantRange(t, tt.store, 1000, 2299)
+	if f, _ := tt.store.Floor(context.Background()); f != 1000 {
+		t.Errorf("Floor() = %d, want 1000", f)
+	}
+	if tt.logged("asking") {
+		t.Errorf("logs = %q, want no batch refused", tt.logs)
+	}
+}
+
+func TestPassPausesTheBackfillWhenTheLowestStoredHeightIsRefused(t *testing.T) {
+	c := newFakeChain(5000)
+	tt := newTestTrackerOn(t, c, newTestStore(t), Config{Pace: 0, Batch: 1100})
+	at := t0
+	tt.now = func() time.Time { return at }
+	mustPass(t, tt) // 4999 to 3900
+	// The source's oldest block rises above the stored history.
+	c.floor = 4200
+	mustPass(t, tt)
+	asked := len(c.batches)
+	mustPass(t, tt) // paused: nothing asked below
+	if len(c.batches) != asked {
+		t.Errorf("batches = %d, want %d: the backfill pauses", len(c.batches), asked)
+	}
+	at = at.Add(gapRetry)
+	mustPass(t, tt) // asked again, refused again
+	var reports int
+	for _, l := range tt.logs {
+		if strings.Contains(l, "refuses #3900, the lowest stored height") {
+			reports++
+		}
+	}
+	if reports != 1 {
+		t.Errorf("logs = %q, want the refusal reported once", tt.logs)
+	}
+	if f, _ := tt.store.Floor(context.Background()); f != 0 || tt.Progress().Complete {
+		t.Errorf("Floor() = %d, complete %v; want no floor", f, tt.Progress().Complete)
+	}
+	c.floor = 0
+	at = at.Add(gapRetry)
+	mustPass(t, tt)
+	wantRange(t, tt.store, 2801, 4999)
+	if !tt.logged("blocks: below ok again") {
+		t.Errorf("logs = %q, want the recovery", tt.logs)
+	}
+}
+
+func TestPassRechecksAFloorTheSourceNoLongerServes(t *testing.T) {
+	c := newFakeChain(2300)
+	c.floor = 1000
+	tt := newTestTracker(t, c)
+	for i := 0; mustPass(t, tt); i++ {
+		if i == 20 {
+			t.Fatal("the backfill never ended")
+		}
+	}
+	// The source's oldest block rises above the floor, and gnockpit restarts:
+	// the check concludes the floor stands, once.
+	c.floor = 1200
+	tt = newTestTrackerOn(t, c, tt.store, DefaultConfig())
+	for range 3 {
+		mustPass(t, tt)
+	}
+	var checks int
+	for _, b := range c.batches {
+		if slices.Equal(b, []int64{999}) {
+			checks++
+		}
+	}
+	if checks != 1 {
+		t.Errorf("floor checks = %d, want 1", checks)
+	}
+	if f, _ := tt.store.Floor(context.Background()); f != 1000 {
+		t.Errorf("Floor() = %d, want 1000 kept", f)
 	}
 }
 

@@ -102,6 +102,7 @@ type Tracker struct {
 	floorChecked bool      // the recorded floor was checked against the source since start
 	floorSeen    int64     // a floor one answer showed, set when a second shows it; 0: none
 	behindSince  time.Time // since when passes have met heights not final at the source; zero: none
+	belowAt      time.Time // when the backfill asks again a source refusing the lowest stored height; zero: not paused
 	gapsAt       time.Time // when the event gaps are read again
 	lastErr      map[string]string
 
@@ -228,13 +229,16 @@ func (t *Tracker) pass(ctx context.Context) (more bool, err error) {
 	if low <= max(1, floor) {
 		return false, nil
 	}
+	if t.now().Before(t.belowAt) {
+		return false, nil // the source refuses the lowest stored height: passes go at the sync interval
+	}
 	// The lowest stored height opens the batch as a witness, when there is
-	// one: a height refused right after a height served, in one answer, is
-	// below the oldest block the source keeps.
+	// one and the batch has room for it: a height refused right after a
+	// height served, in one answer, is below the oldest block the source keeps.
 	var witness int64
 	size := int64(t.batch) // calls per batch, the witness among them
-	if low <= high {
-		witness, size = low, max(1, size-1)
+	if low <= high && size >= 2 {
+		witness, size = low, size-1
 	}
 	n, err := t.fill(ctx, heightsDown(low-1, max(1, floor, low-size)), head, downward, witness)
 	notYet := errors.Is(err, errNotYet)
@@ -264,6 +268,7 @@ func (t *Tracker) fill(ctx context.Context, heights []int64, head node.ChainHead
 	var he *node.HeightError
 	if cerr != nil && !errors.As(cerr, &he) {
 		if (node.IsRefusal(cerr) || isTimeout(cerr)) && len(asked) > 1 {
+			before := t.batch
 			if node.IsRefusal(cerr) {
 				// The source's limit is below this batch's calls.
 				t.batch = max(1, len(asked)/2)
@@ -273,7 +278,9 @@ func (t *Tracker) fill(ctx context.Context, heights []int64, head node.ChainHead
 				t.batch = max(1, t.batch/2)
 				t.regrowAt = t.now().Add(timeoutCut)
 			}
-			t.logf("blocks: a batch of %d commits failed (%v), asking %d at a time", len(asked), cerr, t.batch)
+			if t.batch != before {
+				t.logf("blocks: a batch of %d commits failed (%v), asking %d at a time", len(asked), cerr, t.batch)
+			}
 			return 0, nil
 		}
 		return 0, cerr
@@ -283,6 +290,10 @@ func (t *Tracker) fill(ctx context.Context, heights []int64, head node.ChainHead
 	served := len(commits)
 	if witness > 0 && served > 0 {
 		commits = commits[1:]
+		if !t.belowAt.IsZero() {
+			t.belowAt = time.Time{}
+			t.report("below", nil)
+		}
 	}
 	// A commit the node does not mark canonical is its own commit for its
 	// latest height (a backend behind the one that gave the head); the next
@@ -310,18 +321,37 @@ func (t *Tracker) fill(ctx context.Context, heights []int64, head node.ChainHead
 	}
 	if he != nil && node.IsRefusal(cerr) {
 		// Near the head, a backend behind the one that gave the head refuses
-		// it; refused first in the answer, it shows nothing the source keeps.
-		// Either way a later pass asks again.
-		if head.Height-he.Height <= floorMargin || served == 0 {
+		// it: a later pass asks again.
+		if head.Height-he.Height <= floorMargin {
 			return len(recs), fmt.Errorf("height %d: %w", he.Height, errNotYet)
 		}
-		// The backfill met a height refused right below one served, well
-		// below the head: the one above may be the oldest the source keeps.
 		if dir == downward {
-			return len(recs), t.sawFloor(ctx, he.Height+1)
+			return len(recs), t.refusedBelow(ctx, he.Height, served, witness)
 		}
 	}
 	return len(recs), cerr
+}
+
+// refusedBelow handles the backfill's refusal of height, well below the head,
+// served heights after witness (0: none) in the answer. Refused right after a
+// served height, the one above may be the source's oldest block. Refused as
+// the witness, the lowest stored height is no longer served: the backfill
+// pauses for gapRetry. Refused first with no witness, the height above is asked
+// alone for the same proof.
+func (t *Tracker) refusedBelow(ctx context.Context, height int64, served int, witness int64) error {
+	switch {
+	case served > 0:
+		return t.sawFloor(ctx, height+1)
+	case witness > 0:
+		t.belowAt = t.now().Add(gapRetry)
+		t.report("below", fmt.Errorf("the first -rpc refuses #%d, the lowest stored height; the backfill asks again every %s", witness, gapRetry))
+		return nil
+	}
+	ok, err := t.serves(ctx, height+1)
+	if err != nil || !ok {
+		return fmt.Errorf("height %d: %w", height, errNotYet)
+	}
+	return t.sawFloor(ctx, height+1)
 }
 
 // watchBehind reports the source once it has failed, for behindReport, to
@@ -357,12 +387,11 @@ func (t *Tracker) sawFloor(ctx context.Context, floor int64) error {
 	return nil
 }
 
-// recheckFloor asks the source, once per start, for the recorded floor and
-// the height below it, in one answer. Below served, the floor is cleared for
-// the backfill to go on (a source changed for an archive node); below refused
-// right after the floor served, it stands. It reports whether the check
-// concluded: any other answer is reported, and the next pass asks again,
-// without holding the fill.
+// recheckFloor asks the source, once per start, for the height below the
+// recorded floor. Served, the floor is cleared for the backfill to go on (a
+// source changed for an archive node); refused, the floor stands. It reports
+// whether the check concluded: a failed read is reported, and the next pass
+// asks again, without holding the fill.
 func (t *Tracker) recheckFloor(ctx context.Context) bool {
 	floor, err := t.store.Floor(ctx)
 	if err != nil {
@@ -372,23 +401,34 @@ func (t *Tracker) recheckFloor(ctx context.Context) bool {
 	if floor <= 1 {
 		return true
 	}
-	_, err = t.commits(ctx, []int64{floor, floor - 1})
-	var he *node.HeightError
-	switch {
-	case err == nil:
+	ok, err := t.serves(ctx, floor-1)
+	if err != nil {
+		t.report("floor", fmt.Errorf("check of the floor #%d: %w", floor, err))
+		return false
+	}
+	if ok {
 		if err := t.store.ClearFloor(ctx); err != nil {
 			t.report("floor", err)
 			return false
 		}
 		t.logf("blocks: the source serves blocks below #%d, filling down to genesis", floor)
-	case errors.As(err, &he) && he.Height == floor-1 && node.IsRefusal(err):
-		// Still the oldest block the source keeps.
-	default:
-		t.report("floor", fmt.Errorf("check of the floor #%d: %w", floor, err))
-		return false
 	}
 	t.report("floor", nil)
 	return true
+}
+
+// serves reports whether the source gives the commit of height alone: false
+// when it refuses it, an error when the read fails.
+func (t *Tracker) serves(ctx context.Context, height int64) (bool, error) {
+	_, err := t.commits(ctx, []int64{height})
+	var he *node.HeightError
+	switch {
+	case err == nil:
+		return true, nil
+	case errors.As(err, &he) && node.IsRefusal(err):
+		return false, nil
+	}
+	return false, err
 }
 
 // followChain drops the stored history when it belongs to another chain.
@@ -400,7 +440,7 @@ func (t *Tracker) followChain(ctx context.Context, chainID string) error {
 	if stored != "" {
 		t.logf("blocks: chain is %s, dropping the block history of %s", chainID, stored)
 	}
-	t.batch, t.maxBatch, t.regrowAt, t.marks, t.floorSeen = t.cfg.Batch, t.cfg.Batch, time.Time{}, nil, 0
+	t.batch, t.maxBatch, t.regrowAt, t.marks, t.floorSeen, t.belowAt = t.cfg.Batch, t.cfg.Batch, time.Time{}, nil, 0, time.Time{}
 	return t.store.Reset(ctx, chainID)
 }
 
