@@ -1124,6 +1124,99 @@
                 color: var(--fg);
                 border-color: var(--fg2);
             }
+            .eta-remind-wrap {
+                position: relative;
+            }
+            .eta-actions .eta-remind.set {
+                color: var(--blue);
+                border-color: var(--blue);
+            }
+            .eta-remind svg {
+                vertical-align: middle;
+                margin-right: 4px;
+            }
+            .eta-remind-pop {
+                position: absolute;
+                right: 0;
+                top: calc(100% + 6px);
+                z-index: 50;
+                width: min(280px, calc(100vw - 40px));
+                background: var(--bg2);
+                border: 1px solid var(--border);
+                border-radius: 8px;
+                padding: 12px;
+                box-shadow: 0 6px 24px rgba(0, 0, 0, 0.45);
+                color: var(--fg);
+                font-size: 12px;
+                text-align: left;
+            }
+            .eta-remind-pop[hidden] {
+                display: none;
+            }
+            /* A phone's header leaves the button near the left edge: the
+               popover spans the card instead, inside its padding. */
+            @media (max-width: 480px) {
+                #eta-link-card {
+                    position: relative;
+                }
+                .eta-remind-wrap {
+                    position: static;
+                }
+                .eta-remind-pop {
+                    left: 12px;
+                    right: 12px;
+                    top: 48px;
+                    width: auto;
+                }
+            }
+            .eta-remind-pop .t {
+                font-weight: 600;
+                margin-bottom: 8px;
+            }
+            .eta-remind-pop .r {
+                display: flex;
+                gap: 6px;
+                align-items: center;
+                flex-wrap: wrap;
+            }
+            .eta-remind-pop input,
+            .eta-remind-pop select {
+                font: inherit;
+                color: var(--fg);
+                background: var(--bg);
+                border: 1px solid var(--border);
+                border-radius: 4px;
+                padding: 2px 4px;
+            }
+            .eta-remind-pop input {
+                width: 64px;
+            }
+            .eta-remind-pop .warn,
+            .eta-remind-pop .err {
+                font-size: 11px;
+                margin-top: 6px;
+            }
+            .eta-remind-pop .warn {
+                color: var(--yellow);
+            }
+            .eta-remind-pop .err {
+                color: var(--red);
+            }
+            .eta-remind-pop .note {
+                color: var(--fg2);
+                font-size: 11px;
+                margin-top: 8px;
+            }
+            .eta-remind-pop .b {
+                display: flex;
+                gap: 6px;
+                margin-top: 10px;
+            }
+            .eta-actions .eta-remind-pop .b button.p {
+                background: var(--blue);
+                border-color: var(--blue);
+                color: var(--bg);
+            }
             .eta-grid {
                 display: grid;
                 grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
@@ -1647,6 +1740,74 @@
                                 style="margin-right: 3px"
                             />compact</label
                         >
+                        <span class="eta-remind-wrap" hidden>
+                            <button
+                                class="eta-remind"
+                                title="Notify this device before this height"
+                                aria-label="Notify this device before this height"
+                                aria-haspopup="dialog"
+                            >
+                                <svg
+                                    width="11"
+                                    height="11"
+                                    viewBox="0 0 24 24"
+                                    fill="none"
+                                    stroke="currentColor"
+                                    stroke-width="2"
+                                    stroke-linecap="round"
+                                    stroke-linejoin="round"
+                                    aria-hidden="true"
+                                >
+                                    <path
+                                        d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"
+                                    />
+                                    <path d="M13.73 21a2 2 0 0 1-3.46 0" /></svg
+                                ><span class="eta-remind-text">notify</span>
+                            </button>
+                            <div
+                                class="eta-remind-pop"
+                                role="dialog"
+                                aria-label="Notify this device"
+                                hidden
+                            >
+                                <div class="t">Notify this device</div>
+                                <div class="r">
+                                    <input
+                                        type="number"
+                                        class="eta-remind-n"
+                                        min="1"
+                                        value="30"
+                                        aria-label="how far ahead"
+                                    />
+                                    <select
+                                        class="eta-remind-unit"
+                                        aria-label="minutes or blocks"
+                                    >
+                                        <option value="m">minutes</option>
+                                        <option value="blocks">blocks</option>
+                                    </select>
+                                    <span class="eta-remind-before"></span>
+                                </div>
+                                <div class="warn" hidden></div>
+                                <div class="err" hidden></div>
+                                <div class="b">
+                                    <button class="p eta-remind-save">
+                                        Save
+                                    </button>
+                                    <button class="eta-remind-remove">
+                                        Remove
+                                    </button>
+                                    <button class="eta-remind-cancel">
+                                        Cancel
+                                    </button>
+                                </div>
+                                <div class="note">
+                                    A push notification on this device only. It
+                                    comes back with this card when the app opens
+                                    without a link.
+                                </div>
+                            </div>
+                        </span>
                         <button
                             class="eta-copy"
                             title="Copy the link to this countdown"
@@ -5826,7 +5987,7 @@
                     // (dashed line), with its 80% range, and a cone from now
                     // to the ETA where the range closes.
                     function drawChart() {
-                        var svg = q('svg')
+                        var svg = q('.eta-chart svg')
                         var box = svg.getBoundingClientRect()
                         if (!rep || rep.error || !box.width) return
                         var W = box.width
@@ -6112,6 +6273,8 @@
                     // and start the card afresh.
                     pollSeq++
                     linkCard.hide()
+                    remindPop.hidden = true
+                    renderRemind()
                     pollETA()
                 }
 
@@ -6160,8 +6323,202 @@
                 linkEl
                     .querySelector('.eta-close')
                     .addEventListener('click', function () {
+                        var t = linkTarget()
+                        if (
+                            t &&
+                            reminder &&
+                            reminder.height === Number(t.height)
+                        )
+                            removeReminder()
                         setLinkTarget(null)
                     })
+
+                // ---- Reminder
+                // The link card's notify button reminds this device before its
+                // height (/api/push/reminder): one reminder per device. Shown
+                // only where push works (initPush got the server's key). A
+                // page opened without a target shows the reminder's card: the
+                // Home Screen app always opens at /.
+                var remindWrap = linkEl.querySelector('.eta-remind-wrap')
+                var remindBtn = remindWrap.querySelector('.eta-remind')
+                var remindPop = remindWrap.querySelector('.eta-remind-pop')
+                var reminder = null // this device's: { height, since, label, lead }
+
+                function rq(sel) {
+                    return remindPop.querySelector(sel)
+                }
+                // leadText words a lead as the server writes it: "30m" →
+                // "30 min", "1h" → "1 h", "100 blocks" stays.
+                function leadText(lead) {
+                    var m = /^(\d+)([mh])$/.exec(lead)
+                    if (!m) return lead
+                    return m[1] + (m[2] === 'm' ? ' min' : ' h')
+                }
+                function leadInputs(lead) {
+                    var m = /^(\d+)( blocks|m|h)$/.exec(lead || '')
+                    if (!m) return { n: 30, unit: 'm' }
+                    if (m[2] === ' blocks')
+                        return { n: Number(m[1]), unit: 'blocks' }
+                    return {
+                        n: Number(m[1]) * (m[2] === 'h' ? 60 : 1),
+                        unit: 'm',
+                    }
+                }
+                function mine() {
+                    var t = linkTarget()
+                    return !!(
+                        t &&
+                        reminder &&
+                        reminder.height === Number(t.height)
+                    )
+                }
+                function renderRemind() {
+                    remindWrap.hidden = !_vapidKey
+                    var set = mine()
+                    remindBtn.classList.toggle('set', set)
+                    remindBtn.querySelector('.eta-remind-text').textContent =
+                        set ? 'notify · ' + leadText(reminder.lead) : 'notify'
+                }
+                function openRemind() {
+                    var t = linkTarget()
+                    if (!t) return
+                    var v = leadInputs(mine() ? reminder.lead : '')
+                    rq('.eta-remind-n').value = v.n
+                    rq('.eta-remind-unit').value = v.unit
+                    rq('.eta-remind-before').textContent =
+                        'before #' + Number(t.height).toLocaleString('en-US')
+                    var warn = rq('.warn')
+                    warn.hidden = !reminder || mine()
+                    if (!warn.hidden)
+                        warn.textContent =
+                            'Replaces your reminder for #' +
+                            reminder.height.toLocaleString('en-US') +
+                            '.'
+                    rq('.err').hidden = true
+                    rq('.eta-remind-save').textContent = mine()
+                        ? 'Update'
+                        : 'Save'
+                    rq('.eta-remind-remove').hidden = !mine()
+                    remindPop.hidden = false
+                }
+                function remindError(msg) {
+                    var e = rq('.err')
+                    e.textContent = msg
+                    e.hidden = false
+                }
+                async function loadReminder() {
+                    reminder = null
+                    if (_pushSubID) {
+                        try {
+                            var r = await fetch(
+                                '/api/push/reminder?id=' +
+                                    encodeURIComponent(_pushSubID)
+                            )
+                            if (r.ok) reminder = await r.json()
+                        } catch (e) {}
+                    }
+                    renderRemind()
+                }
+                async function saveReminder() {
+                    var t = linkTarget()
+                    var n = parseInt(rq('.eta-remind-n').value, 10)
+                    if (!t || !(n >= 1)) {
+                        remindError('Enter how far ahead, 1 or more.')
+                        return
+                    }
+                    var lead =
+                        rq('.eta-remind-unit').value === 'blocks'
+                            ? n + ' blocks'
+                            : n + 'm'
+                    try {
+                        if (Notification.permission !== 'granted') {
+                            if (
+                                (await Notification.requestPermission()) !==
+                                'granted'
+                            ) {
+                                remindError('Notification permission denied.')
+                                return
+                            }
+                        }
+                        var sub = await browserPushSub(true)
+                        var body = Object.assign(deviceKeys(sub), {
+                            height: Number(t.height),
+                            since: t.since || new Date().toISOString(),
+                            label: t.label,
+                            lead: lead,
+                        })
+                        var r = await fetch('/api/push/reminder', {
+                            method: 'PUT',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(body),
+                        })
+                        if (!r.ok) {
+                            remindError((await r.text()).trim())
+                            return
+                        }
+                        await keepDevice((await r.json()).id)
+                    } catch (e) {
+                        console.warn('save reminder:', e)
+                        remindError('Failed to save. See console for details.')
+                        return
+                    }
+                    remindPop.hidden = true
+                    await loadReminder()
+                }
+                async function removeReminder() {
+                    if (!_pushSubID) return
+                    try {
+                        var r = await fetch(
+                            '/api/push/reminder?id=' +
+                                encodeURIComponent(_pushSubID),
+                            { method: 'DELETE' }
+                        )
+                        if (r.ok && !(await r.json()).device_kept)
+                            await keepDevice('')
+                    } catch (e) {
+                        console.warn('remove reminder:', e)
+                    }
+                    remindPop.hidden = true
+                    await loadReminder()
+                }
+                remindBtn.addEventListener('click', function (e) {
+                    e.stopPropagation()
+                    if (remindPop.hidden) openRemind()
+                    else remindPop.hidden = true
+                })
+                remindPop.addEventListener('click', function (e) {
+                    e.stopPropagation()
+                })
+                rq('.eta-remind-save').addEventListener('click', saveReminder)
+                rq('.eta-remind-remove').addEventListener(
+                    'click',
+                    removeReminder
+                )
+                rq('.eta-remind-cancel').addEventListener('click', function () {
+                    remindPop.hidden = true
+                })
+                document.addEventListener('click', function () {
+                    remindPop.hidden = true
+                })
+                document.addEventListener('keydown', function (e) {
+                    if (e.key === 'Escape') remindPop.hidden = true
+                })
+                // The server's key arrives after this script runs: show the
+                // button once push is known to work, and bring back the
+                // reminder's card on a page opened without a target.
+                ;(async function startReminder() {
+                    for (var i = 0; i < 20 && !_vapidKey; i++)
+                        await new Promise(function (r) {
+                            setTimeout(r, 250)
+                        })
+                    await loadReminder()
+                    if (reminder && !linkTarget())
+                        setLinkTarget({
+                            height: String(reminder.height),
+                            since: reminder.since,
+                            label: reminder.label,
+                        })
+                })()
 
                 // ---- Planner modal
                 var mode = 'height'
