@@ -112,7 +112,7 @@ func (t *Tracker) events(ctx context.Context, recs []Record) {
 		if h <= 2 {
 			continue
 		}
-		change, err := t.isSetChange(h, hashAt)
+		change, err := isSetChange(h, hashAt)
 		if err != nil {
 			t.report("events", err)
 			t.addEventGap(ctx, h)
@@ -127,7 +127,7 @@ func (t *Tracker) events(ctx context.Context, recs []Record) {
 // isSetChange reports whether the stored height opens a new validator set,
 // reading the sets' hashes with hashAt; false when either height is not
 // stored.
-func (t *Tracker) isSetChange(h int64, hashAt func(int64) (string, bool, error)) (bool, error) {
+func isSetChange(h int64, hashAt func(int64) (string, bool, error)) (bool, error) {
 	cur, ok, err := hashAt(h)
 	if err != nil || !ok {
 		return false, err
@@ -195,7 +195,7 @@ func (t *Tracker) retryEventGaps(ctx context.Context) {
 			t.dropEventGap(ctx, h)
 			continue
 		}
-		change, err := t.isSetChange(h, stored)
+		change, err := isSetChange(h, stored)
 		switch {
 		case err != nil:
 			t.report("events", err)
