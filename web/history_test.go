@@ -138,7 +138,7 @@ func TestHistoryRange(t *testing.T) {
 	s := newBlocksStore(t)
 	writeMissedBlocks(t, s, now)
 	srv := &Server{Blocks: s, BlockFill: fakeFill{ChainID: "gnoland-1", From: 1, To: 3, FromTime: now.Add(-2 * time.Hour), Complete: true}}
-	// Heights 0 and 4 are outside the held range: only 1 to 3 come back.
+	// Height 4 is outside the held range: only 2 and 3 come back.
 	code, body := getHistory(t, srv, "?from=2&to=4")
 	if code != http.StatusOK {
 		t.Fatalf("status = %d, body %v", code, body)
@@ -162,6 +162,17 @@ func TestHistoryRange(t *testing.T) {
 	}}
 	if !reflect.DeepEqual(body["valsets"], wantSets) {
 		t.Errorf("valsets = %v, want %v", body["valsets"], wantSets)
+	}
+}
+
+func TestHistoryRangeNotHeld(t *testing.T) {
+	s := newBlocksStore(t)
+	writeMissedBlocks(t, s, time.Now())
+	srv := &Server{Blocks: s, BlockFill: fakeFill{ChainID: "gnoland-1", From: 1, To: 3}}
+	// A range the fill has not reached is empty, not missing.
+	code, body := getHistory(t, srv, "?from=10&to=12")
+	if code != http.StatusOK || !reflect.DeepEqual(body["blocks"], []any{}) || !reflect.DeepEqual(body["valsets"], map[string]any{}) {
+		t.Errorf("got %d %v, want 200 with empty blocks and valsets", code, body)
 	}
 }
 

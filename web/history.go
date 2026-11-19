@@ -21,12 +21,13 @@ const historyTime = "2006-01-02T15:04:05.000Z07:00"
 
 // historyReport is the /api/history payload: how far the block history
 // reaches and, for ?from=&to=, the blocks of that range it holds, with the
-// validator sets they name.
+// validator sets they name. Blocks and Valsets are nil without a range, and
+// empty for a range it holds none of.
 type historyReport struct {
 	Chain   string                     `json:"chain"`
 	Filled  historyFilled              `json:"filled"`
-	Blocks  []historyBlock             `json:"blocks,omitempty"`
-	Valsets map[string][]historyMember `json:"valsets,omitempty"`
+	Blocks  []historyBlock             `json:"blocks,omitzero"`
+	Valsets map[string][]historyMember `json:"valsets,omitzero"`
 }
 
 type historyFilled struct {
@@ -106,6 +107,7 @@ func (s *Server) historyReport(ctx context.Context, q url.Values) (historyReport
 		log.Printf("history: blocks %d-%d: %v", from, to, err)
 		return historyReport{}, http.StatusInternalServerError, errors.New("internal error")
 	}
+	rep.Blocks = make([]historyBlock, 0, len(recs))
 	for _, r := range recs {
 		b := historyBlock{
 			Height: r.Height, Time: r.Time.UTC().Format(historyTime), Proposer: r.Proposer, Round: r.Round, Txs: r.Txs,
@@ -123,15 +125,13 @@ func (s *Server) historyReport(ctx context.Context, q url.Values) (historyReport
 		}
 		rep.Blocks = append(rep.Blocks, b)
 	}
-	if len(sets) > 0 {
-		rep.Valsets = make(map[string][]historyMember, len(sets))
-		for hash, members := range sets {
-			out := make([]historyMember, len(members))
-			for i, m := range members {
-				out[i] = historyMember{Address: m.Address, Power: m.Power}
-			}
-			rep.Valsets[hash] = out
+	rep.Valsets = make(map[string][]historyMember, len(sets))
+	for hash, members := range sets {
+		out := make([]historyMember, len(members))
+		for i, m := range members {
+			out[i] = historyMember{Address: m.Address, Power: m.Power}
 		}
+		rep.Valsets[hash] = out
 	}
 	return rep, http.StatusOK, nil
 }
