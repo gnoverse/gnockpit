@@ -117,6 +117,11 @@ type queryRower interface {
 	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
 }
 
+// querier runs a query for rows: a *sql.DB or a *sql.Tx.
+type querier interface {
+	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
+}
+
 // timeOf returns the block time of the stored height, in Unix ms.
 func timeOf(ctx context.Context, q queryRower, h int64) (ms int64, err error) {
 	if err := q.QueryRowContext(ctx, `SELECT time_ms FROM blocks WHERE height = ?`, h).Scan(&ms); err != nil {

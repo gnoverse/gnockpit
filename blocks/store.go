@@ -99,6 +99,9 @@ CREATE TABLE IF NOT EXISTS blocks_vote_delays (
 CREATE TABLE IF NOT EXISTS blocks_event_gaps (
 	height INTEGER PRIMARY KEY -- a validator set change whose events are not read yet
 );
+CREATE TABLE IF NOT EXISTS blocks_gaps (
+	height INTEGER PRIMARY KEY -- block height+1 came more than RestartGap after this block
+);
 CREATE TABLE IF NOT EXISTS blocks_valset_changes (
 	height INTEGER PRIMARY KEY -- the block's validator set differs from the block below's
 );
@@ -117,11 +120,12 @@ const (
 	metaValsetToldTo  = "valset_told_to"        // the validator set changes up to this height were told
 	metaDaysFilled      = "days_filled"      // blocks_days counts the absences of every stored block
 	metaProposalsFilled = "proposals_filled" // blocks_days counts the proposals of every stored block
+	metaGapsFilled      = "gaps_filled"      // blocks_gaps covers every stored block
 )
 
 // filledKeys are the meta keys of the one-time fills: an empty history (a
 // Reset) has nothing to fill.
-var filledKeys = []string{metaChangesFilled, metaDaysFilled, metaProposalsFilled}
+var filledKeys = []string{metaChangesFilled, metaDaysFilled, metaProposalsFilled, metaGapsFilled}
 
 // Store persists the block history. Times are kept to the millisecond.
 type Store struct {
@@ -142,6 +146,9 @@ func NewStore(ctx context.Context, db *sql.DB) (*Store, error) {
 		return nil, err
 	}
 	if err := s.fillProposals(ctx); err != nil {
+		return nil, err
+	}
+	if err := s.fillGaps(ctx); err != nil {
 		return nil, err
 	}
 	return s, nil
@@ -170,6 +177,9 @@ func (s *Store) Write(ctx context.Context, recs []Record) error {
 		heights = append(heights, r.Height)
 	}
 	if err := markValsetChanges(ctx, tx, heights); err != nil {
+		return err
+	}
+	if err := markGaps(ctx, tx, heights); err != nil {
 		return err
 	}
 	if err := tx.Commit(); err != nil {
@@ -508,7 +518,7 @@ func (s *Store) Reset(ctx context.Context, chainID string) error {
 	defer tx.Rollback()
 	for _, table := range []string{
 		"blocks", "blocks_validators", "blocks_valsets", "blocks_valset_members", "blocks_absences",
-		"blocks_rounds", "blocks_flags", "blocks_events", "blocks_event_gaps", "blocks_days", "blocks_vote_delays",
+		"blocks_rounds", "blocks_flags", "blocks_events", "blocks_event_gaps", "blocks_days", "blocks_vote_delays", "blocks_gaps",
 		"blocks_valset_changes", "blocks_meta",
 	} {
 		if _, err := tx.ExecContext(ctx, "DELETE FROM "+table); err != nil {
