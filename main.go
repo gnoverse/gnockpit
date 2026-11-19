@@ -47,8 +47,8 @@ var (
 	flagAnalyticsDomain string
 )
 
-// stringSlice is a flag.Value that accumulates one entry per occurrence,
-// so -notify can be passed multiple times.
+// stringSlice is a flag.Value that accumulates one entry per occurrence, for
+// the repeatable flags (-rpc, -link, -status-link).
 type stringSlice []string
 
 func (s *stringSlice) String() string { return strings.Join(*s, ",") }
