@@ -188,14 +188,20 @@ A configured source reached over `localhost` or a private address has no public
 IP of its own; gnockpit then uses its own public egress IP for that source's map
 location, which is accurate when gnockpit runs alongside the node.
 
-## Missed-block history
+## Block history
 
-Per-block validator signing is recorded forward into the SQLite database
-(`--db-path`) as blocks are observed — never backfilled — enabling missed-block
-counts over 1h / 24h / 7d / 30d / total windows (surfaced in the validators
-table and `/api/stats`). History older than 31 days is pruned. Windows only
-cover data recorded since gnockpit started; `/api/stats` exposes `recorded_since`
-so consumers know the coverage.
+gnockpit records every block since genesis in the SQLite database
+(`--db-path`): its time, proposer and voting round, the validator set that
+signed it, and which members of that set did not sign it for the block
+(absent, nil, or a vote for another block). It reads them from the first
+`-rpc`, newest first, in JSON-RPC batches of 100 commits at about 100 blocks a
+second (mainnet's 1.6M blocks in about 5 hours, the last 24 hours in minutes),
+then follows the chain head. The history powers the missed-block counts over
+1h / 24h / 7d / 30d / total windows (the validators table and `/api/stats`,
+where `recorded_since` says how far back it reaches; a nil vote counts as
+signed, a vote for another block as missed) and `/api/history`. Network
+State's "block history" row shows how far back it reaches. Pointing gnockpit
+at another chain drops it.
 
 ## Block ETA
 

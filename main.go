@@ -9,8 +9,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/gnoverse/gnockpit/blocks"
 	"github.com/gnoverse/gnockpit/eta"
-	"github.com/gnoverse/gnockpit/history"
 	"github.com/gnoverse/gnockpit/node"
 	"github.com/gnoverse/gnockpit/web"
 	"github.com/gnoverse/gnockpit/web/push"
@@ -126,12 +126,17 @@ func run() error {
 	}
 	defer db.Close()
 
-	// Signing history shares the same SQLite connection as the push store.
-	hist, err := history.NewStore(ctx, db.SQL())
+	// The block history shares the same SQLite connection as the push store,
+	// filled back to genesis from the primary source; the tracker stops with
+	// ctx.
+	blockStore, err := blocks.NewStore(ctx, db.SQL())
 	if err != nil {
-		return fmt.Errorf("init signing history: %w", err)
+		return fmt.Errorf("init block history: %w", err)
 	}
-	srv.History = hist
+	blockTracker := blocks.NewTracker(blockStore, sources.Primary())
+	srv.Blocks = blockStore
+	srv.BlockFill = blockTracker
+	go blockTracker.Run(ctx)
 
 	// So do the block times behind block ETAs, backfilled from the primary
 	// source; the tracker stops with ctx.
