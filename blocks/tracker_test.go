@@ -691,6 +691,31 @@ func TestPassRechecksAFloorTheSourceNoLongerServes(t *testing.T) {
 	}
 }
 
+func TestPassRechecksTheFloorAgainAfterAWholeBatchRefusal(t *testing.T) {
+	c := newFakeChain(2300)
+	c.floor = 1000
+	tt := newTestTracker(t, c)
+	for i := 0; mustPass(t, tt); i++ {
+		if i == 20 {
+			t.Fatal("the backfill never ended")
+		}
+	}
+	// The source becomes an archive node, and gnockpit restarts while it
+	// refuses the check's batch whole: a refusal of no height in particular
+	// settles nothing.
+	c.floor = 0
+	c.fail = []error{fmt.Errorf("batch of 1 calls: %w", &node.RPCError{Code: -32600, Message: "Invalid Request"})}
+	tt = newTestTrackerOn(t, c, tt.store, DefaultConfig())
+	mustPass(t, tt)
+	if f, _ := tt.store.Floor(context.Background()); f != 1000 {
+		t.Errorf("Floor() = %d, want 1000 kept until a check concludes", f)
+	}
+	mustPass(t, tt)
+	if f, _ := tt.store.Floor(context.Background()); f != 0 {
+		t.Errorf("Floor() = %d, want none: the next check finds the heights below served", f)
+	}
+}
+
 func TestPassWaitsOutARateLimitOnEveryRead(t *testing.T) {
 	c := newFakeChain(250)
 	c.change = 200
@@ -806,6 +831,24 @@ func TestPassEndsOnAShortBatchTimingOut(t *testing.T) {
 	}
 	if sizes := batchSizes(c); !slices.Equal(sizes, []int{100, 3}) {
 		t.Errorf("batch sizes = %v, want [100 3]", sizes)
+	}
+}
+
+func TestPassEndsOnABatchOfHalfTheSizeTimingOut(t *testing.T) {
+	c := newFakeChain(250)
+	tt := newTestTracker(t, c)
+	mustPass(t, tt) // 249..150
+	// Fifty heights to the head keep timing out: the size halves from 100 to
+	// their count, so asking them again would time out the same way.
+	c.head = 300
+	for range 10 {
+		c.fail = append(c.fail, timeoutError{})
+	}
+	if _, err := tt.pass(context.Background()); !isTimeout(err) {
+		t.Fatalf("pass() = %v, want the timeout", err)
+	}
+	if sizes := batchSizes(c); !slices.Equal(sizes, []int{100, 50}) {
+		t.Errorf("batch sizes = %v, want [100 50]", sizes)
 	}
 }
 
@@ -950,6 +993,15 @@ func TestPassForgetsARefusedSetOnAnotherChain(t *testing.T) {
 	if _, err := tt.pass(context.Background()); err == nil {
 		t.Error("pass() = nil, want the first refusal on this chain asked again")
 	}
+}
+
+func TestPassForgetsABackfillPauseOnAnotherChain(t *testing.T) {
+	c := newFakeChain(250)
+	tt := newTestTracker(t, c)
+	tt.belowAt = t0.Add(gapRetry) // paused on the chain the store held
+	c.chainID = "test-13"
+	mustPass(t, tt)
+	wantRange(t, tt.store, 150, 249)
 }
 
 func TestPassFlagsNoLateBlockOnASingleSetRefusal(t *testing.T) {
