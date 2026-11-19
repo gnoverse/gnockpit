@@ -275,3 +275,91 @@ func TestHistoryVoteDelays(t *testing.T) {
 		t.Errorf("days of ?days=1 = %v, want today alone", days)
 	}
 }
+
+const histValC = "g1hqhetnnz0raw5hps6yxexl7q09a6f8w3anlptt"
+
+// changesServer serves a history of 1..3 on SET and 4..5 on SET2, where B's
+// power rises to 2 and C ("carol" to the name registry) joins.
+func changesServer(t *testing.T) *Server {
+	t.Helper()
+	ctx := context.Background()
+	s := newBlocksStore(t)
+	if err := s.PutValset(ctx, "SET2", []blocks.Member{{Address: histValA, PubKey: "KA", Power: 1}, {Address: histValB, PubKey: "KB", Power: 2}, {Address: histValC, PubKey: "KC", Power: 1}}); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, 11, 19, 12, 0, 0, 0, time.UTC)
+	var recs []blocks.Record
+	for h := int64(1); h <= 5; h++ {
+		r := histBlock(h, now.Add(time.Duration(h)*time.Second))
+		if h >= 4 {
+			r.ValsetHash = "SET2"
+		}
+		recs = append(recs, r)
+	}
+	if err := s.Write(ctx, recs); err != nil {
+		t.Fatal(err)
+	}
+	names := node.NewNameRegistry()
+	names.Register(histValC, "carol")
+	return &Server{Blocks: s, BlockFill: fakeFill{ChainID: "gnoland-1", From: 1, To: 5, Complete: true}, Client: &node.Client{Names: names}}
+}
+
+func TestHistoryServesTheValsetChanges(t *testing.T) {
+	srv := changesServer(t)
+	code, body := getHistory(t, srv, "?changes=10")
+	if code != http.StatusOK {
+		t.Fatalf("status = %d, body %v", code, body)
+	}
+	changes, _ := body["changes"].([]any)
+	if len(changes) != 2 {
+		t.Fatalf("changes = %v, want 4 and the genesis set", body["changes"])
+	}
+	want := map[string]any{
+		"height": 4.0, "time": "2026-11-19T12:00:04.000Z",
+		"added":       []any{map[string]any{"address": histValC, "moniker": "carol", "power": 1.0}},
+		"removed":     []any{},
+		"repowered":   []any{map[string]any{"address": histValB, "before": 1.0, "after": 2.0}},
+		"rotated":     []any{},
+		"size_before": 2.0, "size_after": 3.0, "power_before": 2.0, "power_after": 4.0,
+		"events": []any{}, "events_pending": false,
+	}
+	if !reflect.DeepEqual(changes[0], want) {
+		t.Errorf("change 4 = %v, want %v", changes[0], want)
+	}
+	if genesis := changes[1].(map[string]any); genesis["height"] != 1.0 || genesis["genesis"] != true || genesis["size_after"] != 2.0 {
+		t.Errorf("genesis = %v, want height 1, genesis, 2 members", genesis)
+	}
+	if _, ok := body["next_before"]; ok {
+		t.Errorf("next_before = %v, want none: the page holds every change", body["next_before"])
+	}
+	_, body = getHistory(t, srv, "?changes=1")
+	if changes, _ := body["changes"].([]any); len(changes) != 1 || body["next_before"] != 4.0 {
+		t.Errorf("changes=1: %v, next_before %v; want change 4, next_before 4", body["changes"], body["next_before"])
+	}
+	_, body = getHistory(t, srv, "?changes=1&before=4")
+	if changes, _ := body["changes"].([]any); len(changes) != 1 || changes[0].(map[string]any)["height"] != 1.0 || body["next_before"] != nil {
+		t.Errorf("before=4: %v, next_before %v; want the genesis set and no next page", body["changes"], body["next_before"])
+	}
+}
+
+func TestHistoryServesAnEmptyPageBelowTheHistory(t *testing.T) {
+	s := newBlocksStore(t)
+	now := time.Now()
+	if err := s.Write(context.Background(), []blocks.Record{histBlock(10, now), histBlock(11, now), histBlock(12, now)}); err != nil {
+		t.Fatal(err)
+	}
+	srv := &Server{Blocks: s, BlockFill: fakeFill{ChainID: "gnoland-1", From: 10, To: 12}}
+	code, body := getHistory(t, srv, "?changes=10&before=5")
+	if changes, ok := body["changes"].([]any); code != http.StatusOK || !ok || len(changes) != 0 || body["next_before"] != nil {
+		t.Errorf("got %d %v, want 200 with an empty page", code, body)
+	}
+}
+
+func TestHistoryRejectsABadChangesQuery(t *testing.T) {
+	srv := changesServer(t)
+	for _, q := range []string{"?changes=0", "?changes=101", "?changes=x", "?changes=5&before=0", "?changes=5&before=-1", "?changes=5&before=x", "?before=5"} {
+		if code, body := getHistory(t, srv, q); code != http.StatusBadRequest || body["error"] == nil {
+			t.Errorf("%s: got %d %v, want 400 with an error", q, code, body)
+		}
+	}
+}

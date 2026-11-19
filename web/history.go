@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"math"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -19,6 +20,9 @@ const maxHistoryBlocks = 1000
 
 // maxHistoryDays bounds the days of vote delays one /api/history call returns.
 const maxHistoryDays = 31
+
+// maxHistoryChanges bounds the validator set changes one call returns.
+const maxHistoryChanges = 100
 
 // historyTime formats /api/history's times: RFC 3339 UTC, to the millisecond.
 const historyTime = "2006-01-02T15:04:05.000Z07:00"
@@ -34,6 +38,47 @@ type historyReport struct {
 	Blocks     []historyBlock             `json:"blocks,omitzero"`
 	Valsets    map[string][]historyMember `json:"valsets,omitzero"`
 	VoteDelays *historyDelays             `json:"vote_delays,omitempty"`
+	Changes    []historyChange            `json:"changes,omitzero"`
+	NextBefore int64                      `json:"next_before,omitempty"` // the before that asks for the next page of changes
+}
+
+// historyChange is a validator set change against the set of the block below;
+// at height 1, the genesis set, every member added.
+type historyChange struct {
+	Height        int64                 `json:"height"`
+	Time          string                `json:"time"`
+	Genesis       bool                  `json:"genesis,omitempty"`
+	Added         []historyChangeMember `json:"added"`
+	Removed       []historyChangeMember `json:"removed"`
+	Repowered     []historyPowerChange  `json:"repowered"`
+	Rotated       []historyRotation     `json:"rotated"`
+	SizeBefore    int                   `json:"size_before"`
+	SizeAfter     int                   `json:"size_after"`
+	PowerBefore   int64                 `json:"power_before"`
+	PowerAfter    int64                 `json:"power_after"`
+	Events        []historyEvent        `json:"events"`
+	EventsPending bool                  `json:"events_pending"` // the events are not read yet
+}
+
+type historyChangeMember struct {
+	Address string `json:"address"`
+	Moniker string `json:"moniker,omitempty"`
+	Power   int64  `json:"power"`
+}
+
+type historyPowerChange struct {
+	Address string `json:"address"`
+	Moniker string `json:"moniker,omitempty"`
+	Before  int64  `json:"before"`
+	After   int64  `json:"after"`
+}
+
+type historyRotation struct {
+	Operator   string `json:"operator"`
+	OldAddress string `json:"old_address"`
+	NewAddress string `json:"new_address"`
+	Moniker    string `json:"moniker,omitempty"` // the new address's
+	Power      int64  `json:"power"`
 }
 
 type historyFilled struct {
@@ -143,6 +188,11 @@ func (s *Server) historyReport(ctx context.Context, q url.Values) (historyReport
 			return historyReport{}, http.StatusInternalServerError, errors.New("internal error")
 		}
 	}
+	if q.Has("changes") || q.Has("before") {
+		if status, err := s.historyChanges(ctx, q, &rep); err != nil {
+			return historyReport{}, status, err
+		}
+	}
 	fromS, toS := q.Get("from"), q.Get("to")
 	if fromS == "" && toS == "" {
 		return rep, http.StatusOK, nil
@@ -180,13 +230,7 @@ func (s *Server) historyReport(ctx context.Context, q url.Values) (historyReport
 		}
 		b.Rounds, b.Flag = r.Rounds, r.Flag
 		if change, ok := span.Changes[r.Height]; ok {
-			b.SetChange = &historySetChange{Source: change.Source, Events: make([]historyEvent, len(change.Events))}
-			for i, e := range change.Events {
-				b.SetChange.Events[i] = historyEvent{
-					Type: e.Type, Operator: e.Operator, Address: e.Address,
-					OldAddress: e.OldAddress, NewAddress: e.NewAddress, Power: e.Power, Applied: e.Applied,
-				}
-			}
+			b.SetChange = &historySetChange{Source: change.Source, Events: historyEvents(change.Events)}
 		}
 		rep.Blocks = append(rep.Blocks, b)
 	}
@@ -199,6 +243,82 @@ func (s *Server) historyReport(ctx context.Context, q url.Values) (historyReport
 		rep.Valsets[hash] = out
 	}
 	return rep, http.StatusOK, nil
+}
+
+// historyChanges fills rep with the page of validator set changes q asks:
+// ?changes=N (1 to maxHistoryChanges) below ?before=H (above the stored range
+// when absent).
+func (s *Server) historyChanges(ctx context.Context, q url.Values, rep *historyReport) (int, error) {
+	n, err := strconv.Atoi(q.Get("changes"))
+	if err != nil || n < 1 || n > maxHistoryChanges {
+		return http.StatusBadRequest, fmt.Errorf("changes must be from 1 to %d", maxHistoryChanges)
+	}
+	before := int64(math.MaxInt64)
+	if q.Has("before") {
+		if before, err = strconv.ParseInt(q.Get("before"), 10, 64); err != nil || before < 1 {
+			return http.StatusBadRequest, errors.New("before must be a block height")
+		}
+	}
+	changes, err := s.Blocks.ValsetChanges(ctx, before, n)
+	if err != nil {
+		log.Printf("history: validator set changes below %d: %v", before, err)
+		return http.StatusInternalServerError, errors.New("internal error")
+	}
+	rep.Changes = make([]historyChange, 0, len(changes))
+	for _, c := range changes {
+		rep.Changes = append(rep.Changes, s.historyChange(c))
+	}
+	if last := len(changes) - 1; len(changes) == n && changes[last].Height > 1 {
+		rep.NextBefore = changes[last].Height
+	}
+	return http.StatusOK, nil
+}
+
+func (s *Server) historyChange(c blocks.ValsetChange) historyChange {
+	out := historyChange{
+		Height: c.Height, Time: c.Time.UTC().Format(historyTime), Genesis: c.Height == 1,
+		Added: s.changeMembers(c.Added), Removed: s.changeMembers(c.Removed),
+		Repowered: make([]historyPowerChange, 0, len(c.Repowered)), Rotated: make([]historyRotation, 0, len(c.Rotated)),
+		SizeBefore: c.SizeBefore, SizeAfter: c.SizeAfter, PowerBefore: c.PowerBefore, PowerAfter: c.PowerAfter,
+		Events: historyEvents(c.Events), EventsPending: c.EventsPending,
+	}
+	for _, p := range c.Repowered {
+		out.Repowered = append(out.Repowered, historyPowerChange{Address: p.Address, Moniker: s.moniker(p.Address), Before: p.Before, After: p.After})
+	}
+	for _, r := range c.Rotated {
+		out.Rotated = append(out.Rotated, historyRotation{Operator: r.Operator, OldAddress: r.OldAddress, NewAddress: r.NewAddress, Moniker: s.moniker(r.NewAddress), Power: r.Power})
+	}
+	return out
+}
+
+func (s *Server) changeMembers(members []blocks.Member) []historyChangeMember {
+	out := make([]historyChangeMember, 0, len(members))
+	for _, m := range members {
+		out = append(out, historyChangeMember{Address: m.Address, Moniker: s.moniker(m.Address), Power: m.Power})
+	}
+	return out
+}
+
+func historyEvents(events []blocks.Event) []historyEvent {
+	out := make([]historyEvent, len(events))
+	for i, e := range events {
+		out[i] = historyEvent{
+			Type: e.Type, Operator: e.Operator, Address: e.Address,
+			OldAddress: e.OldAddress, NewAddress: e.NewAddress, Power: e.Power, Applied: e.Applied,
+		}
+	}
+	return out
+}
+
+// moniker returns the name the registry knows for addr, or "".
+func (s *Server) moniker(addr string) string {
+	if s.Client == nil || s.Client.Names == nil {
+		return ""
+	}
+	if name := s.Client.Names.Name(addr); name != addr {
+		return name
+	}
+	return ""
 }
 
 // historyDelays returns the vote delays of the last days UTC days, today
