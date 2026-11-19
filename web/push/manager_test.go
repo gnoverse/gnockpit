@@ -1,8 +1,12 @@
 package push_test
 
 import (
+	"bytes"
+	"fmt"
+	"log"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/gnoverse/gnockpit/node"
@@ -48,8 +52,19 @@ func TestManager_VAPIDKeys_PersistAcrossReloads(t *testing.T) {
 	}
 }
 
+// logsOf sends the log into a buffer until the test ends.
+func logsOf(t *testing.T) *bytes.Buffer {
+	t.Helper()
+	var buf bytes.Buffer
+	prev := log.Writer()
+	log.SetOutput(&buf)
+	t.Cleanup(func() { log.SetOutput(prev) })
+	return &buf
+}
+
 func testSendPushRemovesStaleSubscription(t *testing.T, statusCode int) {
 	t.Helper()
+	logs := logsOf(t)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(statusCode)
 	}))
@@ -91,6 +106,9 @@ func testSendPushRemovesStaleSubscription(t *testing.T, statusCode int) {
 	if len(subs) != 0 {
 		t.Errorf("status %d: expected stale subscription removed, got %d", statusCode, len(subs))
 	}
+	if want := fmt.Sprintf("push: subscription dead expired (%d), removing", statusCode); !strings.Contains(logs.String(), want) {
+		t.Errorf("logs = %q, want %q", logs, want)
+	}
 }
 
 func TestManager_SendPush_RemovesGoneSubscription(t *testing.T) {
@@ -103,6 +121,7 @@ func TestManager_SendPush_RemovesBadRequestSubscription(t *testing.T) {
 }
 
 func TestManager_SendTest_Success(t *testing.T) {
+	logs := logsOf(t)
 	var received bool
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		received = true
@@ -134,6 +153,9 @@ func TestManager_SendTest_Success(t *testing.T) {
 	}
 	if !received {
 		t.Error("expected push service to receive a request")
+	}
+	if want := "push: send to test-sub: status 201"; !strings.Contains(logs.String(), want) {
+		t.Errorf("logs = %q, want %q", logs, want)
 	}
 }
 
