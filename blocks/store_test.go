@@ -346,6 +346,46 @@ func TestStoreMetaAndReset(t *testing.T) {
 	}
 }
 
+func TestStoreEventGaps(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	for _, h := range []int64{200, 150, 200} {
+		if err := s.AddEventGap(ctx, h); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got, err := s.EventGaps(ctx); err != nil || !slices.Equal(got, []int64{150, 200}) {
+		t.Errorf("EventGaps() = %v, %v; want [150 200]", got, err)
+	}
+	// Storing a change's events fills its gap, even with no event.
+	if err := s.PutEvents(ctx, 200, 198, nil); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := s.EventGaps(ctx); err != nil || !slices.Equal(got, []int64{150}) {
+		t.Errorf("EventGaps() after PutEvents(200) = %v, %v; want [150]", got, err)
+	}
+	if err := s.Reset(ctx, "test-13"); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := s.EventGaps(ctx); err != nil || len(got) != 0 {
+		t.Errorf("EventGaps() after Reset = %v, %v; want none", got, err)
+	}
+}
+
+func TestStoreClearFloor(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	if err := s.SetFloor(ctx, 5); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ClearFloor(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if f, err := s.Floor(ctx); err != nil || f != 0 {
+		t.Errorf("Floor() after ClearFloor = %d, %v; want 0", f, err)
+	}
+}
+
 func TestNewStoreDropsTheSigningHistoryTables(t *testing.T) {
 	ctx := context.Background()
 	db, err := sql.Open("sqlite", ":memory:")

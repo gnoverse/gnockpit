@@ -84,6 +84,9 @@ CREATE TABLE IF NOT EXISTS blocks_vote_delays (
 	b4 INTEGER NOT NULL, b5 INTEGER NOT NULL, b6 INTEGER NOT NULL,
 	PRIMARY KEY (day, validator)
 ) WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS blocks_event_gaps (
+	height INTEGER PRIMARY KEY -- a validator set change whose events are not read yet
+);
 CREATE TABLE IF NOT EXISTS blocks_meta (
 	key   TEXT PRIMARY KEY,
 	value TEXT NOT NULL
@@ -644,13 +647,17 @@ type Event struct {
 }
 
 // PutEvents stores the events that changed the validator set at height, read
-// from the block at source, unless they are stored.
+// from the block at source, unless they are stored, and fills the height's
+// event gap.
 func (s *Store) PutEvents(ctx context.Context, height, source int64, events []Event) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("begin tx: %w", err)
 	}
 	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx, `DELETE FROM blocks_event_gaps WHERE height = ?`, height); err != nil {
+		return fmt.Errorf("fill event gap %d: %w", height, err)
+	}
 	for i, e := range events {
 		if _, err := tx.ExecContext(ctx,
 			`INSERT OR IGNORE INTO blocks_events(height, idx, source_height, type, operator, address, old_address, new_address, power, applied)
@@ -664,6 +671,33 @@ func (s *Store) PutEvents(ctx context.Context, height, source int64, events []Ev
 		return fmt.Errorf("commit events: %w", err)
 	}
 	return nil
+}
+
+// AddEventGap records the validator set change at height as one whose events
+// are not read yet.
+func (s *Store) AddEventGap(ctx context.Context, height int64) error {
+	if _, err := s.db.ExecContext(ctx, `INSERT OR IGNORE INTO blocks_event_gaps(height) VALUES(?)`, height); err != nil {
+		return fmt.Errorf("add event gap %d: %w", height, err)
+	}
+	return nil
+}
+
+// EventGaps returns the heights of the validator set changes whose events are
+// not read yet, ascending.
+func (s *Store) EventGaps(ctx context.Context) ([]int64, error) {
+	var out []int64
+	err := s.each(ctx, func(rows *sql.Rows) error {
+		var h int64
+		if err := rows.Scan(&h); err != nil {
+			return err
+		}
+		out = append(out, h)
+		return nil
+	}, `SELECT height FROM blocks_event_gaps ORDER BY height`)
+	if err != nil {
+		return nil, fmt.Errorf("event gaps: %w", err)
+	}
+	return out, nil
 }
 
 // ---- Meta
@@ -698,6 +732,15 @@ func (s *Store) SetFloor(ctx context.Context, height int64) error {
 	return nil
 }
 
+// ClearFloor forgets the recorded floor, for the source to be asked below it
+// again.
+func (s *Store) ClearFloor(ctx context.Context) error {
+	if _, err := s.db.ExecContext(ctx, `DELETE FROM blocks_meta WHERE key = ?`, metaFloor); err != nil {
+		return fmt.Errorf("clear floor: %w", err)
+	}
+	return nil
+}
+
 // Reset drops the whole history and marks the store as holding chainID's.
 func (s *Store) Reset(ctx context.Context, chainID string) error {
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -707,7 +750,7 @@ func (s *Store) Reset(ctx context.Context, chainID string) error {
 	defer tx.Rollback()
 	for _, table := range []string{
 		"blocks", "blocks_validators", "blocks_valsets", "blocks_valset_members", "blocks_absences",
-		"blocks_rounds", "blocks_flags", "blocks_events", "blocks_vote_delays", "blocks_meta",
+		"blocks_rounds", "blocks_flags", "blocks_events", "blocks_event_gaps", "blocks_vote_delays", "blocks_meta",
 	} {
 		if _, err := tx.ExecContext(ctx, "DELETE FROM "+table); err != nil {
 			return fmt.Errorf("reset %s: %w", table, err)
