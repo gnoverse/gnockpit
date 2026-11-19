@@ -44,10 +44,9 @@ func (m *Manager) evaluateHalt(s Schedule) {
 	// The block-time model's view drops a halt once reached: the block before
 	// it is the last refresh that sees it, and meets any lead.
 	reached := s.Head >= s.Halt.Height-1
-	left := s.Halt.Height - s.Head
 	m.sendOnce(Alert{
 		Type: AlertHaltApproaching, Firing: true, Notice: true,
-		Title: fmt.Sprintf("Coordinated halt at #%d in %d blocks", s.Halt.Height, left), Body: haltBody(s, "left"),
+		Title: approachingTitle(s.Halt.Height, s.Head), Body: haltBody(s, "left"),
 	},
 		key, func(l Lead) bool { return reached || l.Met(s.Halt.Height, s.Head, s.TimeLeft) })
 }
@@ -78,6 +77,19 @@ func (m *Manager) markSent(owner string, t AlertType, key string) bool {
 		log.Printf("push: %v", err)
 	}
 	return fresh
+}
+
+// approachingTitle says how far the halt at height is from head.
+func approachingTitle(height, head int64) string {
+	return fmt.Sprintf("Coordinated halt at #%d in %s", height, blocksText(height-head))
+}
+
+// blocksText counts n blocks: "1 block", "98 blocks".
+func blocksText(n int64) string {
+	if n == 1 {
+		return "1 block"
+	}
+	return fmt.Sprintf("%d blocks", n)
 }
 
 // haltBody tells the halt's minimum version and, when the model gives it,

@@ -163,14 +163,21 @@ func (m *Manager) SendTest(subID string) error {
 type pushPayload struct {
 	Title string `json:"title"`
 	Body  string `json:"body"`
+	URL   string `json:"url,omitempty"` // the page a tap opens (the service worker's notificationclick)
+}
+
+// payloadOf is what a push of a says, its title prefixed with the chain's
+// name when known.
+func payloadOf(chain string, a Alert) pushPayload {
+	title := a.Title
+	if chain != "" {
+		title = chain + " - " + title
+	}
+	return pushPayload{Title: title, Body: a.Body, URL: a.Link}
 }
 
 func (m *Manager) sendPush(sub Subscription, a Alert) {
-	title := a.Title
-	if chain := m.ChainName(); chain != "" {
-		title = chain + " - " + title
-	}
-	payload, err := json.Marshal(pushPayload{Title: title, Body: a.Body})
+	payload, err := json.Marshal(payloadOf(m.ChainName(), a))
 	if err != nil {
 		log.Printf("push: marshal payload: %v", err)
 		return

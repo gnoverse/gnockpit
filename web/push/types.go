@@ -25,6 +25,7 @@ type Alert struct {
 	Notice   bool   // a one-off event, Firing: no recovery follows
 	Title    string
 	Body     string
+	Link     string // the page a tap on the notification opens, from the site's root; "": the dashboard
 }
 
 // Subscription represents a browser push subscription for one device.

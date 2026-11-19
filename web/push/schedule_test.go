@@ -3,6 +3,7 @@ package push
 import (
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"slices"
 	"strings"
 	"testing"
@@ -304,5 +305,31 @@ func TestSendsGiveUpAfterTheSendTimeout(t *testing.T) {
 	case <-sent:
 	case <-time.After(3 * time.Second):
 		t.Fatal("NotifyAlert still waits on a push endpoint that never answers")
+	}
+}
+
+func TestAlertsSayOneBlock(t *testing.T) {
+	s := halt(999, 1000)
+	r := reminderAlert(Reminder{Height: 1000, Label: "upgrade", Lead: Lead{Blocks: 1}}, s)
+	if r.Title != "upgrade: #1000 in 1 block" {
+		t.Errorf("reminder title = %q, want one block", r.Title)
+	}
+	if got := approachingTitle(s.Halt.Height, s.Head); got != "Coordinated halt at #1000 in 1 block" {
+		t.Errorf("halt title = %q, want one block", got)
+	}
+}
+
+func TestAReminderOpensItsCard(t *testing.T) {
+	r := reminderAlert(Reminder{Height: 1000, Since: "2026-11-19T10:00:00Z", Label: "up & go", Lead: Lead{Blocks: 100}}, halt(900, 2000))
+	u, err := url.Parse(r.Link)
+	if err != nil || u.Path != "/" {
+		t.Fatalf("link = %q, %v; want the dashboard with the card", r.Link, err)
+	}
+	q := u.Query()
+	if q.Get("eta") != "1000" || q.Get("since") != "2026-11-19T10:00:00Z" || q.Get("label") != "up & go" {
+		t.Errorf("link query = %v, want the card's eta, since and label", q)
+	}
+	if p := payloadOf("onyx", r); p.URL != r.Link || p.Title != "onyx - "+r.Title {
+		t.Errorf("payload = %+v, want the link and the chain-prefixed title", p)
 	}
 }

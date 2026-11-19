@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"net/url"
+	"strconv"
 )
 
 // Reminder is a device's reminder before a height, set from its ETA card.
@@ -140,9 +142,9 @@ func (m *Manager) evaluateReminders(s Schedule) {
 }
 
 // reminderAlert tells how far r's height is: "upgrade: #1262000 in 98
-// blocks", and the time left when the model gives it.
+// blocks", and the time left when the model gives it; a tap opens its card.
 func reminderAlert(r Reminder, s Schedule) Alert {
-	title := fmt.Sprintf("#%d in %d blocks", r.Height, r.Height-s.Head)
+	title := fmt.Sprintf("#%d in %s", r.Height, blocksText(r.Height-s.Head))
 	if s.Head >= r.Height {
 		title = fmt.Sprintf("#%d reached", r.Height)
 	}
@@ -153,5 +155,9 @@ func reminderAlert(r Reminder, s Schedule) Alert {
 	if left, ok := s.TimeLeft(r.Height); ok && s.Head < r.Height {
 		body = fmt.Sprintf("About %s left.", about(left))
 	}
-	return Alert{Type: AlertETAReminder, Firing: true, Notice: true, Title: title, Body: body}
+	card := url.Values{"eta": {strconv.FormatInt(r.Height, 10)}, "since": {r.Since}}
+	if r.Label != "" {
+		card.Set("label", r.Label)
+	}
+	return Alert{Type: AlertETAReminder, Firing: true, Notice: true, Title: title, Body: body, Link: "/?" + card.Encode()}
 }
