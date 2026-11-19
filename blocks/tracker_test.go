@@ -661,7 +661,7 @@ func TestPassPausesNotOnASingleRefusedWitness(t *testing.T) {
 	}
 }
 
-func TestPassRechecksAFloorTheSourceNoLongerServes(t *testing.T) {
+func TestPassKeepsTheFloorWhenItsCheckIsRefused(t *testing.T) {
 	c := newFakeChain(2300)
 	c.floor = 1000
 	tt := newTestTracker(t, c)

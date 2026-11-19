@@ -271,7 +271,6 @@ func (t *Tracker) fill(ctx context.Context, heights []int64, head node.ChainHead
 	var he *node.HeightError
 	if cerr != nil && !errors.As(cerr, &he) {
 		if (node.IsRefusal(cerr) || isTimeout(cerr)) && len(asked) > 1 {
-			before := t.batch
 			if node.IsRefusal(cerr) {
 				// The source's limit is below this batch's calls.
 				t.batch = max(1, len(asked)/2)
@@ -281,11 +280,9 @@ func (t *Tracker) fill(ctx context.Context, heights []int64, head node.ChainHead
 				t.batch = max(1, t.batch/2)
 				t.regrowAt = t.now().Add(timeoutCut)
 			}
-			if t.batch != before {
-				t.logf("blocks: a batch of %d commits failed (%v), asking %d at a time", len(asked), cerr, t.batch)
-			}
+			t.logf("blocks: a batch of %d commits failed (%v), asking %d at a time", len(asked), cerr, t.batch)
 			if isTimeout(cerr) && t.batch >= len(asked) {
-				return 0, cerr // asked again now, the same calls would time out the same way
+				return 0, cerr // asked again at once, the same calls would time out the same way
 			}
 			return 0, nil
 		}
