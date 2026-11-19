@@ -568,6 +568,38 @@ func TestPassDropsTheHistoryOfAnotherChain(t *testing.T) {
 	if !tt.logged("dropping the block history of gnoland-1") {
 		t.Errorf("logs = %q, want the drop", tt.logs)
 	}
+	if r := tt.Progress().Rate; r != 0 {
+		t.Errorf("Rate = %v, want 0: the new chain's fill has one sample", r)
+	}
+}
+
+func TestProgressMeasuresTheFillRate(t *testing.T) {
+	ctx := context.Background()
+	c := newFakeChain(1000)
+	tt := newTestTracker(t, c)
+	at := t0
+	tt.now = func() time.Time { return at }
+	// Run publishes the empty store before its first pass.
+	if err := tt.publish(ctx); err != nil {
+		t.Fatal(err)
+	}
+	mustPass(t, tt) // 999..900
+	if r := tt.Progress().Rate; r != 0 {
+		t.Errorf("Rate after one pass = %v, want 0: nothing to measure yet", r)
+	}
+	at = at.Add(10 * time.Second)
+	mustPass(t, tt) // 899..800
+	if r := tt.Progress().Rate; r != 10 {
+		t.Errorf("Rate = %v, want 10 blocks/s", r)
+	}
+	// The rate is the last rateWindow's: a slower stretch shows at once.
+	at = at.Add(rateWindow)
+	mustPass(t, tt) // 799..700
+	at = at.Add(50 * time.Second)
+	mustPass(t, tt) // 699..600
+	if r := tt.Progress().Rate; r != 2 {
+		t.Errorf("Rate = %v, want 2 blocks/s over the last %s", r, rateWindow)
+	}
 }
 
 func TestRunPacesItsPasses(t *testing.T) {

@@ -40,6 +40,8 @@ const (
 	// behind the one that gave the head (a load balancer's lagging backend),
 	// and may pass on a retry.
 	floorMargin = 1000
+	// rateWindow is the span Progress.Rate is measured over.
+	rateWindow = 5 * time.Minute
 	// setsRealm prefixes the realms whose events change the validator set.
 	setsRealm = "gno.land/r/sys/validators/"
 )
@@ -61,6 +63,7 @@ type Progress struct {
 	FromTime time.Time // time of block From
 	Floor    int64     // lowest height the source serves, when it refused a lower one
 	Complete bool      // From is 1, or the floor
+	Rate     float64   // heights stored below From per second over the last rateWindow; 0 when unknown or complete
 }
 
 // Tracker fills the block history from a Source: the heights up to the chain
@@ -77,6 +80,7 @@ type Tracker struct {
 	batch    int       // commits per batch
 	maxBatch int       // the size the source refused half of; batch grows back to it
 	regrowAt time.Time // when batch, cut by a timeout, grows back; zero: not cut
+	fills    []fill    // the lowest stored height at each publish of the last rateWindow
 	lastErr  map[string]string
 
 	mu       sync.RWMutex
@@ -436,7 +440,7 @@ func (t *Tracker) followChain(ctx context.Context, chainID string) error {
 	if stored != "" {
 		t.logf("blocks: chain is %s, dropping the block history of %s", chainID, stored)
 	}
-	t.batch, t.maxBatch, t.regrowAt = batchSize, batchSize, time.Time{}
+	t.batch, t.maxBatch, t.regrowAt, t.fills = batchSize, batchSize, time.Time{}, nil
 	return t.store.Reset(ctx, chainID)
 }
 
@@ -460,7 +464,13 @@ func (t *Tracker) publish(ctx context.Context) error {
 			return err
 		}
 	}
-	p := Progress{ChainID: chainID, From: low, To: high, FromTime: fromTime, Floor: floor, Complete: low > 0 && low <= max(1, floor)}
+	p := Progress{
+		ChainID: chainID, From: low, To: high, FromTime: fromTime, Floor: floor,
+		Complete: low > 0 && low <= max(1, floor), Rate: t.measure(low),
+	}
+	if p.Complete {
+		p.Rate = 0
+	}
 	t.mu.Lock()
 	was := t.progress.Complete
 	t.progress = p
@@ -469,6 +479,33 @@ func (t *Tracker) publish(ctx context.Context) error {
 		t.logf("blocks: history complete from #%d (%s)", low, fromTime.Format(time.RFC3339))
 	}
 	return nil
+}
+
+// fill is the lowest stored height at a time.
+type fill struct {
+	at  time.Time
+	low int64
+}
+
+// measure records low, the lowest stored height, and returns how fast it fell
+// over the last rateWindow, in heights per second: 0 until two records span
+// some time. An empty store records nothing: its first height is no progress.
+func (t *Tracker) measure(low int64) float64 {
+	if low == 0 {
+		t.fills = nil
+		return 0
+	}
+	now := t.now()
+	t.fills = append(t.fills, fill{at: now, low: low})
+	for now.Sub(t.fills[0].at) > rateWindow {
+		t.fills = t.fills[1:]
+	}
+	first := t.fills[0]
+	span := now.Sub(first.at).Seconds()
+	if span <= 0 {
+		return 0
+	}
+	return float64(first.low-low) / span
 }
 
 // report logs err when it differs from the last one logged for kind, and the
