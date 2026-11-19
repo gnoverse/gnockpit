@@ -521,6 +521,18 @@ func TestPassRestoresTheBatchATimeoutCut(t *testing.T) {
 	}
 }
 
+func TestPassHalvesTheBatchSizeOnAShortBatchTimingOut(t *testing.T) {
+	c := newFakeChain(250)
+	tt := newTestTracker(t, c)
+	mustPass(t, tt) // 249..150
+	// Three heights to the head time out: the batch size halves, from 100.
+	c.head, c.fail = 253, []error{timeoutError{}}
+	mustPass(t, tt)
+	if sizes := batchSizes(c); !slices.Equal(sizes, []int{100, 3, 3, 50}) {
+		t.Errorf("batch sizes = %v, want [100 3 3 50]", sizes)
+	}
+}
+
 func TestPassHalvesABatchThatTimesOut(t *testing.T) {
 	c := newFakeChain(250)
 	c.slowOver = 40

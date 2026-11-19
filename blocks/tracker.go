@@ -256,10 +256,13 @@ func (t *Tracker) fill(ctx context.Context, heights []int64, head node.ChainHead
 	var he *node.HeightError
 	if cerr != nil && !errors.As(cerr, &he) {
 		if (node.IsRefusal(cerr) || isTimeout(cerr)) && len(asked) > 1 {
-			t.batch = max(1, len(asked)/2)
 			if node.IsRefusal(cerr) {
+				// The source's limit is below this batch's calls.
+				t.batch = max(1, len(asked)/2)
 				t.maxBatch = t.batch
 			} else {
+				// Slow, whatever the batch: the size halves, not this batch.
+				t.batch = max(1, t.batch/2)
 				t.regrowAt = t.now().Add(timeoutCut)
 			}
 			t.logf("blocks: a batch of %d commits failed (%v), asking %d at a time", len(asked), cerr, t.batch)
