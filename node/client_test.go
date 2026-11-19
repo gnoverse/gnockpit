@@ -860,3 +860,35 @@ func TestGetSigningStatsCountsAVoteForAnotherBlockAsMissed(t *testing.T) {
 		t.Errorf("block = %+v, want 2 signers and %s missing", b, addrB)
 	}
 }
+
+func TestGetSigningStatsForgetsCommitsOfAnEarlierChain(t *testing.T) {
+	const addrA = "g1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	var mu sync.Mutex
+	head := "9"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/validators" {
+			fmt.Fprintf(w, `{"jsonrpc":"2.0","result":{"validators":[{"address":%q,"pub_key":{"type":"ed25519","value":"AA"},"voting_power":"1","proposer_priority":"0"}]}}`, addrA)
+			return
+		}
+		h := r.URL.Query().Get("height")
+		mu.Lock()
+		final := h != head
+		mu.Unlock()
+		fmt.Fprint(w, commitJSONAt(h, addrA, "B"+h, final, precommitJSON(addrA, 0, "B"+h)))
+	}))
+	defer srv.Close()
+	c := NewClient(srv.URL, 5*time.Second)
+	if _, err := c.GetSigningStats(context.Background(), 9, 3); err != nil {
+		t.Fatal(err)
+	}
+	// The RPC's chain restarts from genesis: the heights above its head are another chain's.
+	mu.Lock()
+	head = "3"
+	mu.Unlock()
+	if _, err := c.GetSigningStats(context.Background(), 3, 2); err != nil {
+		t.Fatal(err)
+	}
+	if kept := slices.Sorted(maps.Keys(c.commits)); !slices.Equal(kept, []int64{2}) {
+		t.Errorf("kept commits = %v, want [2]", kept)
+	}
+}

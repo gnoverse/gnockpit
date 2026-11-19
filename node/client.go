@@ -358,13 +358,14 @@ func (c *Client) commit(ctx context.Context, height int64) (Commit, error) {
 	return cm, nil
 }
 
-// forgetCommitsOutside drops the commits kept for heights below from, which
-// the window left. Heights above to are kept.
+// forgetCommitsOutside drops the commits kept for heights outside [from, to]:
+// below, the window left them; above the head, they are an earlier chain's,
+// the RPC's chain having restarted from genesis.
 func (c *Client) forgetCommitsOutside(from, to int64) {
 	c.commitsMu.Lock()
 	defer c.commitsMu.Unlock()
 	for h := range c.commits {
-		if h < from {
+		if h < from || h > to {
 			delete(c.commits, h)
 		}
 	}
