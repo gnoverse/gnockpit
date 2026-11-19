@@ -26,6 +26,7 @@ blocks/          — block history since genesis: per-height facts in SQLite, fi
   valsets.go     — validator sets by hash; address → id
   windows.go     — missed-block windows: first block by bisecting heights, the first (partial) day's absences + the per-day counters, one read transaction
   delays.go      — daily vote-delay histograms (bucket edges)
+  changes.go     — validator set changes: their heights (blocks_valset_changes, kept by Write; filled once from an older database), each read with its diff against the set below (added, removed, re-weighted, rotations from events)
   events.go      — set-change events: stored, read from /block_results at H−2, event gaps
   record.go      — a commit + its validator set → a Record: absence kinds, vote delays from tm2's weighted median time
   proposer.go    — port of tm2's proposer-priority increment: the expected proposer of each round
@@ -41,7 +42,9 @@ web/             — Web dashboard + HTTP API
   status.go      — /api/status: health + curated network state / recent blocks / peer + validator columns
   stats.go       — /api/stats: missed-block windows, provider/country aggregates, set health, Nakamoto
   eta.go         — /api/eta: ETA of a height, height at a time, or the scheduled halt (model from eta.Tracker)
-  history.go     — /api/history: the block history's reach, the blocks of a height range (≤ 1,000), daily vote delays (≤ 31 days)
+  history.go     — /api/history: the block history's reach, the blocks of a height range (≤ 1,000), daily vote delays (≤ 31 days), set changes (≤ 100 a page)
+  reminder.go    — /api/push/reminder; schedule(): the head, the scheduled halt and time-left estimates the lead-time alerts check
+  push/          — browser push and Shoutrrr: alert detection, devices (one per push endpoint), the notification config file (notifyconfig.go: parse; notifyroute.go: per-target senders, reload on change), chain alerts and their sent state (schedule.go), ETA reminders (reminders.go)
   analytics.go   — Optional third-party analytics snippet (--analytics), injected before </body>; off by default
   index.html     — Single-page dashboard (embedded via go:embed, vanilla JS, no framework)
 ```
@@ -52,6 +55,7 @@ web/             — Web dashboard + HTTP API
 
 1. `server.go` runs a **publish loop** every N seconds (default 5s)
 2. Each cycle calls `fetchSnapshot()` which polls every configured source (`node/sources.go: Poll`): global chain data (status, validators, consensus, signing) comes from the freshest reachable source; peers are unioned across all reachable sources and deduped by node ID (`MergePeers`) before their RPCs are probed. All sources down → `snap.Error` drives the "connecting to sources" banner.
+   The publish loop also rereads the notification config file when it changed, and, once the snapshot is set, sends the lead-time alerts (`notifySchedule` → `push.Manager.EvaluateSchedule`: a new halt and its approach, once per device or target, recorded in `push_sent`; the reminders whose lead is met, then deleted).
 3. The snapshot is broadcast to all connected WebSocket clients as typed messages: `status`, `peers`, `votes`, `checks`, `signing`
 4. `index.html` receives these messages and updates the DOM in-place
 5. Each cycle also geolocates peers (`geoip`) and resolves their cloud provider (`asn`) — using each peer's resolved public IP only (peers with no usable public IP are geolocated to nothing and bucketed "Unknown" on the map) — and refreshes the missed-24h counts from the `blocks` store (#7). This powers the network map and the Country/Provider columns. Validators inherit the country/provider of their correlated peer (matched via `ValAddress`), so validators no source is peered with have none.
@@ -60,6 +64,7 @@ web/             — Web dashboard + HTTP API
     - Each pass: heights up to head − 1 (the head's commit is final only once the next block carries it), then one batch below the stored range; `--history-pace` between batches while backfilling or catching up, 5 s once complete. A non-canonical commit, or a commit refused within 1,000 blocks of the head (a lagging backend), ends that direction quietly; logged after 2 minutes. A short batch timing out ends the pass.
     - Floor: set when two answers serve a height and refuse the one below, over 1,000 below the head (a downward batch of 2+ calls opens with the lowest stored height as that witness). A refusal first in its answer (the witness, or a batch of 1) sets no floor; twice in a row at one height, over 1,000 below the head, it pauses the backfill for 10 minutes, logged once; a served downward answer resets it. So a batch of 1 (flag, or a source taking 1 call a batch) never completes at a floor: it pauses there. `floor−1` is rechecked after the head at each start until an answer settles it (served clears the floor), never failing a pass.
     - A batch refused whole halves `--history-batch`, rounding up (2 comes before 1), until restart; one timing out, for 10 minutes. HTTP 429 waits `Retry-After` on every read.
+    - Set changes: `Write` records a height whose set differs from the stored height below (settling the written height and the one above, so a batch edge is caught either way). After the upward loop, the tracker tells (`OnValsetChange`, wired to `push.Manager.NotifyValsetChange` in main.go) the changes above the `valset_told_to` watermark, which starts at the first stored high: the backfill and a new chain's first fill never tell.
     - `/validators` once per new `validators_hash`, plus h−1 and h for a block with round > 0 (rounds kept) and every 1,000th (check only); a set below refused twice, over 1,000 below the head, flags the block; a first refusal, or one nearer, fails the pass. Set-change events from `/block_results` at H−2; a failed read becomes an event gap, retried every 10 minutes, dropped when its events are below the floor.
 
 ### NameRegistry (validators.go)
@@ -92,9 +97,9 @@ one or two when the window slid by one block. Longer-term **missed-block counts*
 - `/api/status` (status.go) — health summary (retrocompat `status`/`chain`/`height`/`reason`/`time`) plus `network`, `recent_blocks` (last 100), and per-`peers`/`validators` column data.
 - `/api/stats` (stats.go) — per-validator missed-block windows, provider + country aggregates, validator-set health, Nakamoto coefficient.
 - `/api/eta` (eta.go) — `?height=` (+`since` for original/drift/trail), `?time=`, or none for the on-chain halt.
-- `/api/history` (history.go) — the block history's reach (`filled`); `?from=&to=` (≤ 1,000 heights): blocks with absent / nil / other-block members, round proposers, flags, set changes, and the validator sets; `?days=N` (≤ 31): daily vote-delay histograms.
+- `/api/history` (history.go) — the block history's reach (`filled`); `?from=&to=` (≤ 1,000 heights): blocks with absent / nil / other-block members, round proposers, flags, set changes, and the validator sets; `?days=N` (≤ 31): daily vote-delay histograms; `?changes=N&before=H` (≤ 100): set changes newest first with their diff, paged by `next_before`.
 - `/api` (server.go) — raw `Snapshot` dump (unstable shape; debugging).
-- Also: `/badge.svg`, `/ws`, `/api/boot`, `/api/push/*`, `/api/notify/*`.
+- Also: `/badge.svg`, `/ws`, `/api/boot`, `/api/push/*` (subscribe: one device per endpoint, `""` id once it has nothing left; reminder, reminder.go), `/api/notify/*` (the config's targets and their alerts, a test send; `GNOCKPIT_NOTIFY_TEST_TOKEN`).
 
 ## Important Patterns
 
