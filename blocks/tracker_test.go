@@ -606,6 +606,25 @@ func TestPassPausesAOneCallSourceAtItsFloor(t *testing.T) {
 	}
 }
 
+func TestPassSetsTheFloorOfATwoCallSource(t *testing.T) {
+	c := newFakeChain(2300)
+	tt := newTestTracker(t, c)
+	for range 10 {
+		mustPass(t, tt) // 2299 to 1300
+	}
+	// The source takes two calls a batch at most: the refused batches halve
+	// down to two calls, enough for a witness and the height below it.
+	c.floor, c.maxBatch = 1250, 2
+	for i := 0; mustPass(t, tt); i++ {
+		if i == 200 {
+			t.Fatal("the backfill never ended")
+		}
+	}
+	if f, _ := tt.store.Floor(context.Background()); f != 1250 || !tt.Progress().Complete {
+		t.Errorf("Floor() = %d, complete %v; want 1250, complete", f, tt.Progress().Complete)
+	}
+}
+
 func TestPassPausesTheBackfillWhenTheLowestStoredHeightIsRefused(t *testing.T) {
 	c := newFakeChain(5000)
 	tt := newTestTrackerOn(t, c, newTestStore(t), Config{Pace: 0, Batch: 1100})

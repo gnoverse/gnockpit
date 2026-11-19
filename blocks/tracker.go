@@ -272,8 +272,10 @@ func (t *Tracker) fill(ctx context.Context, heights []int64, head node.ChainHead
 	if cerr != nil && !errors.As(cerr, &he) {
 		if (node.IsRefusal(cerr) || isTimeout(cerr)) && len(asked) > 1 {
 			if node.IsRefusal(cerr) {
-				// The source's limit is below this batch's calls.
-				t.batch = max(1, len(asked)/2)
+				// The source's limit is below this batch's calls. Halved
+				// rounding up, the size meets 2 before 1: a source taking two
+				// calls keeps batches that can show its oldest block.
+				t.batch = max(1, (len(asked)+1)/2)
 				t.maxBatch = t.batch
 			} else {
 				// Slow, whatever the batch: the size halves, not this batch.
