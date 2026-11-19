@@ -19,10 +19,14 @@ node/            — RPC client + types (pure data layer, no UI)
   batch.go       — JSON-RPC batches (one POST, several calls); HeightError
   chain.go       — Commit/Precommit, SetMember, BlockEvent and their reads: commits (one, or a batch), validator sets with priorities, block events
 blocks/          — block history since genesis: per-height facts in SQLite, filled from the primary source (shares the push DB handle)
-  store.go       — blocks, validator sets, absences (absent / nil / other block), round proposers, flags, set events + event gaps, daily vote-delay histograms; each address once (blocks_validators), the rest by id (blocks_events keeps text addresses), no index beside the keys; missed-block windows (first block found by bisecting heights)
+  store.go       — schema, block rows (absences, round proposers, flags, per-day miss and vote-delay counters), meta (chain id, floor); each address once (blocks_validators), the rest by id (blocks_events keeps text addresses), no index beside the keys
+  valsets.go     — validator sets by hash; address → id
+  windows.go     — missed-block windows: first block by bisecting heights, the first (partial) day's absences + the per-day counters, one read transaction
+  delays.go      — daily vote-delay histograms (bucket edges)
+  events.go      — set-change events: stored, read from /block_results at H−2, event gaps
   record.go      — a commit + its validator set → a Record: absence kinds, vote delays from tm2's weighted median time
   proposer.go    — port of tm2's proposer-priority increment: the expected proposer of each round
-  tracker.go     — fill loop (Data Flow #7)
+  tracker.go     — fill loop (Data Flow #7); reads.go: its rate-limited reads, record building; progress.go: Progress, fill rate
 eta/             — block ETAs: sampled block times + estimator + halt tracking (shares the push DB handle)
   store.go       — eta_block_times (every 100th height), chain id, backfill floor, first sighting of each halt
   model.go       — pure estimator: pace of the last 3000 blocks; 80/95% ranges from the predictor's past errors (30-day lookback)
@@ -48,10 +52,11 @@ web/             — Web dashboard + HTTP API
 5. Each cycle also geolocates peers (`geoip`) and resolves their cloud provider (`asn`) — using each peer's resolved public IP only (peers with no usable public IP are geolocated to nothing and bucketed "Unknown" on the map) — and refreshes the missed-24h counts from the `blocks` store (#7). This powers the network map and the Country/Provider columns. Validators inherit the country/provider of their correlated peer (matched via `ValAddress`), so validators no source is peered with have none.
 6. Separately, `eta.Tracker` (started in `main.go`) runs its own loop on the primary source: every minute, and back to back while backfilling, it reads the chain head, drops the stored history if the chain id changed, reads the halt params, and fetches the missing every-100th block times newest-first. `/api/eta` combines its model with the snapshot's newest block; the dashboard's ETA cards poll `/api/eta` every 10 s and tick the countdown locally in between. The link card's target lives only in the page link (`?eta=&since=&label=`); the halt card's comes from the chain params; the "original" estimate is recomputed from the stored history as of `since`.
 7. Separately, `blocks.Tracker` (started in `main.go`) fills the block history from the primary source. Deltas worth knowing:
-    - Each pass stores the heights up to head − 1 (the head's commit is final only once the next block carries it), then one batch below the stored range, newest first; `--history-pace` between passes while backfilling, 5 s once complete.
-    - A non-canonical commit, or a refusal within 1,000 blocks of the head (a lagging load-balanced backend), ends that direction quietly until the next pass; a refusal further down sets the floor, re-checked once per start.
+    - Each pass stores the heights up to head − 1 (the head's commit is final only once the next block carries it), then one batch below the stored range, newest first; `--history-pace` between batches while backfilling or catching up, 5 s once complete.
+    - A non-canonical commit, a refusal within 1,000 blocks of the head (a lagging load-balanced backend) or one first in its answer ends that direction quietly until the next pass; reported once it lasts 2 minutes.
+    - Floor: a downward batch opens with the lowest stored height as a witness; a height refused right after a served one, well below the head, in two answers, sets it. Re-checked once per start (`[floor, floor−1]`), after the head, never failing a pass.
     - A batch refused whole halves `--history-batch` for good; one timing out, for 10 minutes. HTTP 429 waits `Retry-After` on every read.
-    - One `/validators` per new `validators_hash`; the sets at h−1 and h for a block finalized after round 0 (round proposers kept) and every 1,000th (checked only); set-change events from `/block_results` at H−2, a failed read kept as an event gap and read again every 10 minutes.
+    - One `/validators` per new `validators_hash`; the sets at h−1 and h for a block finalized after round 0 (round proposers kept) and every 1,000th (checked only); set-change events from `/block_results` at H−2, a failed read kept as an event gap, checked and read again every 10 minutes (dropped below the floor). The set below a late block, refused well below the head, leaves round 0 unknown and flags the block.
 
 ### NameRegistry (validators.go)
 
