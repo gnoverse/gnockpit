@@ -19,20 +19,22 @@ import (
 // change on; each height's priorities are one increment of the height
 // below's, as tm2 does, and every member signs unless told otherwise.
 type fakeChain struct {
-	mu        sync.Mutex
-	chainID   string
-	head      int64
-	floor     int64            // heights below are refused
-	lagging   int64            // a backend this far behind the head: it refuses the heights above its own latest, which it serves with its own commit; 0: none
-	maxBatch  int              // a larger batch is refused whole; 0: no limit
-	slowOver  int              // a larger batch times out; 0: never
-	fail      []error          // errors Commits returns first, in order
-	change    int64            // valH97 joins the set at this height; 0: never
-	round     map[int64]int    // commit round per height, default 0
-	proposer  map[int64]string // header proposer per height, default the expected one
-	events    map[int64][]node.BlockEvent
-	setFail   []error // errors ValidatorSet returns first, in order
-	eventFail []error // errors BlockEvents returns first, in order
+	mu          sync.Mutex
+	chainID     string
+	head        int64
+	floor       int64            // heights below are refused
+	lagging     int64            // a backend this far behind the head: it refuses the heights above its own latest, which it serves with its own commit; 0: none
+	maxBatch    int              // a larger batch is refused whole; 0: no limit
+	slowOver    int              // a larger batch times out; 0: never
+	fail        []error          // errors Commits returns first, in order
+	change      int64            // valH97 joins the set at this height; 0: never
+	round       map[int64]int    // commit round per height, default 0
+	proposer    map[int64]string // header proposer per height, default the expected one
+	events      map[int64][]node.BlockEvent
+	refusedOnce int64           // this height is refused once, then served; 0: none
+	broken      map[int64]error // a batch asking one of these heights fails whole with its error
+	setFail     []error         // errors ValidatorSet returns first, in order
+	eventFail   []error         // errors BlockEvents returns first, in order
 
 	sets       [][]node.SetMember // sets[h-1] is the set at h
 	batches    [][]int64
@@ -135,6 +137,11 @@ func (c *fakeChain) Commits(_ context.Context, heights []int64) ([]node.Commit, 
 		c.fail = c.fail[1:]
 		return nil, err
 	}
+	for _, h := range heights {
+		if err, ok := c.broken[h]; ok {
+			return nil, err
+		}
+	}
 	if c.maxBatch > 0 && len(heights) > c.maxBatch {
 		return nil, fmt.Errorf("batch of %d calls: %w", len(heights), &node.RPCError{Code: -32600, Message: "Invalid Request", Data: "batch too large"})
 	}
@@ -143,6 +150,10 @@ func (c *fakeChain) Commits(_ context.Context, heights []int64) ([]node.Commit, 
 	}
 	var out []node.Commit
 	for _, h := range heights {
+		if h == c.refusedOnce {
+			c.refusedOnce = 0
+			return out, &node.HeightError{Height: h, Err: &node.RPCError{Code: -32603, Message: "Internal error", Data: "flaky backend"}}
+		}
 		if h < c.floor || h > c.head || (c.lagging > 0 && h > c.head-c.lagging) {
 			return out, &node.HeightError{Height: h, Err: &node.RPCError{Code: -32603, Message: "Internal error", Data: fmt.Sprintf("height %d not available", h)}}
 		}
@@ -273,12 +284,13 @@ func TestPassStoresUpToTheHeadThenOneBatchBelow(t *testing.T) {
 	mustPass(t, tt)
 	c.head = 400 // further than one batch: the head pass takes two
 	mustPass(t, tt)
-	wantRange(t, tt.store, 50, 399)
+	wantRange(t, tt.store, 51, 399)
 	var got []string
 	for _, b := range c.batches[1:] {
 		got = append(got, span(b))
 	}
-	if want := []string{"250..349", "350..399", "149..50"}; !slices.Equal(got, want) {
+	// Below the range, the lowest stored height, 150, opens the batch of 100.
+	if want := []string{"250..349", "350..399", "150..51"}; !slices.Equal(got, want) {
 		t.Errorf("batches = %v, want %v", got, want)
 	}
 }
@@ -329,7 +341,7 @@ func TestPassStopsBeforeACommitNotFinalYet(t *testing.T) {
 	// stops below it, without an error, and goes on with the backfill.
 	c.head, c.lagging = 253, 1
 	mustPass(t, tt)
-	wantRange(t, tt.store, 50, 251)
+	wantRange(t, tt.store, 51, 251)
 	if len(tt.logs) != 0 {
 		t.Errorf("logs = %q, want none: a lagging backend is routine", tt.logs)
 	}
@@ -357,6 +369,72 @@ func TestPassWaitsQuietlyForAHeightNearTheHead(t *testing.T) {
 	c.lagging = 0
 	mustPass(t, tt)
 	wantRange(t, tt.store, 400, 499)
+}
+
+func TestPassSetsNoFloorBehindABackendFarBehind(t *testing.T) {
+	c := newFakeChain(5000)
+	tt := newTestTrackerOn(t, c, newTestStore(t), Config{Pace: 0, Batch: 1100})
+	mustPass(t, tt) // 4999 to 3900
+	// A backend 2,000 blocks behind refuses every height above its own,
+	// the batch's first among them.
+	c.lagging = 2000
+	if !mustPass(t, tt) {
+		t.Error("pass() reported nothing left below")
+	}
+	if f, _ := tt.store.Floor(context.Background()); f != 0 || tt.Progress().Complete {
+		t.Errorf("Floor() = %d, complete %v; want no floor", f, tt.Progress().Complete)
+	}
+	if tt.logged("serves no block below") {
+		t.Errorf("logs = %q, want no floor", tt.logs)
+	}
+}
+
+func TestPassSetsNoFloorOnASingleRefusal(t *testing.T) {
+	c := newFakeChain(5000)
+	tt := newTestTrackerOn(t, c, newTestStore(t), Config{Pace: 0, Batch: 1000})
+	mustPass(t, tt) // 4999 to 4000
+	c.refusedOnce = 3500
+	mustPass(t, tt) // 3999 to 3501 after the witness 4000, then 3500 refused once
+	mustPass(t, tt) // 3500 served: on to 2502
+	if f, _ := tt.store.Floor(context.Background()); f != 0 {
+		t.Errorf("Floor() = %d, want none: one refusal is no floor", f)
+	}
+	wantRange(t, tt.store, 2502, 4999)
+}
+
+func TestPassRechecksTheFloorWithoutHoldingTheHead(t *testing.T) {
+	c := newFakeChain(2300)
+	c.floor = 1000
+	tt := newTestTracker(t, c)
+	for i := 0; mustPass(t, tt); i++ {
+		if i == 20 {
+			t.Fatal("the backfill never ended")
+		}
+	}
+	// gnockpit restarts while the source fails the check below the floor.
+	c.head, c.broken = 2400, map[int64]error{999: errors.New("502 bad gateway")}
+	tt = newTestTrackerOn(t, c, tt.store, DefaultConfig())
+	mustPass(t, tt)
+	wantRange(t, tt.store, 1000, 2399)
+	if f, _ := tt.store.Floor(context.Background()); f != 1000 {
+		t.Errorf("Floor() = %d, want 1000 kept", f)
+	}
+	if !tt.logged("502 bad gateway") {
+		t.Errorf("logs = %q, want the failed check", tt.logs)
+	}
+	// The check concludes on a later pass, once.
+	c.broken = nil
+	mustPass(t, tt)
+	mustPass(t, tt)
+	var checks int
+	for _, b := range c.batches {
+		if slices.Equal(b, []int64{1000, 999}) {
+			checks++
+		}
+	}
+	if checks != 2 {
+		t.Errorf("floor checks = %d, want 2: the failed one, then one that concluded", checks)
+	}
 }
 
 func TestPassWaitsOutARateLimitOnEveryRead(t *testing.T) {
@@ -392,7 +470,7 @@ func TestPassRechecksTheFloorAtStart(t *testing.T) {
 	if f, _ := tt.store.Floor(context.Background()); f != 0 {
 		t.Errorf("Floor() = %d, want none: the source serves the heights below", f)
 	}
-	wantRange(t, tt.store, 900, 2299)
+	wantRange(t, tt.store, 901, 2299)
 	if !tt.logged("the source serves blocks below #1000") {
 		t.Errorf("logs = %q, want the lowered floor", tt.logs)
 	}
@@ -687,9 +765,9 @@ func TestProgressRateIgnoresAnEmptyStore(t *testing.T) {
 		t.Errorf("Rate after the first stored batch = %v, want 0: an empty store is no starting height", r)
 	}
 	at = at.Add(10 * time.Second)
-	mustPass(t, tt) // 949..900
-	if r := tt.Progress().Rate; r != 5 {
-		t.Errorf("Rate = %v, want 5 blocks/s", r)
+	mustPass(t, tt) // 950 as the witness, then 949..901
+	if r := tt.Progress().Rate; r != 4.9 {
+		t.Errorf("Rate = %v, want 4.9 blocks/s", r)
 	}
 }
 
@@ -703,17 +781,18 @@ func TestProgressMeasuresTheFillRate(t *testing.T) {
 		t.Errorf("Rate after one pass = %v, want 0: nothing to measure yet", r)
 	}
 	at = at.Add(10 * time.Second)
-	mustPass(t, tt) // 899..800
-	if r := tt.Progress().Rate; r != 10 {
-		t.Errorf("Rate = %v, want 10 blocks/s", r)
+	// Below the stored range, a batch of 100 is the witness and 99 heights.
+	mustPass(t, tt) // 899..801
+	if r := tt.Progress().Rate; r != 9.9 {
+		t.Errorf("Rate = %v, want 9.9 blocks/s", r)
 	}
 	// The rate is the last rateWindow's: a slower stretch shows at once.
 	at = at.Add(rateWindow)
-	mustPass(t, tt) // 799..700
+	mustPass(t, tt) // 800..702
 	at = at.Add(50 * time.Second)
-	mustPass(t, tt) // 699..600
-	if r := tt.Progress().Rate; r != 2 {
-		t.Errorf("Rate = %v, want 2 blocks/s over the last %s", r, rateWindow)
+	mustPass(t, tt) // 701..603
+	if r := tt.Progress().Rate; r != 1.98 {
+		t.Errorf("Rate = %v, want 1.98 blocks/s over the last %s", r, rateWindow)
 	}
 }
 
