@@ -19,20 +19,20 @@ import (
 // change on; each height's priorities are one increment of the height
 // below's, as tm2 does, and every member signs unless told otherwise.
 type fakeChain struct {
-	mu       sync.Mutex
-	chainID  string
-	head     int64
-	floor    int64            // heights below are refused
-	lagging  int64            // a backend this far behind the head: it refuses the heights above its own latest, which it serves with its own commit; 0: none
-	maxBatch int              // a larger batch is refused whole; 0: no limit
-	slowOver int              // a larger batch times out; 0: never
-	fail     []error          // errors Commits returns first, in order
-	change   int64            // valH97 joins the set at this height; 0: never
-	round    map[int64]int    // commit round per height, default 0
-	proposer map[int64]string // header proposer per height, default the expected one
-	events   map[int64][]node.BlockEvent
-	setErr   error // what ValidatorSet returns; nil: the set
-	eventErr error // what BlockEvents returns; nil: the events
+	mu        sync.Mutex
+	chainID   string
+	head      int64
+	floor     int64            // heights below are refused
+	lagging   int64            // a backend this far behind the head: it refuses the heights above its own latest, which it serves with its own commit; 0: none
+	maxBatch  int              // a larger batch is refused whole; 0: no limit
+	slowOver  int              // a larger batch times out; 0: never
+	fail      []error          // errors Commits returns first, in order
+	change    int64            // valH97 joins the set at this height; 0: never
+	round     map[int64]int    // commit round per height, default 0
+	proposer  map[int64]string // header proposer per height, default the expected one
+	events    map[int64][]node.BlockEvent
+	setFail   []error // errors ValidatorSet returns first, in order
+	eventFail []error // errors BlockEvents returns first, in order
 
 	sets       [][]node.SetMember // sets[h-1] is the set at h
 	batches    [][]int64
@@ -155,8 +155,10 @@ func (c *fakeChain) ValidatorSet(_ context.Context, h int64) ([]node.SetMember, 
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.setCalls = append(c.setCalls, h)
-	if c.setErr != nil {
-		return nil, c.setErr
+	if len(c.setFail) > 0 {
+		err := c.setFail[0]
+		c.setFail = c.setFail[1:]
+		return nil, err
 	}
 	return slices.Clone(c.setAt(h)), nil
 }
@@ -165,8 +167,10 @@ func (c *fakeChain) BlockEvents(_ context.Context, h int64) ([]node.BlockEvent, 
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.eventCalls = append(c.eventCalls, h)
-	if c.eventErr != nil {
-		return nil, c.eventErr
+	if len(c.eventFail) > 0 {
+		err := c.eventFail[0]
+		c.eventFail = c.eventFail[1:]
+		return nil, err
 	}
 	return c.events[h], nil
 }
@@ -331,6 +335,23 @@ func TestPassStopsBeforeACommitNotFinalYet(t *testing.T) {
 	mustPass(t, tt)
 	if b := storedBlock(t, tt.store, 252); len(b.Absences) != 0 {
 		t.Errorf("block 252 = %+v, want it stored from the next block's commit, without absence", b)
+	}
+}
+
+func TestPassWaitsOutARateLimitOnEveryRead(t *testing.T) {
+	c := newFakeChain(250)
+	c.change = 200
+	c.events[198] = addedEvents
+	c.setFail = []error{&node.HTTPStatusError{StatusCode: http.StatusTooManyRequests, RetryAfter: 3 * time.Second}}
+	c.eventFail = []error{&node.HTTPStatusError{StatusCode: http.StatusTooManyRequests, RetryAfter: 4 * time.Second}}
+	tt := newTestTracker(t, c)
+	mustPass(t, tt)
+	if !slices.Equal(tt.waits, []time.Duration{3 * time.Second, 4 * time.Second}) {
+		t.Errorf("waits = %v, want [3s 4s]", tt.waits)
+	}
+	wantRange(t, tt.store, 150, 249)
+	if got := storedEvents(t, tt.store, 200); len(got) != 1 {
+		t.Errorf("events of 200 = %v, want one", got)
 	}
 }
 
@@ -528,7 +549,7 @@ func TestPassReadsTheEventsOfASetChange(t *testing.T) {
 
 func TestPassFailsABatchWhoseSetLookupFails(t *testing.T) {
 	c := newFakeChain(250)
-	c.setErr = errors.New("validators unavailable")
+	c.setFail = []error{errors.New("validators unavailable")}
 	tt := newTestTracker(t, c)
 	if _, err := tt.pass(context.Background()); err == nil || !strings.Contains(err.Error(), "validator set at 249: validators unavailable") {
 		t.Fatalf("pass() = %v, want the failed lookup of the set at 249", err)
@@ -541,7 +562,7 @@ func TestPassStoresTheHeightsWhenTheirEventsFail(t *testing.T) {
 	c := newFakeChain(250)
 	c.change = 200
 	c.events[198] = addedEvents
-	c.eventErr = errors.New("block_results unavailable")
+	c.eventFail = []error{errors.New("block_results unavailable")}
 	tt := newTestTracker(t, c)
 	mustPass(t, tt)
 	wantRange(t, tt.store, 150, 249)

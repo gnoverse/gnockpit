@@ -167,7 +167,7 @@ func (t *Tracker) pass(ctx context.Context) (more bool, err error) {
 			err = perr
 		}
 	}()
-	head, err := t.source.ChainHead(ctx)
+	head, err := t.chainHead(ctx)
 	if err != nil {
 		return false, fmt.Errorf("chain head: %w", err)
 	}
@@ -270,20 +270,53 @@ func (t *Tracker) fill(ctx context.Context, heights []int64, head node.ChainHead
 	return len(recs), cerr
 }
 
-// commits reads the commits of heights, waiting out rate limits.
-func (t *Tracker) commits(ctx context.Context, heights []int64) ([]node.Commit, error) {
+// limited calls read until it answers anything but HTTP 429, waiting the
+// answer's Retry-After (rateLimitPause without one) in between.
+func (t *Tracker) limited(ctx context.Context, read func() error) error {
 	for {
-		got, err := t.source.Commits(ctx, heights)
+		err := read()
 		var hs *node.HTTPStatusError
 		if !errors.As(err, &hs) || hs.StatusCode != http.StatusTooManyRequests {
-			return got, err
+			return err
 		}
 		wait := cmp.Or(hs.RetryAfter, rateLimitPause)
 		t.report("fill", fmt.Errorf("RPC rate limited, pausing for %s", wait))
 		if err := t.sleep(ctx, wait); err != nil {
-			return nil, err
+			return err
 		}
 	}
+}
+
+func (t *Tracker) chainHead(ctx context.Context) (head node.ChainHead, err error) {
+	err = t.limited(ctx, func() error {
+		head, err = t.source.ChainHead(ctx)
+		return err
+	})
+	return head, err
+}
+
+func (t *Tracker) commits(ctx context.Context, heights []int64) (got []node.Commit, err error) {
+	err = t.limited(ctx, func() error {
+		got, err = t.source.Commits(ctx, heights)
+		return err
+	})
+	return got, err
+}
+
+func (t *Tracker) validatorSet(ctx context.Context, height int64) (set []node.SetMember, err error) {
+	err = t.limited(ctx, func() error {
+		set, err = t.source.ValidatorSet(ctx, height)
+		return err
+	})
+	return set, err
+}
+
+func (t *Tracker) blockEvents(ctx context.Context, height int64) (evs []node.BlockEvent, err error) {
+	err = t.limited(ctx, func() error {
+		evs, err = t.source.BlockEvents(ctx, height)
+		return err
+	})
+	return evs, err
 }
 
 // record builds the record of a commit against the validator set it names,
@@ -314,7 +347,7 @@ func (t *Tracker) members(ctx context.Context, c node.Commit) ([]Member, error) 
 	if err != nil || ok {
 		return set, err
 	}
-	got, err := t.source.ValidatorSet(ctx, c.Height)
+	got, err := t.validatorSet(ctx, c.Height)
 	if err != nil {
 		return nil, fmt.Errorf("validator set at %d: %w", c.Height, err)
 	}
@@ -332,13 +365,13 @@ func (t *Tracker) members(ctx context.Context, c node.Commit) ([]Member, error) 
 // at the height below and at the height, and flags r when round 0's proposer
 // is unknown or no round's expected proposer is r's proposer.
 func (t *Tracker) rounds(ctx context.Context, r *Record) error {
-	cur, err := t.source.ValidatorSet(ctx, r.Height)
+	cur, err := t.validatorSet(ctx, r.Height)
 	if err != nil {
 		return fmt.Errorf("validator set at %d: %w", r.Height, err)
 	}
 	var prev []node.SetMember
 	if r.Height > 1 {
-		if prev, err = t.source.ValidatorSet(ctx, r.Height-1); err != nil {
+		if prev, err = t.validatorSet(ctx, r.Height-1); err != nil {
 			return fmt.Errorf("validator set at %d: %w", r.Height-1, err)
 		}
 	}
@@ -409,7 +442,7 @@ func (t *Tracker) events(ctx context.Context, recs []Record) {
 // read from the block two below it.
 func (t *Tracker) readEvents(ctx context.Context, height int64) {
 	source := height - 2
-	got, err := t.source.BlockEvents(ctx, source)
+	got, err := t.blockEvents(ctx, source)
 	if err != nil {
 		t.report("events", fmt.Errorf("events of %d: %w", source, err))
 		return
