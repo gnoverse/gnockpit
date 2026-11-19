@@ -1075,10 +1075,10 @@ func TestPassFlagsNoLateBlockWhoseSetBelowIsServedBetweenRefusals(t *testing.T) 
 func TestPassForgetsARefusedSetOnAnotherChain(t *testing.T) {
 	c := newFakeChain(2300)
 	c.round[1000] = 1
-	c.setRefused = map[int64]bool{999: true}
 	tt := newTestTrackerOn(t, c, newTestStore(t), Config{Pace: 0, Batch: 2400})
-	tt.setRefused[999] = 1 // refused once on the chain the store held
-	c.chainID = "test-13"
+	mustPass(t, tt)        // the chain the store holds
+	tt.setRefused[999] = 1 // refused once on it
+	c.chainID, c.setRefused = "test-13", map[int64]bool{999: true}
 	// On the new chain, 999's refusal is a first one: the batch is asked again.
 	if _, err := tt.pass(context.Background()); err == nil {
 		t.Error("pass() = nil, want the first refusal on this chain asked again")
@@ -1088,7 +1088,8 @@ func TestPassForgetsARefusedSetOnAnotherChain(t *testing.T) {
 func TestPassForgetsABackfillPauseOnAnotherChain(t *testing.T) {
 	c := newFakeChain(250)
 	tt := newTestTracker(t, c)
-	tt.belowAt = t0.Add(gapRetry) // paused on the chain the store held
+	mustPass(t, tt)               // the chain the store holds
+	tt.belowAt = t0.Add(gapRetry) // paused on it
 	c.chainID = "test-13"
 	mustPass(t, tt)
 	wantRange(t, tt.store, 150, 249)
@@ -1357,10 +1358,10 @@ func TestPassDropsTheHistoryOfAnotherChain(t *testing.T) {
 
 func TestPassForgetsAFloorSightingOnAnotherChain(t *testing.T) {
 	c := newFakeChain(2300)
-	c.floor = 1000
 	tt := newTestTrackerOn(t, c, newTestStore(t), Config{Pace: 0, Batch: 1400})
-	tt.floorSeen = 1000 // seen once on the chain the store held
-	c.chainID = "test-13"
+	mustPass(t, tt)     // the chain the store holds
+	tt.floorSeen = 1000 // seen once on it
+	c.chainID, c.floor = "test-13", 1000
 	// On the new chain, 999's refusal right after 1000 is a first sighting.
 	mustPass(t, tt)
 	if f, _ := tt.store.Floor(context.Background()); f != 0 {
