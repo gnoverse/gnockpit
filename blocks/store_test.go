@@ -485,6 +485,15 @@ func TestStoreEventGaps(t *testing.T) {
 	if got, err := s.EventGaps(ctx); err != nil || !slices.Equal(got, []int64{150}) {
 		t.Errorf("EventGaps() after PutEvents(200) = %v, %v; want [150]", got, err)
 	}
+	if err := s.DropEventGap(ctx, 150); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := s.EventGaps(ctx); err != nil || len(got) != 0 {
+		t.Errorf("EventGaps() after DropEventGap(150) = %v, %v; want none", got, err)
+	}
+	if err := s.AddEventGap(ctx, 150); err != nil {
+		t.Fatal(err)
+	}
 	if err := s.Reset(ctx, "test-13"); err != nil {
 		t.Fatal(err)
 	}

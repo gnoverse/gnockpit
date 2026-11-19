@@ -799,6 +799,15 @@ func (s *Store) AddEventGap(ctx context.Context, height int64) error {
 	return nil
 }
 
+// DropEventGap forgets the event gap at height, for a change whose events
+// cannot be read or that is no change.
+func (s *Store) DropEventGap(ctx context.Context, height int64) error {
+	if _, err := s.db.ExecContext(ctx, `DELETE FROM blocks_event_gaps WHERE height = ?`, height); err != nil {
+		return fmt.Errorf("drop event gap %d: %w", height, err)
+	}
+	return nil
+}
+
 // EventGaps returns the heights of the validator set changes whose events are
 // not read yet, ascending.
 func (s *Store) EventGaps(ctx context.Context) ([]int64, error) {

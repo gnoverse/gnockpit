@@ -501,8 +501,9 @@ func (t *Tracker) rounds(ctx context.Context, r *Record) error {
 
 // events reads the events behind each validator set change met in recs, or
 // at the stored height just above them, from the block two below the change,
-// where tm2 took the updates from. A failed read is logged and recorded as an
-// event gap: the heights stay stored, and a later pass reads it again.
+// where tm2 took the updates from. A failed read, of the events or of a stored
+// height's set, is logged and recorded as an event gap: the heights stay
+// stored, and a later pass reads it again.
 func (t *Tracker) events(ctx context.Context, recs []Record) {
 	if len(recs) == 0 {
 		return
@@ -516,30 +517,46 @@ func (t *Tracker) events(ctx context.Context, recs []Record) {
 		candidates = append(candidates, r.Height)
 	}
 	candidates = append(candidates, top+1)
-	hashAt := func(h int64) (string, bool) {
+	hashAt := func(h int64) (string, bool, error) {
 		if hash, ok := hashes[h]; ok {
-			return hash, true
+			return hash, true, nil
 		}
-		hash, ok, err := t.store.ValsetHashAt(ctx, h)
-		if err != nil {
-			t.report("events", err)
-			return "", false
-		}
-		return hash, ok
+		return t.store.ValsetHashAt(ctx, h)
 	}
 	for _, h := range candidates {
 		if h <= 2 {
 			continue
 		}
-		cur, ok := hashAt(h)
-		if !ok {
+		change, err := t.isSetChange(h, hashAt)
+		if err != nil {
+			t.report("events", err)
+			t.addEventGap(ctx, h)
 			continue
 		}
-		below, ok := hashAt(h - 1)
-		if !ok || below == cur {
-			continue
+		if change {
+			t.readEvents(ctx, h)
 		}
-		t.readEvents(ctx, h)
+	}
+}
+
+// isSetChange reports whether the stored height opens a new validator set,
+// reading the sets' hashes with hashAt; false when either height is not
+// stored.
+func (t *Tracker) isSetChange(h int64, hashAt func(int64) (string, bool, error)) (bool, error) {
+	cur, ok, err := hashAt(h)
+	if err != nil || !ok {
+		return false, err
+	}
+	below, ok, err := hashAt(h - 1)
+	if err != nil || !ok {
+		return false, err
+	}
+	return below != cur, nil
+}
+
+func (t *Tracker) addEventGap(ctx context.Context, height int64) {
+	if err := t.store.AddEventGap(ctx, height); err != nil {
+		t.report("events", err)
 	}
 }
 
@@ -554,9 +571,7 @@ func (t *Tracker) readEvents(ctx context.Context, height int64) {
 	}
 	if err != nil {
 		t.report("events", fmt.Errorf("events of %d: %w", source, err))
-		if err := t.store.AddEventGap(ctx, height); err != nil {
-			t.report("events", err)
-		}
+		t.addEventGap(ctx, height)
 		return
 	}
 	if len(evs) == 0 {
@@ -570,7 +585,8 @@ func (t *Tracker) readEvents(ctx context.Context, height int64) {
 }
 
 // retryEventGaps reads again, every gapRetry, the events of the validator
-// set changes whose read failed.
+// set changes whose read failed. A gap whose events are below the oldest block
+// the source serves, or whose height turns out to open no new set, is dropped.
 func (t *Tracker) retryEventGaps(ctx context.Context) {
 	now := t.now()
 	if now.Before(t.gapsAt) {
@@ -582,8 +598,33 @@ func (t *Tracker) retryEventGaps(ctx context.Context) {
 		t.report("events", err)
 		return
 	}
+	floor, err := t.store.Floor(ctx)
+	if err != nil {
+		t.report("events", err)
+		return
+	}
+	stored := func(h int64) (string, bool, error) { return t.store.ValsetHashAt(ctx, h) }
 	for _, h := range gaps {
-		t.readEvents(ctx, h)
+		if h-2 < floor {
+			t.logf("blocks: the events of the change at #%d are at #%d, below the oldest block the source serves", h, h-2)
+			t.dropEventGap(ctx, h)
+			continue
+		}
+		change, err := t.isSetChange(h, stored)
+		switch {
+		case err != nil:
+			t.report("events", err)
+		case change:
+			t.readEvents(ctx, h)
+		default:
+			t.dropEventGap(ctx, h)
+		}
+	}
+}
+
+func (t *Tracker) dropEventGap(ctx context.Context, height int64) {
+	if err := t.store.DropEventGap(ctx, height); err != nil {
+		t.report("events", err)
 	}
 }
 

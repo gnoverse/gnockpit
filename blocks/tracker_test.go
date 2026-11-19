@@ -183,6 +183,9 @@ func (c *fakeChain) BlockEvents(_ context.Context, h int64) ([]node.BlockEvent, 
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.eventCalls = append(c.eventCalls, h)
+	if h < c.floor {
+		return nil, &node.RPCError{Code: -32603, Message: "Internal error", Data: fmt.Sprintf("height %d not available", h)}
+	}
 	if len(c.eventFail) > 0 {
 		err := c.eventFail[0]
 		c.eventFail = c.eventFail[1:]
@@ -795,6 +798,44 @@ func TestPassRetriesTheEventsItCouldNotRead(t *testing.T) {
 	}
 	if gaps, err := tt.store.EventGaps(context.Background()); err != nil || len(gaps) != 0 {
 		t.Errorf("EventGaps() = %v, %v; want none", gaps, err)
+	}
+}
+
+func TestPassDropsAGapThatIsNoSetChange(t *testing.T) {
+	c := newFakeChain(250)
+	tt := newTestTracker(t, c)
+	mustPass(t, tt)
+	if err := tt.store.AddEventGap(context.Background(), 200); err != nil {
+		t.Fatal(err)
+	}
+	tt.gapsAt = time.Time{}
+	mustPass(t, tt)
+	if len(c.eventCalls) != 0 || tt.logged("no validator set event") {
+		t.Errorf("event calls = %v, logs = %q; want no read: 200 opens no new set", c.eventCalls, tt.logs)
+	}
+	if gaps, err := tt.store.EventGaps(context.Background()); err != nil || len(gaps) != 0 {
+		t.Errorf("EventGaps() = %v, %v; want none", gaps, err)
+	}
+}
+
+func TestPassDropsAGapBelowTheFloor(t *testing.T) {
+	c := newFakeChain(2300)
+	c.floor, c.change = 1000, 1001 // the change's events are at 999, which the source refuses
+	tt := newTestTracker(t, c)
+	at := t0
+	tt.now = func() time.Time { return at }
+	for i := 0; mustPass(t, tt); i++ {
+		if i == 30 {
+			t.Fatal("the backfill never ended")
+		}
+	}
+	at = at.Add(gapRetry)
+	mustPass(t, tt)
+	if gaps, err := tt.store.EventGaps(context.Background()); err != nil || len(gaps) != 0 {
+		t.Errorf("EventGaps() = %v, %v; want the gap at 1001 dropped", gaps, err)
+	}
+	if !tt.logged("the events of the change at #1001 are at #999, below the oldest block the source serves") {
+		t.Errorf("logs = %q, want the dropped gap", tt.logs)
 	}
 }
 
