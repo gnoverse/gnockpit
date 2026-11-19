@@ -24,7 +24,7 @@ type fakeChain struct {
 	chainID  string
 	head     int64
 	floor    int64            // heights below are refused
-	lagging  int64            // the last lagging heights below the head are refused; 0: none
+	lagging  int64            // a backend this far behind the head: it refuses the heights above its own latest, which it serves with its own commit; 0: none
 	maxBatch int              // a larger batch is refused whole; 0: no limit
 	slowOver int              // a larger batch times out; 0: never
 	fail     []error          // errors Commits returns first, in order
@@ -101,9 +101,15 @@ func (c *fakeChain) commit(h int64) node.Commit {
 	for i, mem := range set {
 		pcs[i] = &node.Precommit{Address: mem.Address, Index: i, Round: r, BlockHash: block, Time: c.timeOf(h).Add(time.Second)}
 	}
+	// A node's latest height has no next block yet: it serves its own commit,
+	// which can lack a precommit that arrived late and the next block carries.
+	canonical := h < c.head-c.lagging
+	if !canonical {
+		pcs[len(pcs)-1] = nil
+	}
 	return node.Commit{
 		Height: h, Time: c.timeOf(h), Proposer: proposer, ValidatorsHash: c.hashOf(h),
-		BlockHash: block, Canonical: h < c.head, Precommits: pcs,
+		BlockHash: block, Canonical: canonical, Precommits: pcs,
 	}
 }
 
@@ -268,6 +274,28 @@ func TestPassSetsTheFloorWhereTheSourceStops(t *testing.T) {
 	}
 	if !tt.Progress().Complete || !tt.logged("serves no block below #1000") {
 		t.Errorf("Progress() = %+v, logs = %q; want complete at the floor", tt.Progress(), tt.logs)
+	}
+}
+
+func TestPassStopsBeforeACommitNotFinalYet(t *testing.T) {
+	c := newFakeChain(250)
+	tt := newTestTracker(t, c)
+	mustPass(t, tt)
+	// A backend one block behind the one that gave the head: its latest
+	// height, 252, is the tracker's top, served with its own commit.
+	c.head, c.lagging = 253, 1
+	if _, err := tt.pass(context.Background()); err == nil {
+		t.Fatal("pass() = nil, want the commit of 252 not final yet")
+	}
+	wantRange(t, tt.store, 150, 251)
+	c.lagging = 0
+	mustPass(t, tt)
+	recs, _, err := tt.store.Blocks(context.Background(), 252, 252)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(recs) != 1 || len(recs[0].Absences) != 0 {
+		t.Errorf("block 252 = %+v, want it stored from the next block's commit, without absence", recs)
 	}
 }
 

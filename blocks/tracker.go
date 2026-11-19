@@ -173,8 +173,9 @@ func (t *Tracker) pass(ctx context.Context) (more bool, err error) {
 
 // fill stores the commits of heights, which run outward from the stored
 // range: up for the head, down for the backfill. It returns how many it
-// stored: the first ones, up to a height the source refused. A batch refused
-// whole, or too slow to answer, halves the batch size and stores nothing.
+// stored: the first ones, up to a height the source refused or whose commit
+// is not final yet. A batch refused whole, or too slow to answer, halves the
+// batch size and stores nothing.
 func (t *Tracker) fill(ctx context.Context, heights []int64, head node.ChainHead, down bool) (int, error) {
 	commits, cerr := t.commits(ctx, heights)
 	var he *node.HeightError
@@ -185,6 +186,15 @@ func (t *Tracker) fill(ctx context.Context, heights []int64, head node.ChainHead
 			return 0, nil
 		}
 		return 0, cerr
+	}
+	// A commit the node does not mark canonical is its own commit for its
+	// latest height (a backend behind the one that gave the head); the next
+	// block's commit, which can carry late precommits, is the one to store.
+	for i, c := range commits {
+		if !c.Canonical {
+			commits, cerr = commits[:i], fmt.Errorf("height %d: commit not final yet", c.Height)
+			break
+		}
 	}
 	recs := make([]Record, 0, len(commits))
 	for _, c := range commits {
