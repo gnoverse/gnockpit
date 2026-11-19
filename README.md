@@ -241,13 +241,14 @@ target time, then counting down to it.
 
 All endpoints are CORS-open JSON, for building external badges/dashboards.
 
-| Endpoint      | Description                                                                                                                                                                                                                                                                                                                                                                                    |
-| ------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `/api/status` | Health summary (`status`/`chain`/`height`/`reason`/`time`) plus live network state, the last 100 blocks with signing status, and per-peer / per-validator column data, including `name`, `country`, `city`, `lat`/`lon` and cloud `provider`. A validator's location and provider are its matched peer's. Unknown fields are omitted; when only one of `lat`/`lon` is present, the other is 0. |
-| `/api/stats`  | Aggregate stats: per-validator missed-block windows, cloud-provider and country aggregates, validator-set health, and the Nakamoto coefficient.                                                                                                                                                                                                                                                |
-| `/api/eta`    | Block ETAs: when a height is expected, which height a time reaches, or the scheduled halt (see below).                                                                                                                                                                                                                                                                                         |
-| `/api`        | Raw internal snapshot dump (unstable shape; for debugging).                                                                                                                                                                                                                                                                                                                                    |
-| `/badge.svg`  | SVG status badge.                                                                                                                                                                                                                                                                                                                                                                              |
+| Endpoint       | Description                                                                                                                                                                                                                                                                                                                                                                                    |
+| -------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `/api/status`  | Health summary (`status`/`chain`/`height`/`reason`/`time`) plus live network state, the last 100 blocks with signing status, and per-peer / per-validator column data, including `name`, `country`, `city`, `lat`/`lon` and cloud `provider`. A validator's location and provider are its matched peer's. Unknown fields are omitted; when only one of `lat`/`lon` is present, the other is 0. |
+| `/api/stats`   | Aggregate stats: per-validator missed-block windows, cloud-provider and country aggregates, validator-set health, and the Nakamoto coefficient.                                                                                                                                                                                                                                                |
+| `/api/eta`     | Block ETAs: when a height is expected, which height a time reaches, or the scheduled halt (see below).                                                                                                                                                                                                                                                                                         |
+| `/api/history` | The block history: how far back it reaches and, for a range of heights, each block's proposer, round and the validators that did not sign it (see below).                                                                                                                                                                                                                                      |
+| `/api`         | Raw internal snapshot dump (unstable shape; for debugging).                                                                                                                                                                                                                                                                                                                                    |
+| `/badge.svg`   | SVG status badge.                                                                                                                                                                                                                                                                                                                                                                              |
 
 ### `/api/eta`
 
@@ -289,6 +290,22 @@ curl -s 'http://localhost:8080/api/eta?height=1651200&since=2026-11-16T13:47:26Z
 curl -s 'http://localhost:8080/api/eta?time=<RFC 3339 time after the newest block>'
 ```
 
+### `/api/history`
+
+| Query            | Answer                                                                                                                                                                                                                                                        |
+| ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| none             | `chain` and `filled`: `from` and `to` (the lowest and highest stored heights), `from_time`, `floor` (the oldest block the first `-rpc` serves, when it refused an older one) and `complete` (`from` is 1, or the floor).                                      |
+| `?from=H1&to=H2` | The same, plus `blocks[]` (`height`, `time`, `proposer`, `round`, `txs`, `valset` and the `absent`, `nil` and `other_block` signers) and `valsets` (each set's members, `address` and `power`). At most 1,000 heights; heights outside `filled` are left out. |
+
+Times are RFC 3339 UTC to the millisecond. A nil vote is a precommit for no
+block; `other_block`, a precommit for another block than the one committed.
+Errors come as `{"error": "…"}`: 400 for a malformed range, 503 when the history
+is disabled.
+
+```bash
+curl -s 'http://localhost:8080/api/history?from=1183000&to=1183010'
+```
+
 ## Features
 
 - Live WebSocket dashboard with real-time updates
@@ -298,7 +315,7 @@ curl -s 'http://localhost:8080/api/eta?time=<RFC 3339 time after the newest bloc
 - Network map — IP-geolocated peers, per-country list, Country + cloud-Provider columns
 - Signing stats — per-validator blocks missed in the last 100 + proposer speed, and missed-block counts over 1h/24h/7d/30d/total
 - Block ETA — when a height will be produced (or which height at a given time), with 80%/95% ranges and drift from the original estimate; countdown cards for shared links and for the halt scheduled on chain
-- HTTP API — CORS-open `/api/status`, `/api/stats` and `/api/eta` for external badges, dashboards and scripts
+- HTTP API — CORS-open `/api/status`, `/api/stats`, `/api/eta` and `/api/history` for external badges, dashboards and scripts
 - Alerts — browser push (PWA) and external notifications (Discord, Telegram, …) for chain-stuck and missed-blocks
 - Block history — recent blocks with signing visualization
 

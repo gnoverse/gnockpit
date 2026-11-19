@@ -3,6 +3,10 @@ package web
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"reflect"
 	"testing"
 	"time"
 
@@ -88,5 +92,84 @@ func TestRefreshMissed(t *testing.T) {
 	}
 	if srv.missedSince.IsZero() {
 		t.Error("missed since unset")
+	}
+}
+
+type fakeFill blocks.Progress
+
+func (f fakeFill) Progress() blocks.Progress { return blocks.Progress(f) }
+
+func getHistory(t *testing.T, srv *Server, query string) (int, map[string]any) {
+	t.Helper()
+	rec := httptest.NewRecorder()
+	srv.handleHistory(rec, httptest.NewRequest(http.MethodGet, "/api/history"+query, nil))
+	if got := rec.Header().Get("Access-Control-Allow-Origin"); got != "*" {
+		t.Errorf("CORS header = %q, want *", got)
+	}
+	var body map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode %s: %v", rec.Body, err)
+	}
+	return rec.Code, body
+}
+
+func TestHistoryDisabled(t *testing.T) {
+	code, body := getHistory(t, &Server{}, "")
+	if code != http.StatusServiceUnavailable || body["error"] != "block history disabled" {
+		t.Errorf("got %d %v, want 503 block history disabled", code, body)
+	}
+}
+
+func TestHistoryProgress(t *testing.T) {
+	from := time.Date(2026, 11, 3, 8, 0, 0, 0, time.UTC)
+	srv := &Server{Blocks: newBlocksStore(t), BlockFill: fakeFill{ChainID: "gnoland-1", From: 10, To: 12, FromTime: from, Floor: 5}}
+	code, body := getHistory(t, srv, "")
+	want := map[string]any{
+		"chain":  "gnoland-1",
+		"filled": map[string]any{"from": 10.0, "from_time": "2026-11-03T08:00:00.000Z", "to": 12.0, "floor": 5.0, "complete": false},
+	}
+	if code != http.StatusOK || !reflect.DeepEqual(body, want) {
+		t.Errorf("got %d %v, want 200 %v", code, body, want)
+	}
+}
+
+func TestHistoryRange(t *testing.T) {
+	now := time.Date(2026, 11, 19, 12, 0, 0, 0, time.UTC)
+	s := newBlocksStore(t)
+	writeMissedBlocks(t, s, now)
+	srv := &Server{Blocks: s, BlockFill: fakeFill{ChainID: "gnoland-1", From: 1, To: 3, FromTime: now.Add(-2 * time.Hour), Complete: true}}
+	// Heights 0 and 4 are outside the held range: only 1 to 3 come back.
+	code, body := getHistory(t, srv, "?from=2&to=4")
+	if code != http.StatusOK {
+		t.Fatalf("status = %d, body %v", code, body)
+	}
+	wantBlocks := []any{
+		map[string]any{
+			"height": 2.0, "time": "2026-11-19T11:30:00.000Z", "proposer": histValA, "round": 0.0, "txs": 0.0, "valset": "SET",
+			"absent": []any{}, "nil": []any{histValB}, "other_block": []any{histValA},
+		},
+		map[string]any{
+			"height": 3.0, "time": "2026-11-19T11:50:00.000Z", "proposer": histValA, "round": 0.0, "txs": 0.0, "valset": "SET",
+			"absent": []any{}, "nil": []any{}, "other_block": []any{},
+		},
+	}
+	if !reflect.DeepEqual(body["blocks"], wantBlocks) {
+		t.Errorf("blocks = %v, want %v", body["blocks"], wantBlocks)
+	}
+	wantSets := map[string]any{"SET": []any{
+		map[string]any{"address": histValA, "power": 1.0},
+		map[string]any{"address": histValB, "power": 1.0},
+	}}
+	if !reflect.DeepEqual(body["valsets"], wantSets) {
+		t.Errorf("valsets = %v, want %v", body["valsets"], wantSets)
+	}
+}
+
+func TestHistoryBadRange(t *testing.T) {
+	srv := &Server{Blocks: newBlocksStore(t), BlockFill: fakeFill{}}
+	for _, q := range []string{"?from=1", "?to=2", "?from=a&to=2", "?from=0&to=2", "?from=5&to=4", "?from=1&to=1001"} {
+		if code, body := getHistory(t, srv, q); code != http.StatusBadRequest || body["error"] == nil {
+			t.Errorf("%s: got %d %v, want 400 with an error", q, code, body)
+		}
 	}
 }

@@ -32,6 +32,7 @@ web/             — Web dashboard + HTTP API
   status.go      — /api/status: health + curated network state / recent blocks / peer + validator columns
   stats.go       — /api/stats: missed-block windows, provider/country aggregates, set health, Nakamoto
   eta.go         — /api/eta: ETA of a height, height at a time, or the scheduled halt (model from eta.Tracker)
+  history.go     — /api/history: the block history's reach, and the blocks of a height range (≤ 1,000)
   analytics.go   — Optional third-party analytics snippet (--analytics), injected before </body>; off by default
   index.html     — Single-page dashboard (embedded via go:embed, vanilla JS, no framework)
 ```
@@ -80,6 +81,7 @@ precommits as missed.
 - `/api/status` (status.go) — health summary (retrocompat `status`/`chain`/`height`/`reason`/`time`) plus `network`, `recent_blocks` (last 100), and per-`peers`/`validators` column data.
 - `/api/stats` (stats.go) — per-validator missed-block windows, provider + country aggregates, validator-set health, Nakamoto coefficient.
 - `/api/eta` (eta.go) — `?height=` (+`since` for original/drift/trail), `?time=`, or none for the on-chain halt.
+- `/api/history` (history.go) — the block history's reach (`filled`), and for `?from=&to=` (≤ 1,000 heights) each block's proposer, round, absent / nil / other-block signers and the validator sets.
 - `/api` (server.go) — raw `Snapshot` dump (unstable shape; debugging).
 - Also: `/badge.svg`, `/ws`, `/api/boot`, `/api/push/*`, `/api/notify/*`.
 
