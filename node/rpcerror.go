@@ -14,6 +14,7 @@ import (
 // holds the JSON-RPC error the body carried, if any (gno answers a refused
 // query with HTTP 403 and the reason in a JSON-RPC error).
 type HTTPStatusError struct {
+	Method     string
 	URL        string
 	StatusCode int
 	RetryAfter time.Duration
@@ -21,7 +22,10 @@ type HTTPStatusError struct {
 }
 
 func newHTTPStatusError(url string, resp *http.Response, body []byte) *HTTPStatusError {
-	e := &HTTPStatusError{URL: url, StatusCode: resp.StatusCode}
+	e := &HTTPStatusError{Method: http.MethodGet, URL: url, StatusCode: resp.StatusCode}
+	if resp.Request != nil {
+		e.Method = resp.Request.Method
+	}
 	if secs, err := strconv.Atoi(resp.Header.Get("Retry-After")); err == nil && secs > 0 {
 		e.RetryAfter = time.Duration(secs) * time.Second
 	}
@@ -33,7 +37,7 @@ func newHTTPStatusError(url string, resp *http.Response, body []byte) *HTTPStatu
 }
 
 func (e *HTTPStatusError) Error() string {
-	msg := fmt.Sprintf("GET %s: HTTP %d %s", e.URL, e.StatusCode, http.StatusText(e.StatusCode))
+	msg := fmt.Sprintf("%s %s: HTTP %d %s", e.Method, e.URL, e.StatusCode, http.StatusText(e.StatusCode))
 	if e.RPC != nil {
 		msg += ": " + e.RPC.Error()
 	}
