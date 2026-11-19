@@ -1311,6 +1311,11 @@
                     flex-basis: 100%;
                     white-space: normal;
                 }
+                /* iOS zooms the page into an input under 16px on focus, and
+                   stays zoomed after the planner closes. */
+                .eta-modal input {
+                    font-size: 16px;
+                }
             }
             @media (max-width: 480px) {
                 .eta-legend {
