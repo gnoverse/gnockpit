@@ -421,3 +421,50 @@ func TestBuildVotesReport_VotingPower(t *testing.T) {
 		t.Errorf("validator 1 pub_key = %q, want %q", report.Validators[1].PubKey, wantPK1)
 	}
 }
+
+// subscribe POSTs a device saving alerts to /api/push/subscribe.
+func subscribe(t *testing.T, srv *Server, endpoint string, alerts []push.SubscriptionAlert) (int, string) {
+	t.Helper()
+	b, err := json.Marshal(push.SubscribeRequest{Endpoint: endpoint, P256dh: "p", Auth: "a", Alerts: alerts})
+	if err != nil {
+		t.Fatal(err)
+	}
+	w := httptest.NewRecorder()
+	srv.handlePushSubscribe(w, httptest.NewRequest(http.MethodPost, "/api/push/subscribe", bytes.NewReader(b)))
+	var body struct {
+		ID string `json:"id"`
+	}
+	json.NewDecoder(w.Body).Decode(&body)
+	return w.Code, body.ID
+}
+
+func TestSubscribeAnswersTheSameIdOnASecondSave(t *testing.T) {
+	srv, _ := newSrvWithPush(t)
+	code, first := subscribe(t, srv, "https://example.com/push", []push.SubscriptionAlert{{AlertType: push.AlertChainStuck}})
+	if code != http.StatusCreated || first == "" {
+		t.Fatalf("first save = %d %q, want 201 and an id", code, first)
+	}
+	code, second := subscribe(t, srv, "https://example.com/push", []push.SubscriptionAlert{{AlertType: push.AlertHaltApproaching, Lead: "30m"}})
+	if code != http.StatusOK || second != first {
+		t.Errorf("second save = %d %q, want 200 and %q", code, second, first)
+	}
+	code, gone := subscribe(t, srv, "https://example.com/push", nil)
+	if code != http.StatusOK || gone != "" {
+		t.Errorf("save with no alert = %d %q, want 200 and no id", code, gone)
+	}
+}
+
+func TestSubscribeRejectsAnUnknownAlertOrBadLead(t *testing.T) {
+	srv, _ := newSrvWithPush(t)
+	for _, a := range []push.SubscriptionAlert{
+		{AlertType: "node_down"},
+		{AlertType: push.AlertETAReminder},
+		{AlertType: push.AlertHaltApproaching},
+		{AlertType: push.AlertHaltApproaching, Lead: "soon"},
+		{AlertType: push.AlertChainStuck, Lead: "1h"},
+	} {
+		if code, _ := subscribe(t, srv, "https://example.com/push", []push.SubscriptionAlert{a}); code != http.StatusBadRequest {
+			t.Errorf("alert %+v: status %d, want 400", a, code)
+		}
+	}
+}

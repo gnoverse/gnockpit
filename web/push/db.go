@@ -2,6 +2,7 @@ package push
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
 
 	_ "modernc.org/sqlite"
@@ -16,6 +17,7 @@ type DB struct {
 type Subscriber struct {
 	Sub           Subscription
 	RecoveryNotif bool
+	Lead          Lead // halt_approaching's
 }
 
 // OpenDB opens (or creates) the SQLite database at path and initializes the schema.
@@ -63,9 +65,13 @@ func initSchema(db *sql.DB) error {
 			alert_type      TEXT NOT NULL,
 			entity_id       TEXT NOT NULL DEFAULT '',
 			recovery_notif  INTEGER NOT NULL DEFAULT 0,
+			lead            TEXT NOT NULL DEFAULT '',
 			PRIMARY KEY (subscription_id, alert_type, entity_id)
 		);
 	`); err != nil {
+		return err
+	}
+	if err := migrateDevices(db); err != nil {
 		return err
 	}
 	// Migrate renamed alert type (idempotent).
@@ -147,37 +153,36 @@ func (d *DB) GetSubscription(id string) (Subscription, error) {
 
 // ---- Subscription alerts
 
-// SaveSubscriptionWithAlerts saves a subscription and its alert preferences atomically.
-// If alerts is empty the subscription is saved with no preferences.
-func (d *DB) SaveSubscriptionWithAlerts(sub Subscription, alerts []SubscriptionAlert) error {
+// SaveDevice stores sub, keeping its id when its endpoint is known, and
+// replaces its alerts. It returns the device's id, or "" when the device has
+// no alert left and was deleted.
+func (d *DB) SaveDevice(sub Subscription, alerts []SubscriptionAlert) (string, error) {
 	tx, err := d.db.Begin()
 	if err != nil {
-		return err
+		return "", err
 	}
 	defer tx.Rollback()
-
-	if _, err := tx.Exec(
-		`INSERT OR REPLACE INTO subscriptions (id, endpoint, p256dh, auth) VALUES (?, ?, ?, ?)`,
-		sub.ID, sub.Endpoint, sub.P256dh, sub.Auth,
-	); err != nil {
-		return err
+	id := sub.ID
+	err = tx.QueryRow(`SELECT id FROM subscriptions WHERE endpoint = ?`, sub.Endpoint).Scan(&id)
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+		_, err = tx.Exec(`INSERT INTO subscriptions (id, endpoint, p256dh, auth) VALUES (?, ?, ?, ?)`, id, sub.Endpoint, sub.P256dh, sub.Auth)
+	case err == nil:
+		_, err = tx.Exec(`UPDATE subscriptions SET p256dh = ?, auth = ? WHERE id = ?`, sub.P256dh, sub.Auth, id)
 	}
-	if _, err := tx.Exec(`DELETE FROM subscription_alerts WHERE subscription_id = ?`, sub.ID); err != nil {
-		return err
+	if err != nil {
+		return "", fmt.Errorf("save device: %w", err)
 	}
-	for _, a := range alerts {
-		recovery := 0
-		if a.RecoveryNotif {
-			recovery = 1
+	if err := replaceAlerts(tx, id, alerts); err != nil {
+		return "", err
+	}
+	if len(alerts) == 0 {
+		if _, err := tx.Exec(`DELETE FROM subscriptions WHERE id = ?`, id); err != nil {
+			return "", fmt.Errorf("delete device: %w", err)
 		}
-		if _, err := tx.Exec(
-			`INSERT INTO subscription_alerts (subscription_id, alert_type, entity_id, recovery_notif) VALUES (?, ?, ?, ?)`,
-			sub.ID, string(a.AlertType), a.EntityID, recovery,
-		); err != nil {
-			return err
-		}
+		id = ""
 	}
-	return tx.Commit()
+	return id, tx.Commit()
 }
 
 // SaveSubscriptionAlerts replaces all alert preferences for a subscription atomically.
@@ -187,9 +192,15 @@ func (d *DB) SaveSubscriptionAlerts(subscriptionID string, alerts []Subscription
 		return err
 	}
 	defer tx.Rollback()
-
-	if _, err := tx.Exec(`DELETE FROM subscription_alerts WHERE subscription_id = ?`, subscriptionID); err != nil {
+	if err := replaceAlerts(tx, subscriptionID, alerts); err != nil {
 		return err
+	}
+	return tx.Commit()
+}
+
+func replaceAlerts(tx *sql.Tx, subscriptionID string, alerts []SubscriptionAlert) error {
+	if _, err := tx.Exec(`DELETE FROM subscription_alerts WHERE subscription_id = ?`, subscriptionID); err != nil {
+		return fmt.Errorf("clear alerts: %w", err)
 	}
 	for _, a := range alerts {
 		recovery := 0
@@ -197,19 +208,41 @@ func (d *DB) SaveSubscriptionAlerts(subscriptionID string, alerts []Subscription
 			recovery = 1
 		}
 		if _, err := tx.Exec(
-			`INSERT INTO subscription_alerts (subscription_id, alert_type, entity_id, recovery_notif) VALUES (?, ?, ?, ?)`,
-			subscriptionID, string(a.AlertType), a.EntityID, recovery,
+			`INSERT INTO subscription_alerts (subscription_id, alert_type, entity_id, recovery_notif, lead) VALUES (?, ?, ?, ?, ?)`,
+			subscriptionID, string(a.AlertType), a.EntityID, recovery, a.Lead,
 		); err != nil {
-			return err
+			return fmt.Errorf("save alert %s: %w", a.AlertType, err)
 		}
 	}
-	return tx.Commit()
+	return nil
+}
+
+// migrateDevices keeps one subscription per push endpoint (the latest row,
+// the alerts of the others going with them), makes the endpoint unique, and
+// adds the alerts' lead column to a database from before it.
+func migrateDevices(db *sql.DB) error {
+	if _, err := db.Exec(`
+		DELETE FROM subscriptions WHERE rowid NOT IN (SELECT MAX(rowid) FROM subscriptions GROUP BY endpoint);
+		CREATE UNIQUE INDEX IF NOT EXISTS subscriptions_endpoint ON subscriptions(endpoint);
+	`); err != nil {
+		return fmt.Errorf("one device per endpoint: %w", err)
+	}
+	var lead int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('subscription_alerts') WHERE name = 'lead'`).Scan(&lead); err != nil {
+		return fmt.Errorf("read subscription_alerts columns: %w", err)
+	}
+	if lead == 0 {
+		if _, err := db.Exec(`ALTER TABLE subscription_alerts ADD COLUMN lead TEXT NOT NULL DEFAULT ''`); err != nil {
+			return fmt.Errorf("add the alerts' lead: %w", err)
+		}
+	}
+	return nil
 }
 
 // SubscribersForAlert returns all subscriptions opted in for the given alert + entity combination.
 func (d *DB) SubscribersForAlert(alertType AlertType, entityID string) ([]Subscriber, error) {
 	rows, err := d.db.Query(`
-		SELECT s.id, s.endpoint, s.p256dh, s.auth, sa.recovery_notif
+		SELECT s.id, s.endpoint, s.p256dh, s.auth, sa.recovery_notif, sa.lead
 		FROM subscriptions s
 		JOIN subscription_alerts sa ON sa.subscription_id = s.id
 		WHERE sa.alert_type = ? AND sa.entity_id = ?
@@ -222,10 +255,17 @@ func (d *DB) SubscribersForAlert(alertType AlertType, entityID string) ([]Subscr
 	for rows.Next() {
 		var sb Subscriber
 		var recoveryInt int
-		if err := rows.Scan(&sb.Sub.ID, &sb.Sub.Endpoint, &sb.Sub.P256dh, &sb.Sub.Auth, &recoveryInt); err != nil {
+		var lead string
+		if err := rows.Scan(&sb.Sub.ID, &sb.Sub.Endpoint, &sb.Sub.P256dh, &sb.Sub.Auth, &recoveryInt, &lead); err != nil {
 			return nil, err
 		}
 		sb.RecoveryNotif = recoveryInt == 1
+		if lead != "" {
+			var err error
+			if sb.Lead, err = ParseLead(lead); err != nil {
+				return nil, fmt.Errorf("subscription %s: %w", sb.Sub.ID, err)
+			}
+		}
 		result = append(result, sb)
 	}
 	return result, rows.Err()

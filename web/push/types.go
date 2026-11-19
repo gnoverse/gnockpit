@@ -1,5 +1,7 @@
 package push
 
+import "fmt"
+
 // AlertType identifies a category of push notification alert.
 type AlertType string
 
@@ -38,6 +40,27 @@ type SubscriptionAlert struct {
 	AlertType      AlertType `json:"alert_type"`
 	EntityID       string    `json:"entity_id"`
 	RecoveryNotif  bool      `json:"recovery_notif"`
+	Lead           string    `json:"lead,omitempty"` // halt_approaching: how far ahead of the halt, as ParseLead reads it
+}
+
+// ValidateDeviceAlerts checks the alerts a device saves: each a routable
+// alert, halt_approaching with a lead, no other with one.
+func ValidateDeviceAlerts(alerts []SubscriptionAlert) error {
+	for _, a := range alerts {
+		if _, err := routable(string(a.AlertType)); err != nil {
+			return err
+		}
+		if a.AlertType != AlertHaltApproaching {
+			if a.Lead != "" {
+				return fmt.Errorf("%s takes no lead", a.AlertType)
+			}
+			continue
+		}
+		if _, err := ParseLead(a.Lead); err != nil {
+			return fmt.Errorf("halt_approaching: %w", err)
+		}
+	}
+	return nil
 }
 
 // Entity is a selectable validator target returned by the entities API.
