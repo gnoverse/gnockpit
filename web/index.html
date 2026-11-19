@@ -4802,9 +4802,11 @@
                 const saved = localStorage.getItem('gnockpitAlertPrefs')
                 if (saved) {
                     const prefs = JSON.parse(saved)
-                    Object.entries(prefs).forEach(([id, checked]) => {
+                    Object.entries(prefs).forEach(([id, v]) => {
                         const el = document.getElementById(id)
-                        if (el) el.checked = checked
+                        if (!el) return
+                        if (el.type === 'checkbox') el.checked = v
+                        else el.value = v
                     })
                 }
                 syncValAllState()
@@ -4849,6 +4851,29 @@
         <label for="rec-chain_stuck" style="${recStyle}" title="Also notify on recovery">recovery</label>
     </div>`
 
+                // ---- chain rows: one-off events, no recovery ----
+                const chainRow = (type, label, hint) =>
+                    `<div style="display:flex; align-items:center; gap:10px; padding:6px 0 6px 16px; font-size:0.88em;">
+            <input type="checkbox" id="chk-${type}" data-type="${type}" data-entity="">
+            <label for="chk-${type}" style="flex:1; cursor:pointer;">${label}${hint ? `<span style="${hintStyle}">${hint}</span>` : ''}</label>
+        </div>`
+                const fieldStyle =
+                    'font:inherit; color:var(--fg); background:var(--bg); border:1px solid var(--border,#333); border-radius:4px; padding:2px 4px;'
+                const chainHTML = `<div style="padding:10px 0; border-bottom:1px solid var(--border,#333);">
+        <div style="font-weight:500; margin-bottom:4px;">Chain<span style="${hintStyle}">once per event, no recovery</span></div>
+        ${chainRow('valset_changed', 'Validator set changes', 'joins, leaves, power')}
+        ${chainRow('halt_scheduled', 'New coordinated halt', '')}
+        <div style="display:flex; flex-wrap:wrap; align-items:center; gap:6px 10px; padding:6px 0 6px 16px; font-size:0.88em;">
+            <input type="checkbox" id="chk-halt_approaching" data-type="halt_approaching" data-entity="">
+            <label for="chk-halt_approaching" style="flex:1; cursor:pointer;">Coordinated halt approaching</label>
+            <span style="flex-basis:100%; display:flex; gap:6px; align-items:center; padding-left:26px;">
+                <input type="number" id="lead-halt_approaching-n" min="1" value="30" style="width:64px; ${fieldStyle}" aria-label="lead">
+                <select id="lead-halt_approaching-unit" style="${fieldStyle}" aria-label="lead unit"><option value="m">minutes</option><option value="blocks">blocks</option></select>
+                <span style="${hintStyle} margin:0;">before</span>
+            </span>
+        </div>
+    </div>`
+
                 // ---- validator_missing_blocks rows ----
                 const valRows = validators
                     .map((e) => {
@@ -4888,7 +4913,7 @@
     </div>`
 
                 document.getElementById('alerts-form').innerHTML =
-                    chainStuckHTML + valSectionHTML
+                    chainStuckHTML + chainHTML + valSectionHTML
             }
 
             function showAlertsError(msg) {
@@ -4988,6 +5013,59 @@
                 )
             }
 
+            // browserPushSub returns this browser's push subscription,
+            // subscribing it when create is set.
+            async function browserPushSub(create) {
+                const sw = await navigator.serviceWorker.ready
+                let sub = await sw.pushManager.getSubscription()
+                if (!sub && create) {
+                    sub = await sw.pushManager.subscribe({
+                        userVisibleOnly: true,
+                        applicationServerKey: urlBase64ToUint8Array(_vapidKey),
+                    })
+                }
+                return sub
+            }
+
+            // deviceKeys is what the server knows this device by.
+            function deviceKeys(sub) {
+                const b64 = (k) =>
+                    btoa(String.fromCharCode(...new Uint8Array(sub.getKey(k))))
+                return {
+                    endpoint: sub.endpoint,
+                    p256dh: b64('p256dh'),
+                    auth: b64('auth'),
+                }
+            }
+
+            // keepDevice records the device id the server answered; "" means
+            // it forgot the device, which had nothing left: the browser's push
+            // subscription ends too.
+            async function keepDevice(id) {
+                if (id) {
+                    _pushSubID = id
+                    localStorage.setItem('gnockpitPushSubID', id)
+                    return
+                }
+                _pushSubID = null
+                localStorage.removeItem('gnockpitPushSubID')
+                const sub = await browserPushSub(false)
+                if (sub) await sub.unsubscribe()
+            }
+
+            // haltLead reads the approaching-halt lead: "30m" or "100 blocks".
+            function haltLead() {
+                const n = parseInt(
+                    document.getElementById('lead-halt_approaching-n').value,
+                    10
+                )
+                if (!(n >= 1)) return null
+                const unit = document.getElementById(
+                    'lead-halt_approaching-unit'
+                ).value
+                return unit === 'blocks' ? n + ' blocks' : n + 'm'
+            }
+
             async function pushSaveSettings() {
                 const alerts = []
                 document
@@ -4999,103 +5077,65 @@
                         const rec = document.querySelector(
                             `#alerts-form input[data-rec-type="${type}"][data-rec-entity="${entity}"]`
                         )
-                        alerts.push({
+                        const a = {
                             alert_type: type,
                             entity_id: entity,
                             recovery_notif: !!(rec && rec.checked),
                             subscription_id: '',
-                        })
-                    })
-
-                // No alerts selected: delete existing subscription and browser push registration.
-                if (alerts.length === 0) {
-                    if (_pushSubID) {
-                        const del = await fetch(
-                            '/api/push/subscribe?id=' + _pushSubID,
-                            { method: 'DELETE' }
-                        )
-                        if (!del.ok) {
-                            showAlertsError(
-                                'Failed to save. See console for details.'
-                            )
-                            return
                         }
-                        _pushSubID = null
-                        localStorage.removeItem('gnockpitPushSubID')
-                    }
-                    const sw = await navigator.serviceWorker.ready
-                    const pushSub = await sw.pushManager.getSubscription()
-                    if (pushSub) await pushSub.unsubscribe()
-                    localStorage.removeItem('gnockpitAlertPrefs')
-                    closeAlertsModal()
+                        if (type === 'halt_approaching') a.lead = haltLead()
+                        alerts.push(a)
+                    })
+                if (alerts.some((a) => a.lead === null)) {
+                    showAlertsError(
+                        'Enter how far ahead of the halt, 1 or more.'
+                    )
                     return
                 }
 
-                if (Notification.permission !== 'granted') {
-                    const p = await Notification.requestPermission()
-                    if (p !== 'granted') {
-                        showAlertsError('Notification permission denied.')
-                        return
+                let pushSub
+                if (alerts.length > 0) {
+                    if (Notification.permission !== 'granted') {
+                        const p = await Notification.requestPermission()
+                        if (p !== 'granted') {
+                            showAlertsError('Notification permission denied.')
+                            return
+                        }
                     }
+                    pushSub = await browserPushSub(true)
+                } else {
+                    // Nothing checked: the device keeps only its reminder,
+                    // if any.
+                    pushSub = await browserPushSub(false)
                 }
-                // Delete old server-side subscription before creating a new one to avoid orphaned rows.
-                if (_pushSubID) {
-                    const del = await fetch(
-                        '/api/push/subscribe?id=' + _pushSubID,
-                        { method: 'DELETE' }
-                    )
-                    if (!del.ok) {
+                if (pushSub) {
+                    // The device keeps its id across saves: what was sent to
+                    // it and its reminder stay.
+                    const r = await fetch('/api/push/subscribe', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            ...deviceKeys(pushSub),
+                            alerts,
+                        }),
+                    })
+                    if (!r.ok) {
+                        console.warn('save alerts:', r.status, await r.text())
                         showAlertsError(
                             'Failed to save. See console for details.'
                         )
                         return
                     }
-                    _pushSubID = null
-                    localStorage.removeItem('gnockpitPushSubID')
+                    await keepDevice((await r.json()).id)
                 }
-                const sw = await navigator.serviceWorker.ready
-                let pushSub = await sw.pushManager.getSubscription()
-                if (!pushSub) {
-                    pushSub = await sw.pushManager.subscribe({
-                        userVisibleOnly: true,
-                        applicationServerKey: urlBase64ToUint8Array(_vapidKey),
-                    })
-                }
-                const p256dh = btoa(
-                    String.fromCharCode(
-                        ...new Uint8Array(pushSub.getKey('p256dh'))
-                    )
-                )
-                const auth = btoa(
-                    String.fromCharCode(
-                        ...new Uint8Array(pushSub.getKey('auth'))
-                    )
-                )
-
-                const r = await fetch('/api/push/subscribe', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        endpoint: pushSub.endpoint,
-                        p256dh,
-                        auth,
-                        alerts,
-                    }),
-                })
-                if (!r.ok) {
-                    showAlertsError('Failed to save. See console for details.')
-                    return
-                }
-                const data = await r.json()
-                _pushSubID = data.id
-                localStorage.setItem('gnockpitPushSubID', data.id)
                 const prefs = {}
                 document
                     .querySelectorAll(
-                        '#alerts-form input[data-type], #alerts-form input[data-rec-type]'
+                        '#alerts-form input[data-type], #alerts-form input[data-rec-type], #lead-halt_approaching-n, #lead-halt_approaching-unit'
                     )
-                    .forEach((cb) => {
-                        prefs[cb.id] = cb.checked
+                    .forEach((el) => {
+                        prefs[el.id] =
+                            el.type === 'checkbox' ? el.checked : el.value
                     })
                 localStorage.setItem(
                     'gnockpitAlertPrefs',
