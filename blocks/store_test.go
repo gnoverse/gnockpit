@@ -4,6 +4,8 @@ import (
 	"context"
 	"database/sql"
 	"reflect"
+	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -160,6 +162,34 @@ func TestStoreMissedByWindows(t *testing.T) {
 	want := WindowReport{Windows: []time.Duration{time.Hour, 0}, Blocks: []int{2, 3}, Missed: map[string][]int{val15T: {1, 2}}}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("MissedByWindows() = %+v, want %+v", got, want)
+	}
+}
+
+func TestStoreMissedByWindowsSearchesTheWindowOnly(t *testing.T) {
+	s := newTestStore(t)
+	rows, err := s.db.QueryContext(context.Background(), "EXPLAIN QUERY PLAN "+windowMissesQuery, 1, Absent, OtherBlock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	var plan []string
+	for rows.Next() {
+		var id, parent, unused int
+		var detail string
+		if err := rows.Scan(&id, &parent, &unused, &detail); err != nil {
+			t.Fatal(err)
+		}
+		plan = append(plan, detail)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	// The 24h window is read on every publish: it must cost its own blocks'
+	// absences, not a pass over the whole history's.
+	if !slices.ContainsFunc(plan, func(d string) bool {
+		return strings.HasPrefix(d, "SEARCH blocks_absences") && strings.Contains(d, "height>?")
+	}) {
+		t.Errorf("plan = %q, want a search of blocks_absences by height", plan)
 	}
 }
 

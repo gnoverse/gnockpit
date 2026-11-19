@@ -374,6 +374,11 @@ func (s *Store) Blocks(ctx context.Context, from, to int64) ([]Record, map[strin
 
 // ---- Missed-block windows
 
+// windowMissesQuery counts each validator's absent and other-block precommits
+// from a height on. The unary + keeps SQLite from grouping through the address
+// index, a pass over every stored absence; it searches the window by height.
+const windowMissesQuery = `SELECT address, COUNT(*) FROM blocks_absences WHERE height >= ? AND kind IN (?, ?) GROUP BY +address`
+
 // WindowReport holds missed-block counts across windows: Blocks[i] and
 // Missed[addr][i] correspond to Windows[i].
 type WindowReport struct {
@@ -401,9 +406,7 @@ func (s *Store) MissedByWindows(ctx context.Context, windows []time.Duration, no
 		if !from.Valid {
 			continue
 		}
-		rows, err := s.db.QueryContext(ctx,
-			`SELECT address, COUNT(*) FROM blocks_absences WHERE height >= ? AND kind IN (?, ?) GROUP BY address`,
-			from.Int64, Absent, OtherBlock)
+		rows, err := s.db.QueryContext(ctx, windowMissesQuery, from.Int64, Absent, OtherBlock)
 		if err != nil {
 			return rep, fmt.Errorf("query misses: %w", err)
 		}
