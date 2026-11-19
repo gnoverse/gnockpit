@@ -529,7 +529,7 @@ func DelayEdges() [DelayBuckets - 1]int64 { return delayEdges }
 // delayBucket is the histogram bucket of a vote delay in ms.
 func delayBucket(ms int64) int {
 	for i, e := range delayEdges {
-		if ms < e || ms < 0 && ms == e {
+		if ms < e || (ms < 0 && ms == e) {
 			return i
 		}
 	}

@@ -335,7 +335,7 @@ func (c *Client) GetBlockAppHash(ctx context.Context, height int) (string, error
 
 // commit returns the commit of height, from memory when an earlier call read
 // it final (canonical): a window sliding by one block costs one or two calls,
-// the new head and the one before it, now final.
+// the new head and the one before it, final by then.
 func (c *Client) commit(ctx context.Context, height int64) (Commit, error) {
 	c.commitsMu.Lock()
 	cm, ok := c.commits[height]
