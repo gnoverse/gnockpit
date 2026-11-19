@@ -95,17 +95,17 @@ type Tracker struct {
 	now   func() time.Time
 
 	// Owned by the goroutine running passes.
-	batch        int       // commits per batch
-	maxBatch     int       // the size the source refused half of; batch grows back to it
-	regrowAt     time.Time // when batch, cut by a timeout, grows back; zero: not cut
-	marks        []lowMark // the lowest stored height at each publish of the last rateWindow
-	floorChecked bool      // the recorded floor was checked against the source since start
-	floorSeen    int64     // a floor one answer showed, set when a second shows it; 0: none
-	behindSince  time.Time // since when passes have met heights not final at the source; zero: none
-	belowSeen    int64     // a height one answer refused first, well below the head; a second pauses the backfill; 0: none
-	belowAt      time.Time // until when the backfill pauses for a source refusing it; not after now: not paused
-	setRefused   int64     // a height whose set one read refused, taken as unserved when a second does; 0: none
-	gapsAt       time.Time // when the event gaps are read again
+	batch        int           // commits per batch
+	maxBatch     int           // the size the source refused half of; batch grows back to it
+	regrowAt     time.Time     // when batch, cut by a timeout, grows back; zero: not cut
+	marks        []lowMark     // the lowest stored height at each publish of the last rateWindow
+	floorChecked bool          // the recorded floor was checked against the source since start
+	floorSeen    int64         // a floor one answer showed, set when a second shows it; 0: none
+	behindSince  time.Time     // since when passes have met heights not final at the source; zero: none
+	belowSeen    int64         // a height one answer refused first, well below the head; a second pauses the backfill; 0: none
+	belowAt      time.Time     // until when the backfill pauses for a source refusing it; not after now: not paused
+	setRefused   map[int64]int // heights whose set reads refused, well below the head: unserved from the second
+	gapsAt       time.Time     // when the event gaps are read again
 	lastErr      map[string]string
 
 	mu       sync.RWMutex
@@ -121,15 +121,16 @@ func NewTracker(store *Store, source Source, cfg Config) (*Tracker, error) {
 		return nil, fmt.Errorf("pace of %s: want 0 or more", cfg.Pace)
 	}
 	return &Tracker{
-		store:    store,
-		source:   source,
-		cfg:      cfg,
-		sleep:    sleepCtx,
-		logf:     log.Printf,
-		now:      time.Now,
-		batch:    cfg.Batch,
-		maxBatch: cfg.Batch,
-		lastErr:  map[string]string{},
+		store:      store,
+		source:     source,
+		cfg:        cfg,
+		sleep:      sleepCtx,
+		logf:       log.Printf,
+		now:        time.Now,
+		batch:      cfg.Batch,
+		maxBatch:   cfg.Batch,
+		setRefused: map[int64]int{},
+		lastErr:    map[string]string{},
 	}, nil
 }
 
@@ -323,6 +324,9 @@ func (t *Tracker) fill(ctx context.Context, heights []int64, head node.ChainHead
 	if err := t.store.Write(ctx, recs); err != nil {
 		return 0, err
 	}
+	for _, r := range recs {
+		delete(t.setRefused, r.Height-1)
+	}
 	t.events(ctx, recs)
 	if cerr == nil || errors.Is(cerr, errNotYet) {
 		return len(recs), cerr
@@ -447,7 +451,7 @@ func (t *Tracker) followChain(ctx context.Context, chainID string) error {
 		t.logf("blocks: chain is %s, dropping the block history of %s", chainID, stored)
 	}
 	t.batch, t.maxBatch, t.regrowAt, t.marks = t.cfg.Batch, t.cfg.Batch, time.Time{}, nil
-	t.floorSeen, t.belowSeen, t.belowAt, t.setRefused = 0, 0, time.Time{}, 0
+	t.floorSeen, t.belowSeen, t.belowAt, t.setRefused = 0, 0, time.Time{}, map[int64]int{}
 	return t.store.Reset(ctx, chainID)
 }
 

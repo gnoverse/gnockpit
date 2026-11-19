@@ -122,11 +122,11 @@ func (t *Tracker) rounds(ctx context.Context, r *Record, head int64) error {
 	if r.Height > 1 {
 		prev, err = t.validatorSet(ctx, r.Height-1)
 		switch {
-		case node.IsRefusal(err) && head-(r.Height-1) > floorMargin && t.setRefused == r.Height-1:
-			prev, prevRefused, t.setRefused = nil, true, 0
 		case node.IsRefusal(err) && head-(r.Height-1) > floorMargin:
-			t.setRefused = r.Height - 1
-			return fmt.Errorf("validator set at %d: %w", r.Height-1, err)
+			if t.setRefused[r.Height-1]++; t.setRefused[r.Height-1] < 2 {
+				return fmt.Errorf("validator set at %d: %w", r.Height-1, err)
+			}
+			prev, prevRefused = nil, true
 		case err != nil:
 			return fmt.Errorf("validator set at %d: %w", r.Height-1, err)
 		}

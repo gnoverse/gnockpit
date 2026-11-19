@@ -920,6 +920,38 @@ func TestPassFlagsALateBlockWhoseSetBelowIsRefused(t *testing.T) {
 	}
 }
 
+func TestPassFlagsTwoLateBlocksWhoseSetsBelowAreRefused(t *testing.T) {
+	c := newFakeChain(2300)
+	c.round[1100], c.round[1050] = 1, 1
+	c.setRefused = map[int64]bool{1099: true, 1049: true}
+	tt := newTestTracker(t, c)
+	for range 60 {
+		more, err := tt.pass(context.Background())
+		if err == nil && !more {
+			break
+		}
+	}
+	wantRange(t, tt.store, 1, 2299)
+	for _, h := range []int64{1100, 1050} {
+		if reason := storedFlag(t, tt.store, h); !strings.Contains(reason, fmt.Sprintf("does not serve the set at #%d", h-1)) {
+			t.Errorf("flag of %d = %q, want the refused set below", h, reason)
+		}
+	}
+}
+
+func TestPassForgetsARefusedSetOnAnotherChain(t *testing.T) {
+	c := newFakeChain(2300)
+	c.round[1000] = 1
+	c.setRefused = map[int64]bool{999: true}
+	tt := newTestTrackerOn(t, c, newTestStore(t), Config{Pace: 0, Batch: 2400})
+	tt.setRefused[999] = 1 // refused once on the chain the store held
+	c.chainID = "test-13"
+	// On the new chain, 999's refusal is a first one: the batch is asked again.
+	if _, err := tt.pass(context.Background()); err == nil {
+		t.Error("pass() = nil, want the first refusal on this chain asked again")
+	}
+}
+
 func TestPassFlagsNoLateBlockOnASingleSetRefusal(t *testing.T) {
 	c := newFakeChain(2300)
 	c.round[1000] = 1
