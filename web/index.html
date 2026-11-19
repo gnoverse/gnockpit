@@ -701,8 +701,11 @@
                 }
             }
             /* ---- Header link buttons (left of Alerts) */
+            /* Wraps on a narrow phone rather than push the page sideways. */
             .header-actions {
                 display: flex;
+                flex-wrap: wrap;
+                justify-content: flex-end;
                 align-items: center;
                 gap: 8px;
             }
@@ -733,6 +736,34 @@
                 border-radius: 50%;
                 display: inline-block;
                 flex-shrink: 0;
+            }
+            .hdr-btn {
+                background: var(--bg);
+                border: 1px solid var(--border);
+                color: var(--fg);
+                padding: 6px 8px;
+                border-radius: 4px;
+                font-family: inherit;
+                font-size: 11px;
+                cursor: pointer;
+                white-space: nowrap;
+            }
+            .hdr-btn:hover {
+                border-color: var(--fg2);
+            }
+            /* Phones: tighter header buttons, and "ETA" for "Block ETA", so
+               the status link, the ETA and the alerts fit beside the title. */
+            @media (max-width: 480px) {
+                .header-actions {
+                    gap: 6px;
+                }
+                .header-link,
+                .hdr-btn {
+                    padding: 4px 6px;
+                }
+                .hdr-btn .long {
+                    display: none;
+                }
             }
             @media (max-width: 768px) {
                 .node-cards {
@@ -890,21 +921,7 @@
                 transition: opacity 0.4s;
                 transform: translateX(-50%);
             }
-            /* ---- Block ETA: header button, countdown cards, planner modal */
-            .eta-hdr-btn {
-                background: var(--bg);
-                border: 1px solid var(--border);
-                color: var(--fg);
-                padding: 6px 8px;
-                border-radius: 4px;
-                font-family: inherit;
-                font-size: 11px;
-                cursor: pointer;
-                white-space: nowrap;
-            }
-            .eta-hdr-btn:hover {
-                border-color: var(--fg2);
-            }
+            /* ---- Block ETA: countdown cards, planner modal */
             .eta-actions {
                 display: flex;
                 gap: 8px;
@@ -1368,9 +1385,6 @@
                 }
             }
             @media (max-width: 480px) {
-                .eta-hdr-btn .txt {
-                    display: none;
-                }
                 .eta-count {
                     font-size: 26px;
                 }
@@ -1394,26 +1408,31 @@
                 <span id="header-links" class="header-links"></span>
                 <button
                     id="eta-btn"
-                    class="eta-hdr-btn"
+                    class="hdr-btn"
                     title="When will a block be produced, or which block at a given time"
                     aria-label="Block ETA"
                     onclick="openEtaModal()"
                 >
-                    ⏱<span class="txt"> Block ETA</span>
+                    <svg
+                        width="11"
+                        height="11"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="2"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                        style="vertical-align: middle; margin-right: 4px"
+                        aria-hidden="true"
+                    >
+                        <circle cx="12" cy="12" r="9" />
+                        <path d="M12 7v5l3 2" /></svg
+                    ><span class="long">Block </span>ETA
                 </button>
                 <button
                     id="push-btn"
-                    style="
-                        display: none;
-                        background: var(--bg);
-                        border: 1px solid var(--border);
-                        color: var(--fg);
-                        padding: 6px 8px;
-                        border-radius: 4px;
-                        font-family: inherit;
-                        font-size: 11px;
-                        cursor: pointer;
-                    "
+                    class="hdr-btn"
+                    style="display: none"
                     onclick="openAlertsModal()"
                 >
                     <svg
