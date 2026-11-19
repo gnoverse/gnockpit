@@ -211,6 +211,16 @@ func (t *Tracker) pass(ctx context.Context) (more bool, err error) {
 		if err != nil {
 			return false, err
 		}
+		if high < top && n > 0 {
+			// Catching up after downtime takes several batches: they go at
+			// the backfill's pace, the progress showing as they do.
+			if err := t.publish(ctx); err != nil {
+				return false, err
+			}
+			if err := t.sleep(ctx, t.cfg.Pace); err != nil {
+				return false, err
+			}
+		}
 	}
 	if !t.floorChecked {
 		t.floorChecked = t.recheckFloor(ctx)

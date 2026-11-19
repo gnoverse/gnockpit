@@ -300,6 +300,27 @@ func TestPassStoresUpToTheHeadThenOneBatchBelow(t *testing.T) {
 	}
 }
 
+func TestPassCatchesUpAtThePaceAndShowsIt(t *testing.T) {
+	c := newFakeChain(250)
+	tt := newTestTracker(t, c)
+	mustPass(t, tt) // 249..150
+	// Back after downtime: 350 heights to the head, in batches of 100.
+	c.head = 600
+	var shown []int64
+	tt.sleep = func(ctx context.Context, d time.Duration) error {
+		tt.waits = append(tt.waits, d)
+		shown = append(shown, tt.Progress().To)
+		return ctx.Err()
+	}
+	mustPass(t, tt)
+	if !slices.Equal(tt.waits, []time.Duration{DefaultPace, DefaultPace, DefaultPace}) {
+		t.Errorf("waits = %v, want the pace between the 4 batches", tt.waits)
+	}
+	if !slices.Equal(shown, []int64{349, 449, 549}) {
+		t.Errorf("progress shown between batches = %v, want [349 449 549]", shown)
+	}
+}
+
 func TestPassCompletesAtGenesis(t *testing.T) {
 	c := newFakeChain(120)
 	tt := newTestTracker(t, c)
