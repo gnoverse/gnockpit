@@ -586,21 +586,23 @@ func TestPassRestoresTheBatchToTheRefusedCeiling(t *testing.T) {
 	}
 }
 
-func TestPassFillsASourceThatTakesOneCallABatch(t *testing.T) {
+func TestPassPausesAOneCallSourceAtItsFloor(t *testing.T) {
 	c := newFakeChain(2300)
 	c.floor, c.maxBatch = 1000, 1
 	tt := newTestTrackerOn(t, c, newTestStore(t), Config{Pace: 0, Batch: 1})
 	for i := 0; mustPass(t, tt); i++ {
 		if i == 1400 {
-			t.Fatal("the backfill never ended")
+			t.Fatal("the backfill never paused")
 		}
 	}
+	// One call per batch proves no floor: 999 refused twice in a row pauses
+	// the backfill, reported, rather than set one.
 	wantRange(t, tt.store, 1000, 2299)
-	if f, _ := tt.store.Floor(context.Background()); f != 1000 {
-		t.Errorf("Floor() = %d, want 1000", f)
+	if f, _ := tt.store.Floor(context.Background()); f != 0 || tt.Progress().Complete {
+		t.Errorf("Floor() = %d, complete %v; want no floor", f, tt.Progress().Complete)
 	}
-	if tt.logged("asking") {
-		t.Errorf("logs = %q, want no batch refused", tt.logs)
+	if !tt.logged("refuses #999, well below the head") || tt.logged("asking") {
+		t.Errorf("logs = %q, want the refusal reported and no batch refused", tt.logs)
 	}
 }
 
@@ -610,19 +612,24 @@ func TestPassPausesTheBackfillWhenTheLowestStoredHeightIsRefused(t *testing.T) {
 	at := t0
 	tt.now = func() time.Time { return at }
 	mustPass(t, tt) // 4999 to 3900
-	// The source's oldest block rises above the stored history.
+	// The source's oldest block rises above the stored history: the witness,
+	// 3900, refused twice in a row pauses the backfill.
 	c.floor = 4200
 	mustPass(t, tt)
+	mustPass(t, tt)
 	asked := len(c.batches)
-	mustPass(t, tt) // paused: nothing asked below
+	if mustPass(t, tt) {
+		t.Error("pass() reported heights left below while paused: passes go at the sync interval")
+	}
 	if len(c.batches) != asked {
 		t.Errorf("batches = %d, want %d: the backfill pauses", len(c.batches), asked)
 	}
 	at = at.Add(gapRetry)
-	mustPass(t, tt) // asked again, refused again
+	mustPass(t, tt) // asked again: refused twice again
+	mustPass(t, tt)
 	var reports int
 	for _, l := range tt.logs {
-		if strings.Contains(l, "refuses #3900, the lowest stored height") {
+		if strings.Contains(l, "refuses #3900, well below the head") {
 			reports++
 		}
 	}
@@ -638,6 +645,19 @@ func TestPassPausesTheBackfillWhenTheLowestStoredHeightIsRefused(t *testing.T) {
 	wantRange(t, tt.store, 2801, 4999)
 	if !tt.logged("blocks: below ok again") {
 		t.Errorf("logs = %q, want the recovery", tt.logs)
+	}
+}
+
+func TestPassPausesNotOnASingleRefusedWitness(t *testing.T) {
+	c := newFakeChain(5000)
+	tt := newTestTrackerOn(t, c, newTestStore(t), Config{Pace: 0, Batch: 1100})
+	mustPass(t, tt)      // 4999 to 3900
+	c.refusedOnce = 3900 // one backend far behind, once
+	mustPass(t, tt)
+	mustPass(t, tt)
+	wantRange(t, tt.store, 2801, 4999)
+	if tt.logged("refuses") {
+		t.Errorf("logs = %q, want no pause on one refusal", tt.logs)
 	}
 }
 
