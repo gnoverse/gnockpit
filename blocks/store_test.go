@@ -78,6 +78,64 @@ func TestStoreWriteAndRead(t *testing.T) {
 	}
 }
 
+func TestStoreStaysCompact(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	addrs := []string{val180, valG0Y, val15T, valHQH, valH97, valMMG, valL98}
+	set := make([]Member, len(addrs))
+	for i, a := range addrs {
+		set[i] = Member{Address: a, PubKey: "KEY" + a, Power: 10}
+	}
+	if err := s.PutValset(ctx, "SET7", set); err != nil {
+		t.Fatal(err)
+	}
+	recs := make([]Record, 1000)
+	for i := range recs {
+		h := int64(i + 1)
+		r := Record{Height: h, Time: t0.Add(time.Duration(h) * time.Second), Proposer: addrs[i%7], Round: 0, Txs: 1, ValsetHash: "SET7"}
+		for j := range 4 {
+			r.Absences = append(r.Absences, Absence{Address: addrs[(i+j)%7], Kind: Absent})
+		}
+		for j := 4; j < 7; j++ {
+			r.Delays = append(r.Delays, Delay{Address: addrs[(i+j)%7], Ms: int64(j * 100)})
+		}
+		recs[i] = r
+	}
+	if err := s.Write(ctx, recs); err != nil {
+		t.Fatal(err)
+	}
+	var pages, pageSize int64
+	if err := s.db.QueryRowContext(ctx, `PRAGMA page_count`).Scan(&pages); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.db.QueryRowContext(ctx, `PRAGMA page_size`).Scan(&pageSize); err != nil {
+		t.Fatal(err)
+	}
+	// Each address is stored once: 1,000 blocks with 4 absences each take well
+	// under 300 KB. With the address in every absence and two indexes over
+	// them, they take over 1 MB.
+	if size := pages * pageSize; size > 300<<10 {
+		t.Errorf("store size = %d KB, want at most 300 KB", size>>10)
+	}
+}
+
+func TestStoreReadsAbsencesInSetOrder(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	// Another set stores the validators first, in the other order.
+	if err := s.PutValset(ctx, "OTHER", []Member{testSet[1], testSet[0]}); err != nil {
+		t.Fatal(err)
+	}
+	putTestSet(t, s)
+	r := rec(10, Absence{valG0Y, Absent}, Absence{val15T, Nil})
+	if err := s.Write(ctx, []Record{r}); err != nil {
+		t.Fatal(err)
+	}
+	if got := storedBlock(t, s, 10); !reflect.DeepEqual(got.Absences, r.Absences) {
+		t.Errorf("absences = %+v, want %+v (set order)", got.Absences, r.Absences)
+	}
+}
+
 func TestStoreWriteNeedsTheSet(t *testing.T) {
 	s := newTestStore(t)
 	if err := s.Write(context.Background(), []Record{rec(10)}); err == nil {
