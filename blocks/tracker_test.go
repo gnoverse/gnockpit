@@ -727,11 +727,33 @@ func TestPassHalvesTheBatchSizeOnAShortBatchTimingOut(t *testing.T) {
 	c := newFakeChain(250)
 	tt := newTestTracker(t, c)
 	mustPass(t, tt) // 249..150
-	// Three heights to the head time out: the batch size halves, from 100.
+	// Three heights to the head time out: the batch size halves, from 100,
+	// and the next pass asks them again.
 	c.head, c.fail = 253, []error{timeoutError{}}
+	if _, err := tt.pass(context.Background()); !isTimeout(err) {
+		t.Fatalf("pass() = %v, want the timeout", err)
+	}
 	mustPass(t, tt)
 	if sizes := batchSizes(c); !slices.Equal(sizes, []int{100, 3, 3, 50}) {
 		t.Errorf("batch sizes = %v, want [100 3 3 50]", sizes)
+	}
+}
+
+func TestPassEndsOnAShortBatchTimingOut(t *testing.T) {
+	c := newFakeChain(250)
+	tt := newTestTracker(t, c)
+	mustPass(t, tt) // 249..150
+	// Three heights to the head keep timing out: the halved size does not
+	// shrink them, so the pass ends rather than asking them again.
+	c.head = 253
+	for range 10 {
+		c.fail = append(c.fail, timeoutError{})
+	}
+	if _, err := tt.pass(context.Background()); !isTimeout(err) {
+		t.Fatalf("pass() = %v, want the timeout", err)
+	}
+	if sizes := batchSizes(c); !slices.Equal(sizes, []int{100, 3}) {
+		t.Errorf("batch sizes = %v, want [100 3]", sizes)
 	}
 }
 

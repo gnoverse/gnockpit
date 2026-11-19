@@ -281,6 +281,9 @@ func (t *Tracker) fill(ctx context.Context, heights []int64, head node.ChainHead
 			if t.batch != before {
 				t.logf("blocks: a batch of %d commits failed (%v), asking %d at a time", len(asked), cerr, t.batch)
 			}
+			if isTimeout(cerr) && t.batch >= len(asked) {
+				return 0, cerr // asked again now, the same calls would time out the same way
+			}
 			return 0, nil
 		}
 		return 0, cerr
