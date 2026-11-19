@@ -115,12 +115,13 @@ const (
 	metaFloor         = "floor"
 	metaChangesFilled = "valset_changes_filled" // blocks_valset_changes covers every stored block
 	metaValsetToldTo  = "valset_told_to"        // the validator set changes up to this height were told
-	metaDaysFilled    = "days_filled"           // blocks_days counts the absences of every stored block
+	metaDaysFilled      = "days_filled"      // blocks_days counts the absences of every stored block
+	metaProposalsFilled = "proposals_filled" // blocks_days counts the proposals of every stored block
 )
 
 // filledKeys are the meta keys of the one-time fills: an empty history (a
 // Reset) has nothing to fill.
-var filledKeys = []string{metaChangesFilled, metaDaysFilled}
+var filledKeys = []string{metaChangesFilled, metaDaysFilled, metaProposalsFilled}
 
 // Store persists the block history. Times are kept to the millisecond.
 type Store struct {
@@ -138,6 +139,9 @@ func NewStore(ctx context.Context, db *sql.DB) (*Store, error) {
 		return nil, err
 	}
 	if err := s.fillDays(ctx); err != nil {
+		return nil, err
+	}
+	if err := s.fillProposals(ctx); err != nil {
 		return nil, err
 	}
 	return s, nil
@@ -228,6 +232,9 @@ func writeRecord(ctx context.Context, tx *sql.Tx, ids *validatorIDs, r Record) e
 		); err != nil {
 			return fmt.Errorf("insert flag %d: %w", r.Height, err)
 		}
+	}
+	if err := countProposals(ctx, tx, ids, r); err != nil {
+		return err
 	}
 	day := dayOf(r.Time)
 	for _, a := range r.Absences {
