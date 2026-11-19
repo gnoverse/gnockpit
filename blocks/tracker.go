@@ -56,6 +56,14 @@ type Source interface {
 
 var _ Source = (*node.Client)(nil)
 
+// direction is the way a fill runs from the stored range.
+type direction int
+
+const (
+	upward   direction = iota // toward the head
+	downward                  // toward genesis
+)
+
 // Progress is how far the stored history reaches.
 type Progress struct {
 	ChainID  string
@@ -80,7 +88,7 @@ type Tracker struct {
 	batch    int       // commits per batch
 	maxBatch int       // the size the source refused half of; batch grows back to it
 	regrowAt time.Time // when batch, cut by a timeout, grows back; zero: not cut
-	fills    []fill    // the lowest stored height at each publish of the last rateWindow
+	marks    []lowMark // the lowest stored height at each publish of the last rateWindow
 	lastErr  map[string]string
 
 	mu       sync.RWMutex
@@ -163,7 +171,7 @@ func (t *Tracker) pass(ctx context.Context) (more bool, err error) {
 		low, high = top+1, top
 	}
 	for high < top {
-		n, err := t.fill(ctx, heightsUp(high+1, min(high+int64(t.batch), top)), head, false)
+		n, err := t.fill(ctx, heightsUp(high+1, min(high+int64(t.batch), top)), head, upward)
 		if err != nil {
 			return false, err
 		}
@@ -176,7 +184,7 @@ func (t *Tracker) pass(ctx context.Context) (more bool, err error) {
 	if low <= max(1, floor) {
 		return false, nil
 	}
-	n, err := t.fill(ctx, heightsDown(low-1, max(1, floor, low-int64(t.batch))), head, true)
+	n, err := t.fill(ctx, heightsDown(low-1, max(1, floor, low-int64(t.batch))), head, downward)
 	if err != nil {
 		return false, err
 	}
@@ -187,11 +195,11 @@ func (t *Tracker) pass(ctx context.Context) (more bool, err error) {
 }
 
 // fill stores the commits of heights, which run outward from the stored
-// range: up for the head, down for the backfill. It returns how many it
-// stored: the first ones, up to a height the source refused or whose commit
-// is not final yet. A batch refused whole halves the batch size for good; one
-// too slow to answer, for timeoutCut. Either stores nothing.
-func (t *Tracker) fill(ctx context.Context, heights []int64, head node.ChainHead, down bool) (int, error) {
+// range in dir. It returns how many it stored: the first ones, up to a height
+// the source refused or whose commit is not final yet. A batch refused whole
+// halves the batch size for good; one too slow to answer, for timeoutCut.
+// Either stores nothing.
+func (t *Tracker) fill(ctx context.Context, heights []int64, head node.ChainHead, dir direction) (int, error) {
 	commits, cerr := t.commits(ctx, heights)
 	var he *node.HeightError
 	if cerr != nil && !errors.As(cerr, &he) {
@@ -233,7 +241,7 @@ func (t *Tracker) fill(ctx context.Context, heights []int64, head node.ChainHead
 	}
 	// The backfill met a height the source refuses, well below the head: the
 	// one above it is the oldest the source keeps.
-	if down && node.IsRefusal(cerr) && head.Height-he.Height > floorMargin {
+	if dir == downward && node.IsRefusal(cerr) && head.Height-he.Height > floorMargin {
 		if err := t.store.SetFloor(ctx, he.Height+1); err != nil {
 			return len(recs), err
 		}
@@ -440,7 +448,7 @@ func (t *Tracker) followChain(ctx context.Context, chainID string) error {
 	if stored != "" {
 		t.logf("blocks: chain is %s, dropping the block history of %s", chainID, stored)
 	}
-	t.batch, t.maxBatch, t.regrowAt, t.fills = batchSize, batchSize, time.Time{}, nil
+	t.batch, t.maxBatch, t.regrowAt, t.marks = batchSize, batchSize, time.Time{}, nil
 	return t.store.Reset(ctx, chainID)
 }
 
@@ -481,8 +489,8 @@ func (t *Tracker) publish(ctx context.Context) error {
 	return nil
 }
 
-// fill is the lowest stored height at a time.
-type fill struct {
+// lowMark is the lowest stored height at a time.
+type lowMark struct {
 	at  time.Time
 	low int64
 }
@@ -492,15 +500,14 @@ type fill struct {
 // some time. An empty store records nothing: its first height is no progress.
 func (t *Tracker) measure(low int64) float64 {
 	if low == 0 {
-		t.fills = nil
 		return 0
 	}
 	now := t.now()
-	t.fills = append(t.fills, fill{at: now, low: low})
-	for now.Sub(t.fills[0].at) > rateWindow {
-		t.fills = t.fills[1:]
+	t.marks = append(t.marks, lowMark{at: now, low: low})
+	for now.Sub(t.marks[0].at) > rateWindow {
+		t.marks = t.marks[1:]
 	}
-	first := t.fills[0]
+	first := t.marks[0]
 	span := now.Sub(first.at).Seconds()
 	if span <= 0 {
 		return 0
