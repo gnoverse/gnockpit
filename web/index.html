@@ -926,6 +926,7 @@
                 display: flex;
                 gap: 8px;
                 align-items: center;
+                margin-left: auto;
                 font-size: 11px;
                 color: var(--fg2);
             }
@@ -942,66 +943,36 @@
                 color: var(--fg);
                 border-color: var(--fg2);
             }
-            .eta-target {
-                font-size: 12px;
-                color: var(--fg2);
-                margin: 8px 0 2px;
-            }
-            .eta-target b {
-                color: var(--fg);
-            }
-            .eta-tag {
-                display: inline-block;
-                margin-left: 6px;
-                padding: 0 6px;
-                border-radius: 10px;
-                border: 1px solid var(--blue);
-                color: var(--blue);
-                font-size: 11px;
-                overflow-wrap: anywhere;
-            }
-            .eta-tag.halt {
-                border-color: var(--yellow);
-                color: var(--yellow);
-            }
             .eta-grid {
                 display: grid;
-                grid-template-columns: minmax(300px, 1fr) minmax(320px, 1.3fr);
-                gap: 20px;
+                grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+                gap: 8px 32px;
                 align-items: start;
             }
+            /* The countdown is the card's one large figure; everything else
+               reads like the Network State card. */
             .eta-count {
-                font-size: 34px;
-                font-weight: 700;
-                color: var(--blue);
-                letter-spacing: 1px;
+                font-size: 28px;
+                color: var(--fg);
                 line-height: 1.1;
+                margin-top: 2px;
                 font-variant-numeric: tabular-nums;
             }
-            .eta-count small {
-                font-size: 12px;
-                font-weight: 400;
+            .eta-target {
                 color: var(--fg2);
-                letter-spacing: 0;
-                margin-left: 8px;
+                margin: 2px 0 10px;
+                overflow-wrap: anywhere;
             }
-            .eta-when {
-                margin-top: 6px;
-                font-size: 13px;
+            .eta-card .kv .v {
+                word-break: normal;
+                overflow-wrap: anywhere;
             }
-            .eta-when .local {
-                color: var(--fg2);
-                font-size: 12px;
-            }
-            .eta-bands,
-            .eta-meta {
-                margin-top: 4px;
-                font-size: 12px;
-                color: var(--fg2);
-            }
-            .eta-bands b {
+            .eta-card .kv b {
+                font-weight: normal;
                 color: var(--fg);
-                font-weight: 500;
+            }
+            .eta-card .dim {
+                color: var(--fg2);
             }
             .eta-warn {
                 margin-top: 4px;
@@ -1011,7 +982,7 @@
             .eta-range {
                 position: relative;
                 height: 34px;
-                margin: 12px 0 4px;
+                margin: 6px 0 2px;
             }
             .eta-range .track,
             .eta-range .b95,
@@ -1076,46 +1047,12 @@
                 margin-right: 4px;
                 vertical-align: middle;
             }
-            .eta-drift {
-                margin-top: 10px;
-                font-size: 12px;
-            }
-            .eta-chip {
-                display: inline-block;
-                padding: 1px 7px;
-                border-radius: 10px;
-                font-weight: 600;
-                margin-right: 6px;
-            }
-            .eta-chip.late {
-                background: rgba(210, 153, 34, 0.15);
-                color: var(--yellow);
-            }
-            .eta-chip.early {
-                background: rgba(88, 166, 255, 0.15);
-                color: var(--blue);
-            }
-            .eta-chip.flat {
-                background: rgba(139, 148, 158, 0.15);
-                color: var(--fg2);
-            }
-            .eta-progress,
-            .eta-mini {
-                margin-top: 8px;
-                height: 4px;
-                background: var(--bg);
-                border-radius: 2px;
-                overflow: hidden;
-            }
-            .eta-progress > div,
-            .eta-mini > div {
-                height: 100%;
-                width: 0;
-                background: var(--green);
-            }
-            .eta-mini {
+            /* The range bar and its legend: the compact card's second line. */
+            .eta-bar {
                 display: none;
-                height: 3px;
+            }
+            .eta-bar .eta-legend {
+                margin-top: 16px;
             }
             .eta-chart-title {
                 font-size: 11px;
@@ -1193,7 +1130,6 @@
             }
             .eta-inline {
                 display: none;
-                font-size: 12px;
                 color: var(--fg2);
                 flex: 1;
                 min-width: 0;
@@ -1202,33 +1138,34 @@
                 text-overflow: ellipsis;
             }
             .eta-inline b {
-                color: var(--blue);
-                font-size: 14px;
-            }
-            .eta-inline .w {
                 color: var(--fg);
-            }
-            .eta-inline .eta-chip {
-                padding: 0 5px;
-                margin: 0 0 0 4px;
+                font-weight: normal;
+                font-variant-numeric: tabular-nums;
             }
             .eta-card.compact .card-header-row h2 {
                 flex: 0 0 auto;
             }
             .eta-card.compact .eta-inline,
-            .eta-card.compact .eta-mini {
+            .eta-card.compact .eta-bar {
                 display: block;
             }
-            .eta-card.compact .section-body {
+            .eta-card.compact .section-body,
+            .card .card-header-row:has(h2.collapsed) ~ .eta-bar {
                 display: none;
             }
+            /* eta-norange: no ranges yet, so no bar to draw. */
+            .eta-card.eta-failed .eta-count,
+            .eta-card.eta-failed .eta-target,
             .eta-card.eta-failed .eta-chart,
             .eta-card.eta-failed .eta-scen-title,
-            .eta-card.eta-failed .eta-legend,
-            .eta-card.eta-failed .eta-progress,
-            .eta-card.eta-failed .eta-mini,
-            .eta-card.eta-reached .eta-scen-title {
+            .eta-card.eta-failed .eta-bar,
+            .eta-card.eta-reached .eta-scen-title,
+            .eta-card.eta-reached .eta-bar,
+            .eta-card.eta-norange .eta-bar {
                 display: none;
+            }
+            .eta-card.eta-failed .eta-grid {
+                grid-template-columns: 1fr;
             }
             .eta-modal {
                 display: none;
@@ -1358,9 +1295,6 @@
                 }
             }
             @media (max-width: 768px) {
-                .eta-count {
-                    font-size: 28px;
-                }
                 .eta-chart svg {
                     height: 130px;
                 }
@@ -1377,17 +1311,8 @@
                     flex-basis: 100%;
                     white-space: normal;
                 }
-                .eta-when .local {
-                    display: block;
-                }
-                .eta-when .sep {
-                    display: none;
-                }
             }
             @media (max-width: 480px) {
-                .eta-count {
-                    font-size: 26px;
-                }
                 .eta-legend {
                     gap: 8px;
                 }
@@ -1521,7 +1446,7 @@
                         >
                     </span>
                 </div>
-                <div class="eta-mini"><div></div></div>
+                <div class="eta-bar"></div>
                 <div class="section-body"></div>
             </div>
             <div class="card eta-card" id="eta-link-card" style="display: none">
@@ -1552,7 +1477,7 @@
                         </button>
                     </span>
                 </div>
-                <div class="eta-mini"><div></div></div>
+                <div class="eta-bar"></div>
                 <div class="section-body"></div>
             </div>
             <div class="card">
@@ -4543,7 +4468,7 @@
 
             // ---- Click-to-copy handlers (delegated)
 
-            // KV values in the Network State card
+            // KV values in the Network State and Block ETA cards
             document.addEventListener('click', function (e) {
                 var v = e.target.closest('.kv .v')
                 if (!v) return
@@ -5236,13 +5161,20 @@
                         MONS[d.getUTCMonth()]
                     )
                 }
+                // local is t on the viewer's clock, with its day when that
+                // differs from the UTC one, or "" for a viewer on UTC.
                 function local(t) {
-                    return new Date(t).toLocaleString(undefined, {
-                        weekday: 'short',
-                        hour: '2-digit',
-                        minute: '2-digit',
-                        timeZoneName: 'short',
-                    })
+                    var d = new Date(t)
+                    if (d.getTimezoneOffset() === 0) return ''
+                    return (
+                        pad(d.getHours()) +
+                        ':' +
+                        pad(d.getMinutes()) +
+                        (d.getDay() !== d.getUTCDay()
+                            ? ' ' + DAYS[d.getDay()]
+                            : '') +
+                        ' your time'
+                    )
                 }
                 function countdown(sec) {
                     var s = Math.max(0, Math.round(sec))
@@ -5282,19 +5214,25 @@
                         'm'
                     )
                 }
-                function chip(sec) {
-                    var cls =
-                        Math.abs(sec) < 15 ? 'flat' : sec > 0 ? 'late' : 'early'
-                    return (
-                        '<span class="eta-chip ' +
-                        cls +
-                        '">' +
-                        drift(sec) +
-                        '</span>'
-                    )
-                }
                 function rangeText(r) {
                     return hm(ms(r.from)) + '–' + hm(ms(r.to))
+                }
+                // rangeDays is rangeText with the days, when the range spans
+                // more than one.
+                function rangeDays(r) {
+                    var a = ms(r.from)
+                    var b = ms(r.to)
+                    if (day(a) === day(b)) return rangeText(r)
+                    return day(a) + ' ' + hm(a) + '–' + day(b) + ' ' + hm(b)
+                }
+                function row(k, v) {
+                    return (
+                        '<span class="k">' +
+                        k +
+                        '</span><span class="v">' +
+                        v +
+                        '</span>'
+                    )
                 }
 
                 // getETA queries /api/eta; a failure to reach or read it comes
@@ -5318,34 +5256,32 @@
                 }
 
                 var CARD_BODY =
-                    '<div class="eta-target"></div>' +
                     '<div class="eta-grid"><div>' +
                     '<div class="eta-count">--:--:--</div>' +
-                    '<div class="eta-when"></div>' +
-                    '<div class="eta-bands"></div>' +
-                    '<div class="eta-range"></div>' +
-                    '<div class="eta-legend">' +
-                    '<span><i style="background: rgba(88, 166, 255, 0.55)"></i>80% likely</span>' +
-                    '<span><i style="background: rgba(88, 166, 255, 0.22)"></i>95%</span>' +
-                    '<span style="color: var(--blue)">● ETA</span>' +
-                    '<span style="color: var(--yellow)">◆ original</span>' +
-                    '</div>' +
-                    '<div class="eta-drift"></div>' +
-                    '<div class="eta-meta"></div>' +
-                    '<div class="eta-warn"></div>' +
-                    '<div class="eta-progress"><div></div></div>' +
+                    '<div class="eta-target"></div>' +
+                    '<div class="kv"></div>' +
                     '</div><div class="eta-chart">' +
                     '<div class="eta-chart-title">ETA over time · cone = 80% range</div>' +
                     '<svg></svg>' +
                     '</div></div>' +
                     '<div class="eta-scen-title">If the chain keeps the pace of…</div>' +
                     '<div class="eta-scen"></div>'
+                // The compact card shows the range bar under its one line.
+                var CARD_BAR =
+                    '<div class="eta-range"></div>' +
+                    '<div class="eta-legend">' +
+                    '<span><i style="background: rgba(88, 166, 255, 0.55)"></i>80% likely</span>' +
+                    '<span><i style="background: rgba(88, 166, 255, 0.22)"></i>95%</span>' +
+                    '<span style="color: var(--blue)">● ETA</span>' +
+                    '<span class="orig" style="color: var(--yellow)">◆ original</span>' +
+                    '</div>'
 
                 // etaCard drives one countdown card: kind "halt" for the halt
                 // scheduled on chain, "link" for the target in the page link.
                 function etaCard(id, kind) {
                     var el = $(id)
                     el.querySelector('.section-body').innerHTML = CARD_BODY
+                    el.querySelector('.eta-bar').innerHTML = CARD_BAR
                     function q(sel) {
                         return el.querySelector(sel)
                     }
@@ -5364,7 +5300,10 @@
                         try {
                             localStorage.setItem(compactKey, on ? '1' : '0')
                         } catch (e) {}
-                        if (!on) drawChart()
+                        // The bar and the chart measure their width: draw
+                        // whichever this shows.
+                        if (on) renderRange()
+                        else drawChart()
                     }
                     try {
                         setCompact(localStorage.getItem(compactKey) === '1')
@@ -5372,15 +5311,23 @@
                     cb.addEventListener('change', function () {
                         setCompact(cb.checked)
                     })
-                    // A collapsed card skipped its chart: draw it on reopening.
+                    // A collapsed card skipped its chart and bar: draw them on
+                    // reopening.
                     q('h2').addEventListener('click', function () {
-                        setTimeout(drawChart)
+                        setTimeout(function () {
+                            drawChart()
+                            renderRange()
+                        })
                     })
 
-                    function name() {
-                        if (kind === 'halt')
-                            return 'halt ' + esc(rep.halt.min_version)
-                        return esc(label)
+                    // head names the target: "#1,250,000 · <label>", or
+                    // "halt #1,250,000 · min v1.8.0".
+                    function head() {
+                        var h = '#' + nf(rep.target.height)
+                        if (kind !== 'halt')
+                            return h + (label ? ' · ' + esc(label) : '')
+                        var v = rep.halt.min_version
+                        return 'halt ' + h + (v ? ' · min ' + esc(v) : '')
                     }
 
                     function show(r, l) {
@@ -5403,151 +5350,157 @@
                     }
 
                     function render() {
-                        var parts = [
-                            '.eta-target',
-                            '.eta-when',
-                            '.eta-bands',
-                            '.eta-range',
-                            '.eta-drift',
-                            '.eta-meta',
-                            '.eta-warn',
-                            '.eta-scen',
-                        ]
-                        parts.forEach(function (sel) {
-                            q(sel).innerHTML = ''
-                        })
+                        q('.kv').innerHTML = ''
+                        q('.eta-scen').innerHTML = ''
+                        q('.eta-range').innerHTML = ''
                         // A card without any answer yet shows only the error;
                         // a produced target has no pace scenarios.
                         el.classList.toggle('eta-failed', !!rep.error)
                         el.classList.toggle('eta-reached', !!rep.reached_at)
+                        el.classList.toggle('eta-norange', !rep.range_80)
                         if (rep.error) {
                             q('.eta-count').textContent = '–'
-                            q('.eta-meta').textContent = rep.error
+                            q('.eta-target').textContent = ''
+                            q('.kv').innerHTML = row('error', esc(rep.error))
                             q('.eta-inline').textContent = rep.error
                             return
                         }
-                        var t = rep.target
-                        var tag =
-                            kind === 'halt'
-                                ? '<span class="eta-tag halt">scheduled halt · min ' +
-                                  esc(rep.halt.min_version) +
-                                  '</span>'
-                                : label
-                                  ? '<span class="eta-tag">' +
-                                    esc(label) +
-                                    '</span>'
-                                  : ''
-                        q('.eta-target').innerHTML =
-                            'target <b>#' + nf(t.height) + '</b>' + tag
                         var o = rep.original
-                        var origWhat =
-                            kind === 'halt'
-                                ? 'the ETA when gnockpit first saw the halt'
-                                : 'the original ETA'
-                        var origText = o
-                            ? chip(o.drift_seconds) +
-                              'vs ' +
-                              origWhat +
-                              ' <b>' +
-                              hms(ms(o.eta)) +
-                              '</b> UTC (from ' +
-                              day(ms(o.as_of)) +
-                              ' ' +
-                              hm(ms(o.as_of)) +
-                              ')'
-                            : ''
+                        var rows = ''
                         if (rep.reached_at) {
-                            q('.eta-drift').innerHTML =
-                                'reached at <b>' +
-                                day(ms(rep.reached_at)) +
-                                ' ' +
-                                hms(ms(rep.reached_at)) +
-                                ' UTC</b>' +
-                                (o ? '<br />' + origText : '')
+                            rows += row('reached', when(ms(rep.reached_at)))
                         } else {
-                            var eta = ms(rep.eta)
-                            q('.eta-when').innerHTML =
+                            rows +=
+                                row('eta', when(ms(rep.eta))) +
+                                row(
+                                    'likely',
+                                    rep.range_80
+                                        ? '<b>' +
+                                              rangeDays(rep.range_80) +
+                                              ' UTC</b> <span class="dim">(80%) · ' +
+                                              rangeDays(rep.range_95) +
+                                              ' (95%)</span>'
+                                        : '<span class="dim">pending: the block-time history is still too short</span>'
+                                )
+                        }
+                        if (o) {
+                            var d = o.drift_seconds
+                            rows +=
+                                row(
+                                    'original',
+                                    '<b>' +
+                                        day(ms(o.eta)) +
+                                        ' ' +
+                                        hms(ms(o.eta)) +
+                                        ' UTC</b> <span class="dim">(' +
+                                        (kind === 'halt'
+                                            ? 'first seen '
+                                            : 'estimated ') +
+                                        day(ms(o.as_of)) +
+                                        ' ' +
+                                        hm(ms(o.as_of)) +
+                                        ')</span>'
+                                ) +
+                                row(
+                                    'drift',
+                                    Math.abs(d) < 60
+                                        ? '<b>on time</b>'
+                                        : '<b>' +
+                                              inShort(Math.abs(d)) +
+                                              (d < 0 ? ' earlier' : ' later') +
+                                              '</b> <span class="dim">than the original</span>'
+                                )
+                        }
+                        if (!rep.reached_at) {
+                            rows += row(
+                                'pace',
                                 '<b>' +
-                                day(eta) +
-                                ' ' +
-                                hms(eta) +
-                                ' UTC</b> <span class="local"><span class="sep">· </span>' +
-                                local(eta) +
-                                '</span>'
-                            q('.eta-bands').innerHTML = rep.range_80
-                                ? '80% likely <b>' +
-                                  rangeText(rep.range_80) +
-                                  '</b> · 95% <b>' +
-                                  rangeText(rep.range_95) +
-                                  '</b> UTC'
-                                : 'margin pending: the block-time history is still too short'
-                            q('.eta-drift').innerHTML = origText
-                            var meta =
-                                nf(t.blocks_left) +
-                                ' blocks left · pace ' +
-                                rep.pace.seconds_per_block.toFixed(3) +
-                                ' s/block (last ' +
-                                nf(rep.pace.over_blocks) +
-                                ' blocks)'
+                                    rep.pace.seconds_per_block.toFixed(3) +
+                                    ' s/block</b> <span class="dim">(last ' +
+                                    nf(rep.pace.over_blocks) +
+                                    ' blocks)</span>'
+                            )
                             if (!rep.history.complete)
-                                meta +=
-                                    ' · block-time history still loading' +
-                                    (rep.history.from
-                                        ? ', from ' + day(ms(rep.history.from))
-                                        : '')
-                            q('.eta-meta').textContent = meta
+                                rows += row(
+                                    'history',
+                                    '<span class="dim">still loading' +
+                                        (rep.history.from
+                                            ? ', back to ' +
+                                              day(ms(rep.history.from))
+                                            : '') +
+                                        '</span>'
+                                )
                             renderRange()
                             renderScenarios()
                         }
-                        q('.eta-legend').style.display =
-                            rep.range_80 && !rep.reached_at ? '' : 'none'
-                        q('.eta-warn').textContent = [
+                        var warn = [
                             rep.warning,
-                            stale &&
-                                '⚠ ' + stale + '; showing the last answer',
+                            stale && stale + '; showing the last answer',
                         ]
                             .filter(Boolean)
                             .join(' · ')
-                        var span = o ? t.height - o.height : 0
-                        var pct =
-                            span > 0
-                                ? Math.min(
-                                      100,
-                                      Math.max(
-                                          0,
-                                          ((rep.now.height - o.height) / span) *
-                                              100
-                                      )
-                                  )
-                                : 0
-                        q('.eta-progress').style.display =
-                            span > 0 ? '' : 'none'
-                        q('.eta-mini').style.visibility =
-                            span > 0 ? '' : 'hidden'
-                        q('.eta-progress > div').style.width = pct + '%'
-                        q('.eta-mini > div').style.width = pct + '%'
+                        if (warn)
+                            rows += row(
+                                'warning',
+                                '<span class="warn">' + esc(warn) + '</span>'
+                            )
+                        q('.kv').innerHTML = rows
                         drawChart()
                     }
 
+                    // when is a time in UTC, and on the viewer's clock.
+                    function when(t) {
+                        var l = local(t)
+                        return (
+                            '<b>' +
+                            day(t) +
+                            ' ' +
+                            hms(t) +
+                            ' UTC</b>' +
+                            (l ? ' <span class="dim">(' + l + ')</span>' : '')
+                        )
+                    }
+
                     // renderRange draws the 95% and 80% ranges with the
-                    // current ETA (dot) and the original one (diamond).
+                    // current ETA (dot) and the original one (diamond). A
+                    // range end too close to the ETA for both labels to fit
+                    // goes unlabelled.
                     function renderRange() {
+                        if (!rep || rep.error || rep.reached_at) return
                         if (!rep.range_80) return
+                        q('.eta-legend .orig').style.display = rep.original
+                            ? ''
+                            : 'none'
                         var eta = ms(rep.eta)
                         var r80 = [ms(rep.range_80.from), ms(rep.range_80.to)]
                         var r95 = [ms(rep.range_95.from), ms(rep.range_95.to)]
                         var orig = rep.original ? ms(rep.original.eta) : eta
-                        var lo = Math.min(r95[0], orig)
-                        var hi = Math.max(r95[1], orig)
+                        var lo = Math.min(r95[0], orig, eta)
+                        var hi = Math.max(r95[1], orig, eta)
                         var span = Math.max(hi - lo, 60000)
                         var a = lo - span * 0.08
                         var b = hi + span * 0.08
+                        var px = q('.eta-range').clientWidth
                         function x(v) {
                             return (((v - a) / (b - a)) * 100).toFixed(2) + '%'
                         }
                         function w(v0, v1) {
                             return (
                                 (((v1 - v0) / (b - a)) * 100).toFixed(2) + '%'
+                            )
+                        }
+                        // An HH:MM label beside the HH:MM:SS one needs about
+                        // 44 px between their centres at the labels' size; the
+                        // ETA's own label (end false) always shows.
+                        function lbl(v, text, end) {
+                            if (end && (Math.abs(v - eta) / (b - a)) * px < 44)
+                                return ''
+                            return (
+                                '<div class="lbl" style="left:' +
+                                x(v) +
+                                '">' +
+                                text +
+                                '</div>'
                             )
                         }
                         q('.eta-range').innerHTML =
@@ -5574,19 +5527,9 @@
                             '" title="ETA ' +
                             hms(eta) +
                             ' UTC"></div>' +
-                            '<div class="lbl" style="left:' +
-                            x(r95[0]) +
-                            '">' +
-                            hm(r95[0]) +
-                            '</div><div class="lbl" style="left:' +
-                            x(eta) +
-                            '">' +
-                            hms(eta) +
-                            '</div><div class="lbl" style="left:' +
-                            x(r95[1]) +
-                            '">' +
-                            hm(r95[1]) +
-                            '</div>'
+                            lbl(r95[0], hm(r95[0]), true) +
+                            lbl(eta, hms(eta), false) +
+                            lbl(r95[1], hm(r95[1]), true)
                     }
 
                     function renderScenarios() {
@@ -5824,30 +5767,28 @@
                             '</text>'
                     }
 
-                    // tick refreshes the countdown and the compact line.
+                    // tick refreshes the countdown, the target line and the
+                    // compact line.
                     function tick() {
                         if (!rep || rep.error) return
-                        var t = rep.target
-                        var head =
-                            '#' + nf(t.height) + (name() ? ' ' + name() : '')
-                        var o = rep.original
                         // The compact line carries the stale mark too.
                         var mark = stale
-                            ? ' <span style="color: var(--yellow)" title="' +
+                            ? ' <span class="warn" title="' +
                               esc(stale) +
                               '; showing the last answer">⚠</span>'
                             : ''
                         if (rep.reached_at) {
                             var at = ms(rep.reached_at)
-                            q('.eta-count').innerHTML =
-                                'reached<small>at ' + hms(at) + ' UTC</small>'
+                            q('.eta-count').textContent = 'reached'
+                            q('.eta-target').innerHTML = head()
                             q('.eta-inline').innerHTML =
-                                '<b>reached</b> <span class="w">' +
-                                head +
-                                '</span> at ' +
+                                '<b>reached</b> · ' +
+                                head() +
+                                ' · ' +
+                                day(at) +
+                                ' ' +
                                 hms(at) +
                                 ' UTC' +
-                                (o ? ' ' + chip(o.drift_seconds) : '') +
                                 mark
                             return
                         }
@@ -5856,23 +5797,29 @@
                         // Past the ETA, the block is late: say so rather than
                         // freeze at zero until the next poll moves the ETA.
                         var count = left > 0 ? countdown(left) : 'due'
-                        q('.eta-count').innerHTML =
-                            count +
-                            (left > 0
-                                ? '<small>until ETA</small>'
-                                : '<small>ETA passed, waiting for the block</small>')
+                        var eta = ms(rep.eta)
+                        var n = rep.target.blocks_left
+                        q('.eta-count').textContent = count
+                        q('.eta-target').innerHTML =
+                            left > 0
+                                ? 'until ' +
+                                  head() +
+                                  ' (' +
+                                  nf(n) +
+                                  (n === 1 ? ' block' : ' blocks') +
+                                  ' to go)'
+                                : head() +
+                                  ' · ETA passed, waiting for the block'
                         q('.eta-inline').innerHTML =
                             '<b>' +
                             count +
-                            '</b> → <span class="w">' +
-                            head +
-                            '</span> · ETA ' +
-                            hms(ms(rep.eta)) +
+                            '</b> · ' +
+                            head() +
+                            ' · ' +
+                            day(eta) +
+                            ' ' +
+                            hm(eta) +
                             ' UTC' +
-                            (rep.range_80
-                                ? ' (80% ' + rangeText(rep.range_80) + ')'
-                                : '') +
-                            (o ? ' ' + chip(o.drift_seconds) : '') +
                             mark
                     }
 
@@ -5880,7 +5827,10 @@
                         show: show,
                         hide: hide,
                         tick: tick,
-                        redraw: drawChart,
+                        redraw: function () {
+                            drawChart()
+                            renderRange()
+                        },
                     }
                 }
 
@@ -6039,21 +5989,21 @@
                 })
 
                 function renderHaltRow() {
-                    var row = $('eta-halt-row')
+                    var line = $('eta-halt-row')
                     if (lastHalt) {
-                        row.innerHTML =
+                        line.innerHTML =
                             'On chain: halt scheduled at <b>#' +
                             nf(lastHalt.height) +
                             '</b> (min ' +
                             esc(lastHalt.min_version) +
                             '). Its countdown shows for everyone, no link needed.'
                     } else if (haltError) {
-                        row.textContent =
+                        line.textContent =
                             'On chain: halt status unavailable (' +
                             haltError +
                             ').'
                     } else {
-                        row.textContent = 'On chain: no halt scheduled.'
+                        line.textContent = 'On chain: no halt scheduled.'
                     }
                 }
 
