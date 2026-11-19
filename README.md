@@ -214,8 +214,9 @@ about 100 bytes a block on onyx (56 validators): about 130 MB for 1.25M blocks.
   minute without one). The history is complete once it reaches block 1, or the
   oldest block the node serves: one it served right before refusing the block
   below, in two answers. gnockpit asks below that block again at each start, in
-  case the node changed. A node that stays behind the head for minutes is
-  logged. Pointing gnockpit at another chain drops the history.
+  case the node changed. A node that stays behind the head for minutes, or
+  stops serving the lowest stored block (the backfill then asks again every 10
+  minutes), is logged. Pointing gnockpit at another chain drops the history.
 - **Used by** — the validators table's Missed 24h and `/api/stats`' 1h / 24h /
   7d / 30d / total windows (`recorded_since` says how far back they reach): an
   absence or a precommit for another block counts as missed, a precommit for
