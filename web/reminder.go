@@ -32,7 +32,7 @@ type reminderView struct {
 }
 
 // handlePushReminder serves a device's reminder before its ETA card's
-// height: GET ?id= reads it, PUT sets it (replacing the device's reminder),
+// height: GET ?id= reads it (204 when there is none), PUT sets it (replacing the device's reminder),
 // DELETE ?id= removes it, and the device with it when it has no alert left.
 func (s *Server) handlePushReminder(w http.ResponseWriter, r *http.Request) {
 	if s.PushManager == nil {
@@ -54,7 +54,7 @@ func (s *Server) handlePushReminder(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if !ok {
-			http.Error(w, "no reminder", http.StatusNotFound)
+			w.WriteHeader(http.StatusNoContent)
 			return
 		}
 		writeJSON(w, http.StatusOK, reminderView{Height: rem.Height, Since: rem.Since, Label: rem.Label, Lead: rem.Lead.String()})

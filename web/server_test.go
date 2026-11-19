@@ -525,8 +525,8 @@ func TestReminderAPISetsReadsAndDeletes(t *testing.T) {
 	if code != http.StatusOK || del["device_kept"] != false {
 		t.Errorf("DELETE = %d %v, want 200 and the device gone", code, del)
 	}
-	if code, _ := reminderCall(t, s, http.MethodGet, "?id="+id, nil); code != http.StatusNotFound {
-		t.Errorf("GET after DELETE = %d, want 404", code)
+	if code, _ := reminderCall(t, s, http.MethodGet, "?id="+id, nil); code != http.StatusNoContent {
+		t.Errorf("GET after DELETE = %d, want 204: no reminder is no error", code)
 	}
 }
 
