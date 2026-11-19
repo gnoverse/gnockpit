@@ -282,11 +282,46 @@
                 max-width: 350px;
                 white-space: pre-wrap;
                 overflow-wrap: anywhere;
-                z-index: 100;
+                z-index: 2000; /* above the modals, below the copy toast */
                 box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
             }
             .popover.visible {
                 display: block;
+            }
+            /* The rows form: a title, then label / value rows as wide as they
+               need, within the screen. */
+            .popover.rows {
+                white-space: normal;
+                max-width: calc(100vw - 16px);
+            }
+            .popover .t {
+                margin-bottom: 4px;
+            }
+            .popover table {
+                border-collapse: collapse;
+            }
+            .popover td {
+                padding: 1px 0;
+                vertical-align: middle;
+                white-space: nowrap;
+            }
+            .popover td.l {
+                color: var(--fg2);
+                padding-right: 14px;
+            }
+            .popover td.v {
+                text-align: right;
+                font-variant-numeric: tabular-nums;
+                white-space: normal;
+                overflow-wrap: anywhere;
+            }
+            .popover .sw {
+                display: inline-block;
+                width: 10px;
+                height: 10px;
+                border-radius: 2px;
+                margin-right: 6px;
+                vertical-align: -1px;
             }
             .info-btn {
                 color: var(--fg2);
@@ -2376,7 +2411,7 @@
                 if (!b64val || b64val === '-') {
                     el.textContent = '-'
                     el.className = 'v'
-                    el.title = ''
+                    el.removeAttribute('data-pop-rows')
                     el.removeAttribute('data-copy')
                     return
                 }
@@ -2392,7 +2427,10 @@
                 el.appendChild(num)
                 el.setAttribute('data-copy', hex)
                 el.className = 'v hash ok'
-                el.title = 'base64: ' + b64val
+                popRows(el, '', [
+                    [null, 'hex', hex],
+                    [null, 'base64', b64val],
+                ])
             }
 
             function mkEl(tag, text, cls, attrs) {
@@ -2449,17 +2487,10 @@
                                 )
                             )
                     }
-                    if (cellDef.popover) {
-                        if (cellDef.popoverSelf) {
-                            // Popover on the cell itself (no trailing icon), so a
-                            // full-width value can ellipsis cleanly while staying
-                            // hoverable for the full text.
-                            td.setAttribute('data-popover', cellDef.popover)
-                        } else {
-                            var btn = mkEl('span', ' \u24d8', 'info-btn')
-                            btn.setAttribute('data-popover', cellDef.popover)
-                            td.appendChild(btn)
-                        }
+                    if (cellDef.rows) {
+                        var btn = mkEl('span', ' \u24d8', 'info-btn')
+                        popRows(btn, '', cellDef.rows)
+                        td.appendChild(btn)
                     }
                 } else {
                     td.textContent = cellDef
@@ -2479,7 +2510,8 @@
                 }
                 td.setAttribute('data-cc', code)
                 td.setAttribute('data-copy', countryName(code))
-                td.title = countryName(code)
+                td.setAttribute('data-popover', countryName(code))
+                td.classList.add('tap-popover')
                 var inner = mkEl('span', null, 'cc-inner')
                 inner.appendChild(mkEl('span', countryFlag(code), 'cc-flag'))
                 inner.appendChild(mkEl('span', countryName(code), 'cc-name'))
@@ -2497,7 +2529,7 @@
             }
 
             // providerCell builds a cell showing the guessed cloud provider with
-            // an info icon whose tooltip reveals the IP it was guessed from.
+            // an info icon whose popover reveals the IP it was guessed from.
             function providerCell(provider, ip) {
                 if (!provider && !ip) {
                     var empty = document.createElement('td')
@@ -2507,7 +2539,7 @@
                 var td = createCell({
                     text: provider || 'unknown',
                     style: 'font-size:11px;color:var(--fg2)',
-                    popover: ip ? 'Guessed from IP: ' + ip : undefined,
+                    rows: ip ? [[null, 'guessed from IP', ip]] : undefined,
                     copy: provider || ip,
                 })
                 if (provider) td.setAttribute('data-prov', provider)
@@ -2521,21 +2553,68 @@
                 return tr
             }
 
-            /* Popover: hover on desktop, click/touch on mobile */
+            /* Popover: hover on desktop, click/touch on mobile. One popover,
+               two forms: text (data-popover) and rows (data-pop-rows, set by
+               popRows). */
             var hasHover = window.matchMedia('(hover: hover)').matches
+            var POP_TARGETS = '.info-btn, [data-popover], [data-pop-rows]'
+            var TAP_TARGETS = '.info-btn, .tap-popover, [data-pop-rows]'
 
-            function showPopover(btn) {
+            // popRows gives el the rows form: an optional title, then rows of
+            // [swatch colour or null, label, value].
+            function popRows(el, title, rows) {
+                el.removeAttribute('data-popover')
+                el.setAttribute(
+                    'data-pop-rows',
+                    JSON.stringify({ t: title || '', r: rows })
+                )
+            }
+
+            // fillPopover renders el's popover into pop as DOM text nodes.
+            function fillPopover(pop, el) {
+                clearChildren(pop)
+                var rows = el.getAttribute('data-pop-rows')
+                pop.classList.toggle('rows', !!rows)
+                if (!rows) {
+                    pop.textContent = el.getAttribute('data-popover')
+                    return
+                }
+                var d = JSON.parse(rows)
+                if (d.t) pop.appendChild(mkEl('div', d.t, 't'))
+                var table = document.createElement('table')
+                d.r.forEach(function (r) {
+                    var tr = document.createElement('tr')
+                    var label = mkEl('td', null, 'l')
+                    if (r[0]) {
+                        var sw = mkEl('span', null, 'sw')
+                        sw.style.background = r[0]
+                        label.appendChild(sw)
+                    }
+                    label.appendChild(document.createTextNode(r[1]))
+                    tr.appendChild(label)
+                    tr.appendChild(mkEl('td', r[2], 'v'))
+                    table.appendChild(tr)
+                })
+                pop.appendChild(table)
+            }
+
+            // showPopover opens el's popover below it, or above it when there
+            // is no room below, kept within the screen's width.
+            function showPopover(el) {
                 var pop = $('popover')
-                pop.textContent = btn.getAttribute('data-popover')
-                var rect = btn.getBoundingClientRect()
-                pop.style.top = rect.bottom + window.scrollY + 4 + 'px'
-                pop.style.left =
-                    Math.min(
-                        rect.left + window.scrollX,
-                        window.innerWidth - 370
-                    ) + 'px'
+                fillPopover(pop, el)
                 pop.classList.add('visible')
-                activePopover = btn
+                var rect = el.getBoundingClientRect()
+                var top = rect.bottom + 4
+                if (top + pop.offsetHeight > window.innerHeight)
+                    top = Math.max(4, rect.top - 4 - pop.offsetHeight)
+                var left = Math.max(
+                    4,
+                    Math.min(rect.left, window.innerWidth - pop.offsetWidth - 8)
+                )
+                pop.style.top = top + window.scrollY + 'px'
+                pop.style.left = left + window.scrollX + 'px'
+                activePopover = el
             }
             function hidePopover() {
                 $('popover').classList.remove('visible')
@@ -2546,23 +2625,30 @@
                 'mouseenter',
                 function (e) {
                     if (!hasHover || !(e.target instanceof Element)) return
-                    var btn = e.target.closest('.info-btn, [data-popover]')
+                    var btn = e.target.closest(POP_TARGETS)
                     if (btn) showPopover(btn)
                 },
                 true
             )
+            // Moving between a target's own children keeps its popover open.
             document.addEventListener(
                 'mouseleave',
                 function (e) {
                     if (!hasHover || !(e.target instanceof Element)) return
-                    var btn = e.target.closest('.info-btn, [data-popover]')
-                    if (btn) hidePopover()
+                    var btn = e.target.closest(POP_TARGETS)
+                    if (!btn) return
+                    if (
+                        e.relatedTarget instanceof Node &&
+                        btn.contains(e.relatedTarget)
+                    )
+                        return
+                    hidePopover()
                 },
                 true
             )
             document.addEventListener('click', function (e) {
                 if (!(e.target instanceof Element)) return
-                var btn = e.target.closest('.info-btn')
+                var btn = e.target.closest(TAP_TARGETS)
                 if (btn) {
                     if (hasHover) return
                     if (activePopover === btn) {
@@ -2670,7 +2756,8 @@
 
             // midTruncCell builds a peers/validators cell that shows the full text
             // when the column is wide enough and truncates in the middle
-            // (start…end) when it isn't. opts: popover, copy, highlight.
+            // (start…end) when it isn't. opts: rows (its popover), copy,
+            // highlight.
             function midTruncCell(text, opts) {
                 opts = opts || {}
                 text = text || ''
@@ -2687,7 +2774,7 @@
                     wrap.appendChild(mkEl('span', text, 'mt-start'))
                 }
                 td.appendChild(wrap)
-                if (opts.popover) td.setAttribute('data-popover', opts.popover)
+                if (opts.rows) popRows(td, '', opts.rows)
                 if (opts.copy) td.setAttribute('data-copy', opts.copy)
                 if (opts.highlight)
                     td.setAttribute('data-highlight', opts.highlight)
@@ -2764,16 +2851,18 @@
                     td.className = 'full-role'
                     return td
                 }
-                var details = [
-                    'peers: ' + (p.n_peers || 0),
-                    'height: ' +
+                var rows = [
+                    [null, 'peers', String(p.n_peers || 0)],
+                    [
+                        null,
+                        'height',
                         (p.height || '?') +
-                        (p.catching_up ? ' (syncing)' : ' (synced)'),
-                    p.version ? 'version: ' + p.version : '',
-                ].filter(Boolean)
-                var info = p.rpc_url + '\n' + details.join(' · ')
+                            (p.catching_up ? ' (syncing)' : ' (synced)'),
+                    ],
+                ]
+                if (p.version) rows.push([null, 'version', p.version])
                 var ok = mkEl('span', '✓', 'ok info-btn')
-                ok.setAttribute('data-popover', info)
+                popRows(ok, p.rpc_url, rows)
                 ok.setAttribute('data-open-url', p.rpc_url)
                 ok.style.cursor = 'pointer'
                 td.appendChild(ok)
@@ -2867,7 +2956,10 @@
                             : propName
                     var propSpan = mkEl('span', propDisplay, 'node-ref')
                     propSpan.setAttribute('data-highlight', propName)
-                    if (propDisplay !== propName) propSpan.title = propName
+                    if (propDisplay !== propName) {
+                        propSpan.setAttribute('data-popover', propName)
+                        propSpan.classList.add('tap-popover')
+                    }
                     propEl.appendChild(propSpan)
                     propEl.className = 'v'
 
@@ -3110,7 +3202,10 @@
                                 ? shortAddr(cleanName)
                                 : cleanName
                         nameTd.appendChild(document.createTextNode(displayName))
-                        if (displayName !== cleanName) nameTd.title = cleanName
+                        if (displayName !== cleanName) {
+                            nameTd.setAttribute('data-popover', cleanName)
+                            nameTd.classList.add('tap-popover')
+                        }
                         if (isUs)
                             nameTd.appendChild(
                                 mkEl('span', ' (source)', 'source-tag')
@@ -3123,10 +3218,11 @@
                             : v.address
                         tr.appendChild(
                             midTruncCell(v.address, {
-                                popover:
-                                    'address: ' +
-                                    v.address +
-                                    (v.pub_key ? '\npubkey: ' + v.pub_key : ''),
+                                rows: [[null, 'address', v.address]].concat(
+                                    v.pub_key
+                                        ? [[null, 'pubkey', v.pub_key]]
+                                        : []
+                                ),
                                 copy: addrCopy,
                                 highlight: cleanName,
                             })
@@ -3213,10 +3309,14 @@
                         } else {
                             missedTd.textContent = '-'
                         }
-                        if (votesMissedSince)
-                            missedTd.title =
+                        if (votesMissedSince) {
+                            missedTd.setAttribute(
+                                'data-popover',
                                 'missed in last 24h · history since ' +
-                                votesMissedSince
+                                    votesMissedSince
+                            )
+                            missedTd.classList.add('tap-popover')
+                        }
                         tr.appendChild(missedTd)
 
                         // Speed (avg block time when proposing) — ranked with emojis
@@ -3352,14 +3452,11 @@
                         var pIP = p.external_address || p.remote_ip || ''
                         var pIPPop = p.remote_ip || pIP
                         var pNodeID = p.node_id || ''
-                        var nodeIdParts = []
+                        var pNodeIDRows = []
                         if (p.val_address)
-                            nodeIdParts.push('address: ' + p.val_address)
+                            pNodeIDRows.push([null, 'address', p.val_address])
                         if (p.val_pubkey)
-                            nodeIdParts.push('pubkey: ' + p.val_pubkey)
-                        var pNodeIDPop = nodeIdParts.length
-                            ? nodeIdParts.join('\n')
-                            : undefined
+                            pNodeIDRows.push([null, 'pubkey', p.val_pubkey])
 
                         var tr2 = document.createElement('tr')
                         var pNameCell = createCell({
@@ -3375,7 +3472,9 @@
                         tr2.appendChild(
                             pNodeID
                                 ? midTruncCell(pNodeID, {
-                                      popover: pNodeIDPop,
+                                      rows: pNodeIDRows.length
+                                          ? pNodeIDRows
+                                          : undefined,
                                       copy: pNodeID,
                                       highlight: hlKey,
                                   })
@@ -3852,6 +3951,8 @@
                             })
                         })(box, bg, border)
                     }
+                    // The popover shows the block as rows; a click copies the
+                    // same as text, with the full app hash.
                     var tip =
                         '#' +
                         b.height +
@@ -3860,13 +3961,13 @@
                         '/' +
                         b.total +
                         ' signed'
+                    var rows = [[null, 'signed', b.signers + '/' + b.total]]
                     if (b.time) {
                         var dt = new Date(b.time)
                         var pad = function (n) {
                             return n < 10 ? '0' + n : '' + n
                         }
-                        tip +=
-                            '\nTime: ' +
+                        var when =
                             dt.getUTCFullYear() +
                             '-' +
                             pad(dt.getUTCMonth() + 1) +
@@ -3879,19 +3980,26 @@
                             ':' +
                             pad(dt.getUTCSeconds()) +
                             ' UTC'
+                        tip += '\nTime: ' + when
+                        rows.push([null, 'time', when])
                     }
-                    if (b.block_ms !== 0)
+                    if (b.block_ms !== 0) {
                         tip += '\nBlock time: ' + b.block_ms + 'ms'
-                    if (typeof b.num_txs === 'number')
+                        rows.push([null, 'block time', b.block_ms + ' ms'])
+                    }
+                    if (typeof b.num_txs === 'number') {
                         tip += '\nTxs: ' + b.num_txs
+                        rows.push([null, 'txs', String(b.num_txs)])
+                    }
                     var fullAppHash = ''
                     if (b.app_hash) {
                         fullAppHash = b64toHex(b.app_hash)
-                        tip +=
-                            '\nAppHash: ' +
+                        var shortHash =
                             fullAppHash.substring(0, 8) +
                             '\u2026' +
                             fullAppHash.substring(fullAppHash.length - 8)
+                        tip += '\nAppHash: ' + shortHash
+                        rows.push([null, 'app hash', shortHash])
                     }
                     if (b.missing && b.missing.length > 0) {
                         var sorted = b.missing.slice().sort(function (a, b) {
@@ -3907,16 +4015,23 @@
                                 (m.name
                                     ? m.name + ' (' + m.address + ')'
                                     : m.address)
+                            rows.push([
+                                null,
+                                j ? '' : 'missing',
+                                m.name || m.address,
+                            ])
                         }
                     }
-                    box.setAttribute('data-popover', tip)
-                    if (fullAppHash) {
-                        var copyTip = tip.replace(
-                            /\nAppHash: .*/,
-                            '\nAppHash: ' + fullAppHash
-                        )
-                        box.setAttribute('data-copy', copyTip)
-                    }
+                    popRows(box, '#' + b.height, rows)
+                    box.setAttribute(
+                        'data-copy',
+                        fullAppHash
+                            ? tip.replace(
+                                  /\nAppHash: .*/,
+                                  '\nAppHash: ' + fullAppHash
+                              )
+                            : tip
+                    )
                     body.appendChild(box)
                 }
                 lastRecentBlockHeight = newestHeight
@@ -4159,56 +4274,50 @@
                     }
                 })
                 // "N val(s) · M peer(s)", omitting a zero side — shared by the
-                // root line and the tree branches for consistency.
+                // popover's title and its branch rows for consistency.
                 function counts(v, p) {
                     var parts = []
                     if (v) parts.push(v + ' val' + (v === 1 ? '' : 's'))
                     if (p) parts.push(p + ' peer' + (p === 1 ? '' : 's'))
                     return parts.join(' · ')
                 }
-                // Tree branches under a tooltip root, most nodes first (└─ marks
-                // the last branch). label(key) renders each branch's prefix.
-                function treeLines(m, label) {
-                    if (!m) return ''
-                    var keys = Object.keys(m).sort(function (a, b) {
-                        var ta = m[a].v + m[a].p,
-                            tb = m[b].v + m[b].p
-                        return tb - ta || (a < b ? -1 : a > b ? 1 : 0)
-                    })
-                    return keys
-                        .map(function (k, i) {
-                            var branch = i === keys.length - 1 ? '└─ ' : '├─ '
-                            return (
-                                '\n' +
-                                branch +
-                                label(k) +
-                                ' · ' +
-                                counts(m[k].v, m[k].p)
-                            )
+                // Branch rows under a popover's title, most nodes first.
+                // label(key) renders each branch's label.
+                function branchRows(m, label) {
+                    if (!m) return []
+                    return Object.keys(m)
+                        .sort(function (a, b) {
+                            var ta = m[a].v + m[a].p,
+                                tb = m[b].v + m[b].p
+                            return tb - ta || (a < b ? -1 : a > b ? 1 : 0)
                         })
-                        .join('')
+                        .map(function (k) {
+                            return [null, label(k), counts(m[k].v, m[k].p)]
+                        })
                 }
-                // Country root: flag + name + totals, providers as branches.
-                function countryTip(cc) {
-                    return (
+                // Country popover: flag + name + totals, providers as rows.
+                function countryPop(el, cc) {
+                    popRows(
+                        el,
                         countryFlag(cc) +
-                        ' ' +
-                        countryName(cc) +
-                        ' · ' +
-                        counts(ccVal[cc] || 0, ccPeer[cc] || 0) +
-                        treeLines(ccProv[cc], function (pr) {
+                            ' ' +
+                            countryName(cc) +
+                            ' · ' +
+                            counts(ccVal[cc] || 0, ccPeer[cc] || 0),
+                        branchRows(ccProv[cc], function (pr) {
                             return '☁️ ' + pr
                         })
                     )
                 }
-                // Provider root: cloud + name + totals, countries as branches.
-                function providerTip(prov) {
-                    return (
+                // Provider popover: cloud + name + totals, countries as rows.
+                function providerPop(el, prov) {
+                    popRows(
+                        el,
                         '☁️ ' +
-                        prov +
-                        ' · ' +
-                        counts(prVal[prov] || 0, prPeer[prov] || 0) +
-                        treeLines(prCC[prov], function (cc) {
+                            prov +
+                            ' · ' +
+                            counts(prVal[prov] || 0, prPeer[prov] || 0),
+                        branchRows(prCC[prov], function (cc) {
                             return countryFlag(cc) + ' ' + countryName(cc)
                         })
                     )
@@ -4357,8 +4466,9 @@
                 })
 
                 // Clusters: blue validators / green peers, labelled with the count.
-                // The popover is a tree rooted on the active grouping: country ->
-                // providers in Country mode, provider -> countries in Provider mode.
+                // The popover is titled with the active grouping and lists its
+                // branches: a country's providers in Country mode, a provider's
+                // countries in Provider mode.
                 pts.forEach(function (p) {
                     var c = document.createElementNS(SVG_NS, 'circle')
                     c.setAttribute('cx', p.x.toFixed(2))
@@ -4369,10 +4479,8 @@
                         p.type === 'val' ? 'map-dot is-val' : 'map-dot'
                     )
                     tagGroup(c, p)
-                    c.setAttribute(
-                        'data-popover',
-                        provMode ? providerTip(p.grp) : countryTip(p.grp)
-                    )
+                    if (provMode) providerPop(c, p.grp)
+                    else countryPop(c, p.grp)
                     g.appendChild(c)
                     if (p.count > 1) {
                         var t = document.createElementNS(SVG_NS, 'text')
@@ -4664,7 +4772,7 @@
                     var a = mkLinkBtn(l)
                     var dot = mkEl('span', '', 'dot')
                     dot.style.background = headerLinkDotColor(l.state)
-                    dot.title = l.state
+                    dot.setAttribute('data-popover', l.state)
                     a.appendChild(dot)
                     a.appendChild(document.createTextNode(l.title))
                     box.appendChild(a)
@@ -4854,13 +4962,11 @@
                 copyNotify(td.getAttribute('data-copy'), e)
             })
 
-            // Block boxes — copy tooltip content (prefer data-copy for full apphash)
+            // Block boxes — a click copies the block as text
             document.addEventListener('click', function (e) {
                 var block = e.target.closest('#recent-blocks-body .info-btn')
                 if (!block) return
-                var tip =
-                    block.getAttribute('data-copy') ||
-                    block.getAttribute('data-popover')
+                var tip = block.getAttribute('data-copy')
                 if (tip) copyNotify(tip, e)
             })
 
@@ -5071,7 +5177,7 @@
                         const safeID = `validator_missing_blocks__${eid.replace(/[^a-zA-Z0-9_-]/g, '_')}`
                         return `<div style="display:flex; align-items:center; gap:10px; padding:6px 0 6px 16px; font-size:0.88em;">
             <input type="checkbox" id="chk-${safeID}" data-type="validator_missing_blocks" data-entity="${escHTML(eid)}" onchange="onAlertCheck(this)">
-            <label for="chk-${safeID}" style="flex:1; cursor:pointer; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="${escHTML(label)}">${escHTML(label)}</label>
+            <label for="chk-${safeID}" style="flex:1; cursor:pointer; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" data-popover="${escHTML(label)}">${escHTML(label)}</label>
             <input type="checkbox" id="rec-${safeID}" data-rec-type="validator_missing_blocks" data-rec-entity="${escHTML(eid)}" onchange="onRecoveryCheck(this)" title="Also notify on recovery">
             <label for="rec-${safeID}" style="${recStyle}" title="Also notify on recovery">recovery</label>
         </div>`
@@ -5951,13 +6057,13 @@
                             (rep.original
                                 ? '<div class="orig" style="left:' +
                                   x(orig) +
-                                  '" title="original ETA ' +
+                                  '" data-popover="original ETA ' +
                                   hms(orig) +
                                   ' UTC"></div>'
                                 : '') +
                             '<div class="now" style="left:' +
                             x(eta) +
-                            '" title="ETA ' +
+                            '" data-popover="ETA ' +
                             hms(eta) +
                             ' UTC"></div>' +
                             lbl(r95[0], hm(r95[0]), true) +
@@ -6206,7 +6312,7 @@
                         if (!rep || rep.error) return
                         // The compact line carries the stale mark too.
                         var mark = stale
-                            ? ' <span class="warn" title="' +
+                            ? ' <span class="warn tap-popover" data-popover="' +
                               esc(stale) +
                               '; showing the last answer">⚠</span>'
                             : ''
@@ -6872,15 +6978,23 @@
                             timeLeft((f.from - lowest) / f.rate) +
                             '</b> left'
                     el.querySelector('.text').innerHTML = text
-                    el.title =
-                        'Block history filled from #' +
-                        f.from.toLocaleString('en-US') +
-                        ' (' +
-                        day(f.from_time) +
-                        ') to #' +
-                        f.to.toLocaleString('en-US') +
-                        ', filling back to #' +
-                        lowest.toLocaleString('en-US')
+                    popRows(el, 'Block history', [
+                        [
+                            null,
+                            'filled from',
+                            '#' +
+                                f.from.toLocaleString('en-US') +
+                                ' (' +
+                                day(f.from_time) +
+                                ')',
+                        ],
+                        [null, 'to', '#' + f.to.toLocaleString('en-US')],
+                        [
+                            null,
+                            'filling back to',
+                            '#' + lowest.toLocaleString('en-US'),
+                        ],
+                    ])
                 }
                 ;(async function poll() {
                     try {
@@ -7042,7 +7156,8 @@
                                       ' · ' +
                                       ago(c.time)
                         )
-                        h.title = utc(c.time)
+                        h.setAttribute('data-popover', utc(c.time))
+                        h.classList.add('tap-popover')
                         r.appendChild(h)
                         r.appendChild(el('span', 'k ' + part.cls, part.k))
                         var w = el('span', 'w')
