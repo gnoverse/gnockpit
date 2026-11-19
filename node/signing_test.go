@@ -10,6 +10,15 @@ func addrSet(addrs ...string) map[string]bool {
 	return m
 }
 
+// signedBy is a window whose blocks each validator signs for the block.
+func signedBy(signers ...map[string]bool) []windowBlock {
+	out := make([]windowBlock, len(signers))
+	for i, s := range signers {
+		out[i] = windowBlock{signed: s}
+	}
+	return out
+}
+
 func TestComputeSigning(t *testing.T) {
 	// A 5-block window (oldest first).
 	//   A: in set from the start, signs every block.
@@ -17,17 +26,17 @@ func TestComputeSigning(t *testing.T) {
 	//   C: in set from the start, never signs (fully down all window).
 	//   D: NOT in the start set — joins at block 3 and signs 3-4 (new validator).
 	//   E: NOT in the start set — joins at block 3, signs 3, misses 4.
-	signers := []map[string]bool{
+	window := signedBy(
 		addrSet("A", "B"),      // 0
 		addrSet("A", "B"),      // 1
 		addrSet("A", "B"),      // 2
 		addrSet("A", "D", "E"), // 3
 		addrSet("A", "D"),      // 4
-	}
+	)
 	atStart := addrSet("A", "B", "C")
 	current := addrSet("A", "B", "C", "D", "E")
 
-	got := computeSigning(signers, atStart, current)
+	got := computeSigning(window, atStart, current)
 
 	want := map[string]ValSigning{
 		"A": {From: 0, Signed: 5, Eligible: 5, Missed: 0, MissedInARow: 0, SignedInARow: 5},
@@ -49,12 +58,54 @@ func TestComputeSigningNewAndNeverSigned(t *testing.T) {
 	// A validator in the current set that is neither in the start set nor has
 	// signed anything in the window (just added, not yet producing) has no
 	// eligible blocks — it must not be charged any missed blocks.
-	signers := []map[string]bool{addrSet("A"), addrSet("A"), addrSet("A")}
-	got := computeSigning(signers, addrSet("A"), addrSet("A", "N"))
+	window := signedBy(addrSet("A"), addrSet("A"), addrSet("A"))
+	got := computeSigning(window, addrSet("A"), addrSet("A", "N"))
 	if v := got["N"]; v.Eligible != 0 || v.Missed != 0 || v.MissedInARow != 0 || v.SignedInARow != 0 {
 		t.Errorf("N = %+v, want zero eligibility/missed/streaks", v)
 	}
 	if v := got["A"]; v.Missed != 0 || v.Signed != 3 || v.SignedInARow != 3 {
 		t.Errorf("A = %+v, want signed 3 / missed 0 / signed-streak 3", v)
+	}
+}
+
+func TestComputeSigningSplitsAbsences(t *testing.T) {
+	// A votes nil in block 0 (signed), for another block in 1, is absent in
+	// 2; N joins at block 1, so block 0's nil vote is not its own.
+	window := []windowBlock{
+		{signed: addrSet("A", "B"), nilVotes: addrSet("A")},
+		{signed: addrSet("B", "N"), otherBlock: addrSet("A")},
+		{signed: addrSet("B", "N")},
+	}
+	got := computeSigning(window, addrSet("A", "B"), addrSet("A", "B", "N"))
+	if a := got["A"]; a.Missed != 2 || a.Nil != 1 || a.OtherBlock != 1 {
+		t.Errorf("A = %+v, want missed 2, nil 1, other block 1", a)
+	}
+	if n := got["N"]; n.Nil != 0 || n.Missed != 0 {
+		t.Errorf("N = %+v, want no nil vote and no miss before it joined", n)
+	}
+}
+
+func TestComputeSigningVoteDelay(t *testing.T) {
+	delays := func(ms ...int64) []windowBlock {
+		out := make([]windowBlock, len(ms))
+		for i, d := range ms {
+			out[i] = windowBlock{signed: addrSet("A"), delays: map[string]int64{"A": d}}
+		}
+		return out
+	}
+	for _, tc := range []struct {
+		name   string
+		window []windowBlock
+		votes  int
+		median int
+	}{
+		{"odd count", delays(100, 300, -50), 3, 100},
+		{"even count: the middles' mean", delays(100, 300), 2, 200},
+		{"none", signedBy(addrSet("A")), 0, 0},
+	} {
+		got := computeSigning(tc.window, addrSet("A"), addrSet("A"))["A"]
+		if got.Votes != tc.votes || got.VoteDelayMs != tc.median {
+			t.Errorf("%s: votes %d, vote delay %d ms; want %d, %d ms", tc.name, got.Votes, got.VoteDelayMs, tc.votes, tc.median)
+		}
 	}
 }

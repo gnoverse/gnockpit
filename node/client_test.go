@@ -892,3 +892,46 @@ func TestGetSigningStatsForgetsCommitsOfAnEarlierChain(t *testing.T) {
 		t.Errorf("kept commits = %v, want [2]", kept)
 	}
 }
+
+func TestGetSigningStatsVoteDelay(t *testing.T) {
+	const (
+		addrA = "g1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+		addrB = "g1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	)
+	at := func(ms int) string {
+		return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC).Add(time.Duration(ms) * time.Millisecond).Format(time.RFC3339Nano)
+	}
+	vote := func(addr string, index int, ms int) string {
+		return fmt.Sprintf(`{"type":2,"height":"0","round":"0","block_id":{"hash":"B"},"timestamp":%q,"validator_address":%q,"validator_index":"%d"}`, at(ms), addr, index)
+	}
+	// B holds 20 of 30 power: each commit's weighted median is B's time, so
+	// A's offsets are -300, -100 and +300 ms, B's 0.
+	commits := map[string][2]int{"2": {100, 400}, "3": {0, 100}, "4": {500, 200}}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/validators" {
+			fmt.Fprintf(w, `{"jsonrpc":"2.0","result":{"validators":[
+				{"address":%q,"pub_key":{"type":"ed25519","value":"AA"},"voting_power":"10","proposer_priority":"0"},
+				{"address":%q,"pub_key":{"type":"ed25519","value":"BB"},"voting_power":"20","proposer_priority":"0"}
+			]}}`, addrA, addrB)
+			return
+		}
+		h := r.URL.Query().Get("height")
+		c := commits[h]
+		fmt.Fprintf(w, `{"jsonrpc":"2.0","result":{"canonical":true,"signed_header":{
+			"header":{"height":%q,"time":%q,"proposer_address":%q},
+			"commit":{"block_id":{"hash":"B"},"precommits":[%s,%s]}
+		}}}`, h, at(0), addrA, vote(addrA, 0, c[0]), vote(addrB, 1, c[1]))
+	}))
+	defer srv.Close()
+
+	stats, err := NewClient(srv.URL, 5*time.Second).GetSigningStats(context.Background(), 4, 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a := stats.ValidatorSigning[addrA]; a.Votes != 3 || a.VoteDelayMs != -100 {
+		t.Errorf("A = %+v, want 3 votes, a -100 ms median delay", a)
+	}
+	if b := stats.ValidatorSigning[addrB]; b.Votes != 3 || b.VoteDelayMs != 0 {
+		t.Errorf("B = %+v, want 3 votes, a 0 ms median delay", b)
+	}
+}

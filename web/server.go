@@ -227,16 +227,19 @@ func (s *Server) buildVotesReport(snap *node.Snapshot) *node.VotesReport {
 		report.Validators[i].VotingPower = vpByAddr[addr]
 		report.Validators[i].PubKey = pkByAddr[addr]
 	}
-	// Enrich with missed-block count + proposer speed from signing stats, and the
-	// down/inactive flag from the alert detector's hysteretic state.
+	// Enrich with the live window's signing (missed, its split, vote delay), and
+	// the down/inactive flag from the alert detector's hysteretic state.
 	if snap.Signing != nil {
 		for i := range report.Validators {
 			addr := report.Validators[i].Address
-			report.Validators[i].Missed100 = snap.Signing.ValidatorSigning[addr].Missed
-			report.Validators[i].Inactive = snap.Signing.Inactive[addr]
-			if perf, ok := snap.Signing.ValidatorPerf[addr]; ok {
-				report.Validators[i].AvgBlockMs = perf.AvgBlockMs
+			sig := snap.Signing.ValidatorSigning[addr]
+			report.Validators[i].Missed100 = sig.Missed
+			report.Validators[i].Nil100 = sig.Nil
+			report.Validators[i].OtherBlock100 = sig.OtherBlock
+			if sig.Votes > 0 {
+				report.Validators[i].VoteDelayMs = &sig.VoteDelayMs
 			}
+			report.Validators[i].Inactive = snap.Signing.Inactive[addr]
 		}
 	}
 	// Attach missed-24h counts and the recording-since timestamp from history.

@@ -102,7 +102,6 @@ type StatusValidator struct {
 	Inactive    bool   `json:"inactive,omitempty"`
 	Missed100   int    `json:"missed_100"`
 	Missed24h   int    `json:"missed_24h"`
-	AvgBlockMs  int    `json:"avg_block_ms"`
 }
 
 // StatusReport is the public /api/status payload: the retrocompat health summary
@@ -184,7 +183,6 @@ func (s *Server) buildStatusReport(snap *node.Snapshot, now time.Time) StatusRep
 				Inactive:    vi.Inactive,
 				Missed100:   vi.Missed100,
 				Missed24h:   vi.Missed24h,
-				AvgBlockMs:  vi.AvgBlockMs,
 				SPOF:        isSPOF(vpByAddr[vi.Address], totalVP),
 			}
 			if p, ok := byAddr[vi.Address]; ok {
