@@ -14,11 +14,13 @@ const windowMissesQuery = `SELECT blocks_validators.address, COUNT(*) FROM block
 	WHERE blocks_absences.height BETWEEN ? AND ? AND blocks_absences.kind IN (?, ?)
 	GROUP BY blocks_absences.validator`
 
-// dayMissesQuery sums each validator's misses from the per-day counters, from
-// a UTC day on.
-const dayMissesQuery = `SELECT blocks_validators.address, SUM(blocks_missed_days.missed) FROM blocks_missed_days
-	JOIN blocks_validators ON blocks_validators.id = blocks_missed_days.validator
-	WHERE blocks_missed_days.day >= ? GROUP BY blocks_missed_days.validator`
+// dayMissesQuery sums each validator's misses (absent or other block) from the
+// per-day counters, from a UTC day on; a validator with nil votes alone is no
+// miss.
+const dayMissesQuery = `SELECT blocks_validators.address, SUM(blocks_days.absent + blocks_days.other_block) FROM blocks_days
+	JOIN blocks_validators ON blocks_validators.id = blocks_days.validator
+	WHERE blocks_days.day >= ? GROUP BY blocks_days.validator
+	HAVING SUM(blocks_days.absent + blocks_days.other_block) > 0`
 
 // WindowReport holds missed-block counts across windows: Blocks[i] and
 // Missed[addr][i] correspond to Windows[i].
