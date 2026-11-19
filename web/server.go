@@ -1098,6 +1098,7 @@ func (s *Server) Run(ctx context.Context) error {
 	mux.HandleFunc("/api/push/subscribe", s.handlePushSubscribe)
 	mux.HandleFunc("/api/push/entities", s.handlePushEntities)
 	mux.HandleFunc("/api/push/test", s.handlePushTest)
+	mux.HandleFunc("/api/push/reminder", s.handlePushReminder)
 	mux.HandleFunc("/api/notify/targets", s.handleNotifyTargets)
 	mux.HandleFunc("/api/notify/test", s.handleNotifyTest)
 	mux.HandleFunc("/api/links", s.handleLinks)

@@ -196,3 +196,62 @@ func TestFormatAlertMarksANotice(t *testing.T) {
 		t.Errorf("FormatAlert = %q, want a bell for a one-off event", got)
 	}
 }
+
+// remind sets a reminder for the device pushed to http://host/path.
+func remind(t *testing.T, m *Manager, host, path string, r Reminder) string {
+	t.Helper()
+	id, err := m.db.SetReminder(Subscription{ID: "dev" + path, Endpoint: "http://" + host + path, P256dh: testP256dh, Auth: testAuth}, r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return id
+}
+
+func at(chain string, head int64) Schedule {
+	return Schedule{Chain: chain, Head: head, TimeLeft: noEstimate}
+}
+
+func TestEvaluateScheduleFiresAReminderOnceAndDropsIt(t *testing.T) {
+	host, h := hookServer(t)
+	m := newTestManager(t, false)
+	captureLog(t)
+	id := remind(t, m, host, "/dev", Reminder{Chain: "test-1", Height: 1000, Label: "upgrade", Lead: Lead{Blocks: 100}})
+	m.EvaluateSchedule(at("test-1", 850))
+	m.EvaluateSchedule(at("test-1", 900))
+	m.EvaluateSchedule(at("test-1", 901))
+	if got := h.got(); !slices.Equal(got, []string{"/dev"}) {
+		t.Errorf("posts = %v, want one at 100 blocks", got)
+	}
+	if _, ok, _ := m.db.Reminder(id); ok {
+		t.Error("the reminder stays after it fired")
+	}
+}
+
+func TestEvaluateScheduleDropsARemindersOfAnotherChain(t *testing.T) {
+	host, h := hookServer(t)
+	m := newTestManager(t, false)
+	captureLog(t)
+	id := remind(t, m, host, "/dev", Reminder{Chain: "old-1", Height: 1000, Lead: Lead{Blocks: 100}})
+	m.EvaluateSchedule(at("test-1", 950))
+	if got := h.got(); len(got) != 0 {
+		t.Errorf("posts = %v, want none for another chain's height", got)
+	}
+	if _, ok, _ := m.db.Reminder(id); ok {
+		t.Error("another chain's reminder stays")
+	}
+}
+
+func TestEvaluateScheduleFiresATimeReminderOnceReached(t *testing.T) {
+	host, h := hookServer(t)
+	m := newTestManager(t, false)
+	captureLog(t)
+	remind(t, m, host, "/dev", Reminder{Chain: "test-1", Height: 1000, Lead: Lead{Time: 30 * time.Minute}})
+	m.EvaluateSchedule(at("test-1", 999))
+	if got := h.got(); len(got) != 0 {
+		t.Fatalf("posts with no estimate before the height = %v, want none", got)
+	}
+	m.EvaluateSchedule(at("test-1", 1000))
+	if got := h.got(); !slices.Equal(got, []string{"/dev"}) {
+		t.Errorf("posts once reached = %v, want the device", got)
+	}
+}

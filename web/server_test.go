@@ -3,14 +3,18 @@ package web
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"image/png"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os/exec"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/gnoverse/gnockpit/eta"
 	"github.com/gnoverse/gnockpit/node"
 	"github.com/gnoverse/gnockpit/web/push"
 )
@@ -466,5 +470,111 @@ func TestSubscribeRejectsAnUnknownAlertOrBadLead(t *testing.T) {
 		if code, _ := subscribe(t, srv, "https://example.com/push", []push.SubscriptionAlert{a}); code != http.StatusBadRequest {
 			t.Errorf("alert %+v: status %d, want 400", a, code)
 		}
+	}
+}
+
+// reminderServer serves the ETA test chain with push on.
+func reminderServer(t *testing.T) *Server {
+	t.Helper()
+	s := etaServer(t, tipHeight, nil)
+	_, mgr := newSrvWithPush(t)
+	s.PushManager = mgr
+	return s
+}
+
+func reminderCall(t *testing.T, s *Server, method, query string, body any) (int, map[string]any) {
+	t.Helper()
+	var r io.Reader
+	if body != nil {
+		b, err := json.Marshal(body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		r = bytes.NewReader(b)
+	}
+	w := httptest.NewRecorder()
+	s.handlePushReminder(w, httptest.NewRequest(method, "/api/push/reminder"+query, r))
+	var out map[string]any
+	json.Unmarshal(w.Body.Bytes(), &out)
+	if out == nil {
+		out = map[string]any{"text": strings.TrimSpace(w.Body.String())}
+	}
+	return w.Code, out
+}
+
+func reminderBody(height int64, lead string) map[string]any {
+	return map[string]any{
+		"endpoint": "https://push.example/dev", "p256dh": "p", "auth": "a",
+		"height": height, "since": "2026-11-19T10:00:00Z", "label": "upgrade", "lead": lead,
+	}
+}
+
+func TestReminderAPISetsReadsAndDeletes(t *testing.T) {
+	s := reminderServer(t)
+	code, set := reminderCall(t, s, http.MethodPut, "", reminderBody(tipHeight+5000, "100 blocks"))
+	id, _ := set["id"].(string)
+	if code != http.StatusOK || id == "" {
+		t.Fatalf("PUT = %d %v, want 200 and the device id", code, set)
+	}
+	code, got := reminderCall(t, s, http.MethodGet, "?id="+id, nil)
+	want := map[string]any{"height": float64(tipHeight + 5000), "since": "2026-11-19T10:00:00Z", "label": "upgrade", "lead": "100 blocks"}
+	if code != http.StatusOK || !reflect.DeepEqual(got, want) {
+		t.Errorf("GET = %d %v, want 200 %v", code, got, want)
+	}
+	code, del := reminderCall(t, s, http.MethodDelete, "?id="+id, nil)
+	if code != http.StatusOK || del["device_kept"] != false {
+		t.Errorf("DELETE = %d %v, want 200 and the device gone", code, del)
+	}
+	if code, _ := reminderCall(t, s, http.MethodGet, "?id="+id, nil); code != http.StatusNotFound {
+		t.Errorf("GET after DELETE = %d, want 404", code)
+	}
+}
+
+func TestReminderAPIRefusesALeadAlreadyMet(t *testing.T) {
+	s := reminderServer(t)
+	for _, tc := range []struct {
+		height int64
+		lead   string
+	}{{tipHeight + 50, "100 blocks"}, {tipHeight + 100, "30m"}} {
+		code, body := reminderCall(t, s, http.MethodPut, "", reminderBody(tc.height, tc.lead))
+		want := fmt.Sprintf("#%d is less than %s away", tc.height, tc.lead)
+		if code != http.StatusConflict || !strings.Contains(fmt.Sprint(body), want) {
+			t.Errorf("PUT %d %s = %d %v, want 409 %q", tc.height, tc.lead, code, body, want)
+		}
+	}
+}
+
+func TestReminderAPIRejectsBadInput(t *testing.T) {
+	s := reminderServer(t)
+	for name, body := range map[string]map[string]any{
+		"no endpoint": func() map[string]any { b := reminderBody(tipHeight+5000, "1h"); delete(b, "endpoint"); return b }(),
+		"no height":   reminderBody(0, "1h"),
+		"bad lead":    reminderBody(tipHeight+5000, "soon"),
+		"bad since":   func() map[string]any { b := reminderBody(tipHeight+5000, "1h"); b["since"] = "yesterday"; return b }(),
+	} {
+		if code, _ := reminderCall(t, s, http.MethodPut, "", body); code != http.StatusBadRequest {
+			t.Errorf("%s: status %d, want 400", name, code)
+		}
+	}
+	if code, _ := reminderCall(t, s, http.MethodGet, "", nil); code != http.StatusBadRequest {
+		t.Errorf("GET without id: status %d, want 400", code)
+	}
+	if code, _ := reminderCall(t, s, http.MethodPost, "", nil); code != http.StatusMethodNotAllowed {
+		t.Errorf("POST: status %d, want 405", code)
+	}
+}
+
+func TestScheduleComesFromTheSnapshotAndETA(t *testing.T) {
+	s := etaServer(t, tipHeight, &eta.ScheduledHalt{Height: tipHeight + 1000, MinVersion: "v1.2.0"})
+	sched, ok := s.schedule()
+	if !ok || sched.Chain != "gnoland-1" || sched.Head != tipHeight || sched.Halt == nil || *sched.Halt != (push.Halt{Height: tipHeight + 1000, MinVersion: "v1.2.0"}) {
+		t.Fatalf("schedule() = %+v, %v; want gnoland-1 at %d with the halt", sched, ok, tipHeight)
+	}
+	// 1,000 blocks of 3.5 s, from the newest block's time.
+	if left, ok := sched.TimeLeft(tipHeight + 1000); !ok || left.Round(time.Second) != 3500*time.Second {
+		t.Errorf("TimeLeft = %v, %v; want 3500s", left, ok)
+	}
+	if _, ok := (&Server{}).schedule(); ok {
+		t.Error("schedule() before the first snapshot is ok, want not")
 	}
 }

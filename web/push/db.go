@@ -74,6 +74,14 @@ func initSchema(db *sql.DB) error {
 			key        TEXT NOT NULL, -- <chain>:<height>
 			PRIMARY KEY (owner, alert_type, key)
 		) WITHOUT ROWID;
+		CREATE TABLE IF NOT EXISTS push_reminders (
+			subscription_id TEXT PRIMARY KEY REFERENCES subscriptions(id) ON DELETE CASCADE,
+			chain           TEXT NOT NULL,
+			height          INTEGER NOT NULL,
+			since           TEXT NOT NULL,
+			label           TEXT NOT NULL,
+			lead            TEXT NOT NULL
+		);
 	`); err != nil {
 		return err
 	}
@@ -161,15 +169,35 @@ func (d *DB) GetSubscription(id string) (Subscription, error) {
 
 // SaveDevice stores sub, keeping its id when its endpoint is known, and
 // replaces its alerts. It returns the device's id, or "" when the device has
-// no alert left and was deleted.
+// no alert and no reminder left and was deleted.
 func (d *DB) SaveDevice(sub Subscription, alerts []SubscriptionAlert) (string, error) {
 	tx, err := d.db.Begin()
 	if err != nil {
 		return "", err
 	}
 	defer tx.Rollback()
+	id, err := upsertDevice(tx, sub)
+	if err != nil {
+		return "", err
+	}
+	if err := replaceAlerts(tx, id, alerts); err != nil {
+		return "", err
+	}
+	kept, err := keepDevice(tx, id)
+	if err != nil {
+		return "", err
+	}
+	if !kept {
+		id = ""
+	}
+	return id, tx.Commit()
+}
+
+// upsertDevice stores sub under the id its endpoint has, or sub.ID for a new
+// endpoint, and returns that id.
+func upsertDevice(tx *sql.Tx, sub Subscription) (string, error) {
 	id := sub.ID
-	err = tx.QueryRow(`SELECT id FROM subscriptions WHERE endpoint = ?`, sub.Endpoint).Scan(&id)
+	err := tx.QueryRow(`SELECT id FROM subscriptions WHERE endpoint = ?`, sub.Endpoint).Scan(&id)
 	switch {
 	case errors.Is(err, sql.ErrNoRows):
 		_, err = tx.Exec(`INSERT INTO subscriptions (id, endpoint, p256dh, auth) VALUES (?, ?, ?, ?)`, id, sub.Endpoint, sub.P256dh, sub.Auth)
@@ -179,16 +207,26 @@ func (d *DB) SaveDevice(sub Subscription, alerts []SubscriptionAlert) (string, e
 	if err != nil {
 		return "", fmt.Errorf("save device: %w", err)
 	}
-	if err := replaceAlerts(tx, id, alerts); err != nil {
-		return "", err
+	return id, nil
+}
+
+// keepDevice deletes the device id when it has no alert and no reminder
+// left, and reports whether it stays.
+func keepDevice(tx *sql.Tx, id string) (bool, error) {
+	var left int
+	if err := tx.QueryRow(
+		`SELECT (SELECT COUNT(*) FROM subscription_alerts WHERE subscription_id = ?) + (SELECT COUNT(*) FROM push_reminders WHERE subscription_id = ?)`,
+		id, id,
+	).Scan(&left); err != nil {
+		return false, fmt.Errorf("device %s: %w", id, err)
 	}
-	if len(alerts) == 0 {
-		if _, err := tx.Exec(`DELETE FROM subscriptions WHERE id = ?`, id); err != nil {
-			return "", fmt.Errorf("delete device: %w", err)
-		}
-		id = ""
+	if left > 0 {
+		return true, nil
 	}
-	return id, tx.Commit()
+	if _, err := tx.Exec(`DELETE FROM subscriptions WHERE id = ?`, id); err != nil {
+		return false, fmt.Errorf("delete device: %w", err)
+	}
+	return false, nil
 }
 
 // SaveSubscriptionAlerts replaces all alert preferences for a subscription atomically.

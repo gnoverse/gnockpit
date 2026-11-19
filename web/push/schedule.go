@@ -23,14 +23,18 @@ type Schedule struct {
 	TimeLeft func(height int64) (time.Duration, bool) // the block-time model's estimate; false when unknown
 }
 
-// EvaluateSchedule sends the halt alerts s calls for: a halt height new to a
-// device or target, once each, and its approach once within each one's lead.
-// What was sent is kept, so a restart or a re-saved device sends it again
-// never.
+// EvaluateSchedule sends the alerts s calls for: a halt height new to a
+// device or target, once each, and its approach once within each one's lead
+// (what was sent is kept: a restart or a re-saved device sends nothing
+// twice); and each device's reminder whose lead is met, deleted once sent.
 func (m *Manager) EvaluateSchedule(s Schedule) {
-	if s.Halt == nil {
-		return
+	if s.Halt != nil {
+		m.evaluateHalt(s)
 	}
+	m.evaluateReminders(s)
+}
+
+func (m *Manager) evaluateHalt(s Schedule) {
 	key := fmt.Sprintf("%s:%d", s.Chain, s.Halt.Height)
 	m.sendOnce(Alert{
 		Type: AlertHaltScheduled, Firing: true, Notice: true,

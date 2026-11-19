@@ -222,3 +222,74 @@ func TestOpenDBDedupesEndpoints(t *testing.T) {
 		t.Errorf("SaveDevice with a lead on the migrated database: %v", err)
 	}
 }
+
+func testReminder(height int64) push.Reminder {
+	return push.Reminder{Chain: "test-1", Height: height, Since: "2026-11-19T10:00:00Z", Label: "upgrade", Lead: push.Lead{Blocks: 100}}
+}
+
+var reminderDevice = push.Subscription{ID: "r1", Endpoint: "https://x.com/r", P256dh: "p", Auth: "a"}
+
+func TestSetReminderReplacesTheDevicesReminder(t *testing.T) {
+	db := openTestDB(t)
+	first, err := db.SetReminder(reminderDevice, testReminder(1000))
+	if err != nil || first != "r1" {
+		t.Fatalf("SetReminder = %q, %v; want r1", first, err)
+	}
+	again := reminderDevice
+	again.ID = "r2"
+	second, err := db.SetReminder(again, testReminder(2000))
+	if err != nil || second != "r1" {
+		t.Fatalf("second SetReminder = %q, %v; want the device's id r1", second, err)
+	}
+	if got, ok, err := db.Reminder("r1"); err != nil || !ok || got != testReminder(2000) {
+		t.Errorf("Reminder = %+v, %v, %v; want the second", got, ok, err)
+	}
+}
+
+func TestDeleteReminderDropsADeviceLeftWithNothing(t *testing.T) {
+	db := openTestDB(t)
+	if _, err := db.SetReminder(reminderDevice, testReminder(1000)); err != nil {
+		t.Fatal(err)
+	}
+	if kept, err := db.DeleteReminder("r1"); err != nil || kept {
+		t.Errorf("DeleteReminder = %v, %v; want the device gone", kept, err)
+	}
+	if subs, _ := db.AllSubscriptions(); len(subs) != 0 {
+		t.Errorf("subscriptions = %v, want none", subs)
+	}
+	if _, err := db.SaveDevice(reminderDevice, []push.SubscriptionAlert{{AlertType: push.AlertChainStuck}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.SetReminder(reminderDevice, testReminder(1000)); err != nil {
+		t.Fatal(err)
+	}
+	if kept, err := db.DeleteReminder("r1"); err != nil || !kept {
+		t.Errorf("DeleteReminder with an alert left = %v, %v; want the device kept", kept, err)
+	}
+}
+
+func TestSaveDeviceKeepsADeviceWithAReminder(t *testing.T) {
+	db := openTestDB(t)
+	if _, err := db.SetReminder(reminderDevice, testReminder(1000)); err != nil {
+		t.Fatal(err)
+	}
+	if id, err := db.SaveDevice(reminderDevice, nil); err != nil || id != "r1" {
+		t.Errorf("SaveDevice with no alert = %q, %v; want r1 kept for its reminder", id, err)
+	}
+	if _, ok, _ := db.Reminder("r1"); !ok {
+		t.Error("the reminder went with the alerts")
+	}
+}
+
+func TestRemindersGoWithAnExpiredDevice(t *testing.T) {
+	db := openTestDB(t)
+	if _, err := db.SetReminder(reminderDevice, testReminder(1000)); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.DeleteSubscription("r1"); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok, err := db.Reminder("r1"); err != nil || ok {
+		t.Errorf("Reminder after the device = %v, %v; want none", ok, err)
+	}
+}
