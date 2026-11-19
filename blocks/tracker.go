@@ -69,7 +69,7 @@ const (
 
 // Config tunes the fill's load on the source.
 type Config struct {
-	Pace  time.Duration // wait between passes while heights are left below; 0 for none
+	Pace  time.Duration // wait between batches while heights are left below or the head is far; 0 for none
 	Batch int           // commits asked in one JSON-RPC batch, at most
 }
 
@@ -139,7 +139,8 @@ func (t *Tracker) Progress() Progress {
 
 // Run fills the history until ctx is done: a pass every Config.Pace while
 // heights are left below, every syncInterval once complete, errorPause after a
-// failed one.
+// failed one. A pass catching up with a far head waits Config.Pace between its
+// batches too.
 func (t *Tracker) Run(ctx context.Context) {
 	t.report("load", t.publish(ctx))
 	for {
@@ -252,7 +253,7 @@ func (t *Tracker) pass(ctx context.Context) (more bool, err error) {
 // returns how many it stored: the first ones, up to a height the source
 // refused or whose commit is not final yet (errNotYet when the answer does
 // not show the source's oldest block). A batch refused whole halves the batch
-// size for good; one too slow to answer, for timeoutCut. Either stores
+// size until restart; one too slow to answer, for timeoutCut. Either stores
 // nothing.
 func (t *Tracker) fill(ctx context.Context, heights []int64, head node.ChainHead, dir direction, witness int64) (int, error) {
 	asked := heights

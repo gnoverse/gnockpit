@@ -80,7 +80,7 @@ func main() {
 	flag.IntVar(&flagWebPort, "port", 8080, "web server port")
 	flag.StringVar(&flagDBPath, "db-path", "/tmp/gnockpit.db", "SQLite path for web-push subscriptions and VAPID keys, the block history and the block-ETA history; use a persistent path so they survive reboots")
 	flag.DurationVar(&flagHistoryPace, "history-pace", blocks.DefaultPace, "wait between the batches that fill the block history from the first -rpc, back to genesis and up to the head after downtime; 0 for none")
-	flag.IntVar(&flagHistoryBatch, "history-batch", blocks.DefaultBatch, "commits asked in one JSON-RPC batch while filling the block history; halved for good when the first -rpc refuses a batch, for 10 minutes when one times out")
+	flag.IntVar(&flagHistoryBatch, "history-batch", blocks.DefaultBatch, "commits asked in one JSON-RPC batch while filling the block history; halved until restart when the first -rpc refuses a batch, for 10 minutes when one times out")
 	flag.IntVar(&flagChainStuckSecs, "chain-stuck-secs", 30, "seconds without a new block before the chain-stuck alert fires")
 	flag.IntVar(&flagMaxMissedInARow, "max-missed-in-a-row", 10, "consecutive blocks a validator must miss to be flagged down (alert fires + counted inactive) and must then sign to recover")
 	flag.Var(&flagNotifyURLs, "notify", "Shoutrrr notification URL, repeatable (e.g. discord://token@id)")
