@@ -32,6 +32,8 @@ type fakeChain struct {
 	round    map[int64]int    // commit round per height, default 0
 	proposer map[int64]string // header proposer per height, default the expected one
 	events   map[int64][]node.BlockEvent
+	setErr   error // what ValidatorSet returns; nil: the set
+	eventErr error // what BlockEvents returns; nil: the events
 
 	sets       [][]node.SetMember // sets[h-1] is the set at h
 	batches    [][]int64
@@ -154,6 +156,9 @@ func (c *fakeChain) ValidatorSet(_ context.Context, h int64) ([]node.SetMember, 
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.setCalls = append(c.setCalls, h)
+	if c.setErr != nil {
+		return nil, c.setErr
+	}
 	return slices.Clone(c.setAt(h)), nil
 }
 
@@ -161,6 +166,9 @@ func (c *fakeChain) BlockEvents(_ context.Context, h int64) ([]node.BlockEvent, 
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.eventCalls = append(c.eventCalls, h)
+	if c.eventErr != nil {
+		return nil, c.eventErr
+	}
 	return c.events[h], nil
 }
 
@@ -488,6 +496,46 @@ func TestPassReadsTheEventsOfASetChange(t *testing.T) {
 	}
 	if got := storedEvents(t, tt.store, 200); !slices.Equal(got, []string{"ValidatorAdded " + valH97 + " 10 from 198"}) {
 		t.Errorf("events of 200 = %v", got)
+	}
+}
+
+func TestPassFailsABatchWhoseSetLookupFails(t *testing.T) {
+	c := newFakeChain(250)
+	c.setErr = errors.New("validators unavailable")
+	tt := newTestTracker(t, c)
+	if _, err := tt.pass(context.Background()); err == nil || !strings.Contains(err.Error(), "validator set at 249: validators unavailable") {
+		t.Fatalf("pass() = %v, want the failed lookup of the set at 249", err)
+	}
+	// A block without its set cannot be stored: the batch is retried whole.
+	wantRange(t, tt.store, 0, 0)
+}
+
+func TestPassStoresTheHeightsWhenTheirEventsFail(t *testing.T) {
+	c := newFakeChain(250)
+	c.change = 200
+	c.events[198] = addedEvents
+	c.eventErr = errors.New("block_results unavailable")
+	tt := newTestTracker(t, c)
+	mustPass(t, tt)
+	wantRange(t, tt.store, 150, 249)
+	if got := storedEvents(t, tt.store, 200); len(got) != 0 {
+		t.Errorf("events of 200 = %v, want none", got)
+	}
+	if !tt.logged("blocks: events: events of 198: block_results unavailable") {
+		t.Errorf("logs = %q, want the failed read of 198", tt.logs)
+	}
+}
+
+func TestPassLogsASetChangeWithoutEvents(t *testing.T) {
+	c := newFakeChain(250)
+	c.change = 200
+	tt := newTestTracker(t, c)
+	mustPass(t, tt)
+	if got := storedEvents(t, tt.store, 200); len(got) != 0 {
+		t.Errorf("events of 200 = %v, want none", got)
+	}
+	if !tt.logged("blocks: no validator set event at #198 for the change at #200") {
+		t.Errorf("logs = %q, want the change without events", tt.logs)
 	}
 }
 
