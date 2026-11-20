@@ -8591,9 +8591,11 @@
                     }
                     var loc = rep.location
                     if (loc && (loc.country || loc.provider)) {
+                        var flag = countryFlag(loc.country)
                         var where = mkEl(
                             'span',
-                            (loc.country ? countryName(loc.country) : '—') +
+                            (flag ? flag + ' ' : '') +
+                                (loc.country ? countryName(loc.country) : '—') +
                                 ' · ' +
                                 (loc.provider || '—')
                         )
