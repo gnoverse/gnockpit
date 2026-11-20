@@ -93,17 +93,22 @@ func TestComputeSigningVoteDelay(t *testing.T) {
 		}
 		return out
 	}
+	// Added mid-window, A votes for another block before it first signs: its
+	// window starts at its first signature.
+	joined := append([]windowBlock{{signed: addrSet(), otherBlock: addrSet("A"), delays: map[string]int64{"A": 500}}}, delays(100)...)
 	for _, tc := range []struct {
-		name   string
-		window []windowBlock
-		votes  int
-		median int
+		name    string
+		window  []windowBlock
+		atStart map[string]bool
+		votes   int
+		median  int
 	}{
-		{"odd count", delays(100, 300, -50), 3, 100},
-		{"even count: the middles' mean", delays(100, 300), 2, 200},
-		{"none", signedBy(addrSet("A")), 0, 0},
+		{"odd count", delays(100, 300, -50), addrSet("A"), 3, 100},
+		{"even count: the middles' mean", delays(100, 300), addrSet("A"), 2, 200},
+		{"none", signedBy(addrSet("A")), addrSet("A"), 0, 0},
+		{"from its first signature", joined, addrSet(), 1, 100},
 	} {
-		got := computeSigning(tc.window, addrSet("A"), addrSet("A"))["A"]
+		got := computeSigning(tc.window, tc.atStart, addrSet("A"))["A"]
 		if got.Votes != tc.votes || got.VoteDelayMs != tc.median {
 			t.Errorf("%s: votes %d, vote delay %d ms; want %d, %d ms", tc.name, got.Votes, got.VoteDelayMs, tc.votes, tc.median)
 		}

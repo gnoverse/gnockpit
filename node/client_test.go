@@ -998,7 +998,11 @@ func TestGetSigningStatsForgetsCommitsOfAnEarlierChain(t *testing.T) {
 	}
 }
 
-func TestGetSigningStatsVoteDelay(t *testing.T) {
+// voteDelayRPC serves validators A (power 10) and B (power 20), and commits
+// 2 to 4: each commit's precommit times for A and B, in ms, and each block's
+// header time.
+func voteDelayRPC(t *testing.T, commits map[string][2]int, headers map[string]int) (*httptest.Server, string, string) {
+	t.Helper()
 	const (
 		addrA = "g1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 		addrB = "g1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
@@ -1009,9 +1013,6 @@ func TestGetSigningStatsVoteDelay(t *testing.T) {
 	vote := func(addr string, index int, ms int) string {
 		return fmt.Sprintf(`{"type":2,"height":"0","round":"0","block_id":{"hash":"B"},"timestamp":%q,"validator_address":%q,"validator_index":"%d"}`, at(ms), addr, index)
 	}
-	// B holds 20 of 30 power: each commit's weighted median is B's time, so
-	// A's offsets are -300, -100 and +300 ms, B's 0.
-	commits := map[string][2]int{"2": {100, 400}, "3": {0, 100}, "4": {500, 200}}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/validators" {
 			fmt.Fprintf(w, `{"jsonrpc":"2.0","result":{"validators":[
@@ -1025,10 +1026,19 @@ func TestGetSigningStatsVoteDelay(t *testing.T) {
 		fmt.Fprintf(w, `{"jsonrpc":"2.0","result":{"canonical":true,"signed_header":{
 			"header":{"height":%q,"time":%q,"proposer_address":%q},
 			"commit":{"block_id":{"hash":"B"},"precommits":[%s,%s]}
-		}}}`, h, at(0), addrA, vote(addrA, 0, c[0]), vote(addrB, 1, c[1]))
+		}}}`, h, at(headers[h]), addrA, vote(addrA, 0, c[0]), vote(addrB, 1, c[1]))
 	}))
-	defer srv.Close()
+	t.Cleanup(srv.Close)
+	return srv, addrA, addrB
+}
 
+func TestGetSigningStatsVoteDelay(t *testing.T) {
+	// B holds 20 of 30 power: each commit's weighted median is B's time, so
+	// A's offsets are -300, -100 and +300 ms, B's 0. Block h+1's header time
+	// is commit h's median.
+	srv, addrA, addrB := voteDelayRPC(t,
+		map[string][2]int{"2": {100, 400}, "3": {0, 100}, "4": {500, 200}},
+		map[string]int{"2": 0, "3": 400, "4": 100})
 	stats, err := NewClient(srv.URL, 5*time.Second).GetSigningStats(context.Background(), 4, 3)
 	if err != nil {
 		t.Fatal(err)
@@ -1038,5 +1048,25 @@ func TestGetSigningStatsVoteDelay(t *testing.T) {
 	}
 	if b := stats.ValidatorSigning[addrB]; b.Votes != 3 || b.VoteDelayMs != 0 {
 		t.Errorf("B = %+v, want 3 votes, a 0 ms median delay", b)
+	}
+}
+
+func TestGetSigningStatsVoteDelayTakesTheNextHeader(t *testing.T) {
+	// A held the majority until block 4: blocks 3 and 4's headers carry A's
+	// times. The newest commit, 4, has no next header: the current powers
+	// weigh it, B's time the median.
+	srv, addrA, addrB := voteDelayRPC(t,
+		map[string][2]int{"2": {100, 400}, "3": {0, 100}, "4": {500, 200}},
+		map[string]int{"2": 0, "3": 100, "4": 0})
+	stats, err := NewClient(srv.URL, 5*time.Second).GetSigningStats(context.Background(), 4, 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A: 0, 0, +300 → 0. B: +300, +100, 0 → +100.
+	if a := stats.ValidatorSigning[addrA]; a.Votes != 3 || a.VoteDelayMs != 0 {
+		t.Errorf("A = %+v, want 3 votes, a 0 ms median delay", a)
+	}
+	if b := stats.ValidatorSigning[addrB]; b.Votes != 3 || b.VoteDelayMs != 100 {
+		t.Errorf("B = %+v, want 3 votes, a 100 ms median delay", b)
 	}
 }

@@ -409,8 +409,9 @@ func (c *Client) GetSigningStats(ctx context.Context, currentHeight int, window 
 	// fails (nil), a validator down for the whole window looks never-eligible and
 	// won't be flagged that cycle — it recovers once the lookup succeeds.
 	var atStart map[string]bool
-	// powerOf weighs each precommit for the commit's median time: the current
-	// set's power, or the start set's for a validator that left since.
+	// powerOf weighs the newest commit's precommits for its median time (the
+	// others' is the next block's header time): the current set's power, or
+	// the start set's for a validator that left since.
 	powerOf := map[string]int64{}
 	if set, err := c.ValidatorSet(ctx, int64(startHeight)); err == nil {
 		atStart = make(map[string]bool, len(set))
@@ -429,6 +430,8 @@ func (c *Client) GetSigningStats(ctx context.Context, currentHeight int, window 
 	// (oldest first) and block metadata.
 	var blocks []windowBlock
 	var times []time.Time
+	var heights []int64
+	var votesOf [][]WeightedTime
 	for h := startHeight; h <= currentHeight; h++ {
 		commit, err := c.commit(ctx, int64(h))
 		if err != nil {
@@ -457,10 +460,6 @@ func (c *Client) GetSigningStats(ctx context.Context, currentHeight int, window 
 			}
 			votes = append(votes, WeightedTime{Address: pc.Address, At: pc.Time, Power: powerOf[pc.Address]})
 		}
-		median := MedianTime(votes)
-		for _, v := range votes {
-			wb.delays[v.Address] = v.At.Sub(median).Milliseconds()
-		}
 		proposerName := commit.Proposer
 		if c.Names != nil {
 			if n := c.Names.Name(commit.Proposer); n != commit.Proposer {
@@ -478,6 +477,21 @@ func (c *Client) GetSigningStats(ctx context.Context, currentHeight int, window 
 		})
 		blocks = append(blocks, wb)
 		times = append(times, commit.Time)
+		heights = append(heights, commit.Height)
+		votesOf = append(votesOf, votes)
+	}
+	// Each precommit's delay from its commit's median time: block h+1's header
+	// time, which tm2 sets to it, else the weighted median.
+	for i, votes := range votesOf {
+		var median time.Time
+		if i+1 < len(heights) && heights[i+1] == heights[i]+1 {
+			median = times[i+1]
+		} else {
+			median = MedianTime(votes)
+		}
+		for _, v := range votes {
+			blocks[i].delays[v.Address] = v.At.Sub(median).Milliseconds()
+		}
 	}
 
 	stats.ValidatorSigning = computeSigning(blocks, atStart, valAddrs)
