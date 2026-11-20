@@ -17,23 +17,36 @@ type chainBlock struct {
 // soloSet is a set without valG0Y.
 var soloSet = []Member{{Address: val15T, PubKey: "KB", Power: 20}}
 
+// valRot is valG0Y's key after a rotation, in rotSet.
+const valRot = "g1rotatedkey"
+
+var rotSet = []Member{{Address: valRot, PubKey: "KR", Power: 10}, {Address: val15T, PubKey: "KB", Power: 20}}
+
 // writeChain stores blocks 1 to len(blocks), each member's precommit 100 ms
 // after the median when present.
 func writeChain(t *testing.T, s *Store, blocks []chainBlock) {
 	t.Helper()
+	writeChainFrom(t, s, 1, blocks)
+}
+
+// writeChainFrom stores blocks from height from on.
+func writeChainFrom(t *testing.T, s *Store, from int64, blocks []chainBlock) {
+	t.Helper()
 	ctx := context.Background()
 	putTestSet(t, s)
-	if err := s.PutValset(ctx, "SOLO", soloSet); err != nil {
-		t.Fatal(err)
+	members := map[string][]Member{"SET": testSet, "SOLO": soloSet, "ROT": rotSet}
+	for _, hash := range []string{"SOLO", "ROT"} {
+		if err := s.PutValset(ctx, hash, members[hash]); err != nil {
+			t.Fatal(err)
+		}
 	}
-	members := map[string][]Member{"SET": testSet, "SOLO": soloSet}
 	recs := make([]Record, len(blocks))
 	for i, b := range blocks {
 		set := b.set
 		if set == "" {
 			set = "SET"
 		}
-		r := Record{Height: int64(i + 1), Time: b.at, Proposer: members[set][0].Address, ValsetHash: set, Absences: b.absent}
+		r := Record{Height: from + int64(i), Time: b.at, Proposer: members[set][0].Address, ValsetHash: set, Absences: b.absent}
 		for _, m := range members[set] {
 			absent := false
 			for _, a := range b.absent {
@@ -136,24 +149,28 @@ func TestHistoryRecoveries(t *testing.T) {
 		}
 		return at
 	}
+	solo := func(lo, hi int64) func(int64) bool { return between(lo, hi) }
 	for _, tc := range []struct {
 		name    string
 		absent  func(int64) bool
-		outside bool // valG0Y not in the set up to height 19
+		outside func(int64) bool // the heights valG0Y is not in the set for
 		want    []Recovery
 		outages int
 	}{
-		{"absent after the gap", between(20, 25), false, []Recovery{{Restart: 20, RestartTime: timeAt(21), SignedAt: 26, Duration: timeAt(27).Sub(timeAt(21))}}, 0},
-		{"signed through it", nil, false, []Recovery{{Restart: 20, RestartTime: timeAt(21), SignedAt: 20}}, 0},
-		{"down before it", between(9, 25), false, nil, 1},
-		{"not in the set before it", between(20, 25), true, nil, 0},
-		{"still down", between(20, 40), false, []Recovery{{Restart: 20, RestartTime: timeAt(21), Pending: true}}, 0},
+		{"absent after the gap", between(20, 25), nil, []Recovery{{Restart: 20, RestartTime: timeAt(21), SignedAt: 26, Duration: timeAt(27).Sub(timeAt(21))}}, 0},
+		{"signed through it", nil, nil, []Recovery{{Restart: 20, RestartTime: timeAt(21), SignedAt: 20}}, 0},
+		{"9 down before it", between(11, 25), nil, []Recovery{{Restart: 20, RestartTime: timeAt(21), SignedAt: 26, Duration: timeAt(27).Sub(timeAt(21))}}, 0},
+		{"10 down before it", between(10, 25), nil, nil, 1},
+		{"not in the set before it", between(20, 25), solo(1, 19), nil, 0},
+		{"not in the set at it", nil, solo(20, 20), nil, 0},
+		{"left the set while down", between(20, 25), solo(26, 40), nil, 0},
+		{"still down", between(20, 40), nil, []Recovery{{Restart: 20, RestartTime: timeAt(21), Pending: true}}, 0},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			s := newTestStore(t)
 			blocks := restartAfter20(tc.absent)
-			if tc.outside {
-				for i := range 19 {
+			for i := range blocks {
+				if tc.outside != nil && tc.outside(int64(i+1)) {
 					blocks[i].set, blocks[i].absent = "SOLO", nil
 				}
 			}
@@ -166,6 +183,38 @@ func TestHistoryRecoveries(t *testing.T) {
 				t.Errorf("outages = %+v, want %d", h.Outages, tc.outages)
 			}
 		})
+	}
+}
+
+func TestHistoryRecoveryRunAtTheStoredLow(t *testing.T) {
+	// Stored from 15: valG0Y's absences may reach below, so the run holding
+	// the gap gives no sample.
+	s := newTestStore(t)
+	writeChainFrom(t, s, 15, restartAfter20(between(15, 25))[14:])
+	h := history(t, s, t0.Add(time.Hour), valG0Y)
+	if len(h.Recoveries) != 0 {
+		t.Errorf("recoveries = %+v, want none", h.Recoveries)
+	}
+	if len(h.Outages) != 1 || h.Outages[0].First != 15 {
+		t.Errorf("outages = %+v, want one from 15", h.Outages)
+	}
+}
+
+func TestHistoryOutageAcrossARotation(t *testing.T) {
+	// valG0Y rotates to valRot at 20: absent for its last 6 blocks, the new
+	// key for its first 6.
+	blocks := secondly(40, between(14, 19))
+	for i := 19; i < 40; i++ {
+		blocks[i].set = "ROT"
+		if i < 25 {
+			blocks[i].absent = []Absence{{valRot, Absent}}
+		}
+	}
+	s := newTestStore(t)
+	writeChain(t, s, blocks)
+	h := history(t, s, t0.Add(time.Hour), valG0Y, valRot)
+	if len(h.Outages) != 1 || h.Outages[0].First != 14 || h.Outages[0].Last != 25 {
+		t.Errorf("outages = %+v, want one from 14 to 25", h.Outages)
 	}
 }
 
@@ -184,24 +233,36 @@ func TestHistoryExcludesRecoveryRuns(t *testing.T) {
 func TestHistoryCapsRecoveryRunsAt24Hours(t *testing.T) {
 	// Block 21 comes 5 min after block 20, then one block a minute: block
 	// 21+1440 is 24 h after block 21, so the cap leaves out heights from 1462.
-	const n = 1480
-	blocks := make([]chainBlock, n)
-	for i := range blocks {
-		h := int64(i + 1)
-		at := t0.Add(time.Duration(h) * time.Second)
-		if h > 20 {
-			at = t0.Add(20*time.Second + 5*time.Minute + time.Duration(h-21)*time.Minute)
-		}
-		blocks[i].at = at
-		if h >= 20 && h <= 1476 {
-			blocks[i].absent = []Absence{{valG0Y, Absent}}
-		}
-	}
-	s := newTestStore(t)
-	writeChain(t, s, blocks)
-	h := history(t, s, t0.Add(48*time.Hour), valG0Y)
-	if len(h.Outages) != 1 || h.Outages[0].First != 1462 || h.Outages[0].Last != 1476 {
-		t.Errorf("outages = %+v, want the 15 blocks past the 24 h cap, 1462 to 1476", h.Outages)
+	for _, tc := range []struct {
+		name string
+		last int64
+		want []int64 // the outage's first and last, none when nil
+	}{{"15 past the cap", 1476, []int64{1462, 1476}}, {"9 past the cap", 1470, nil}} {
+		t.Run(tc.name, func(t *testing.T) {
+			const n = 1480
+			blocks := make([]chainBlock, n)
+			for i := range blocks {
+				h := int64(i + 1)
+				at := t0.Add(time.Duration(h) * time.Second)
+				if h > 20 {
+					at = t0.Add(20*time.Second + 5*time.Minute + time.Duration(h-21)*time.Minute)
+				}
+				blocks[i].at = at
+				if h >= 20 && h <= tc.last {
+					blocks[i].absent = []Absence{{valG0Y, Absent}}
+				}
+			}
+			s := newTestStore(t)
+			writeChain(t, s, blocks)
+			h := history(t, s, t0.Add(48*time.Hour), valG0Y)
+			var got []int64
+			for _, o := range h.Outages {
+				got = append(got, o.First, o.Last)
+			}
+			if !reflect.DeepEqual(got, tc.want) {
+				t.Errorf("outages = %+v, want %v", h.Outages, tc.want)
+			}
+		})
 	}
 }
 
@@ -234,7 +295,7 @@ func TestHistorySummaryOutageInWindow(t *testing.T) {
 		name string
 		last int64
 		want int64
-	}{{"9 heights inside", 19, 0}, {"10 heights inside", 20, 1}} {
+	}{{"9 heights inside", 19, 0}, {"10 heights inside", 20, 1}, {"10 heights, the last 5 today", 0, 0}} {
 		t.Run(tc.name, func(t *testing.T) {
 			blocks := make([]chainBlock, 30)
 			for i := range blocks {
@@ -242,6 +303,16 @@ func TestHistorySummaryOutageInWindow(t *testing.T) {
 				blocks[i].at = start.Add(time.Duration(i) * time.Minute)
 				if h >= 5 && h <= tc.last {
 					blocks[i].absent = []Absence{{valG0Y, Absent}}
+				}
+			}
+			if tc.last == 0 {
+				// Block 6 is the window's last minute (2026-11-18 23:59),
+				// block 7 today's first.
+				for i := range blocks {
+					blocks[i].at = time.Date(2026, 11, 18, 23, 54, 0, 0, time.UTC).Add(time.Duration(i) * time.Minute)
+					if i >= 1 && i < 11 {
+						blocks[i].absent = []Absence{{valG0Y, Absent}}
+					}
 				}
 			}
 			s := newTestStore(t)
@@ -282,6 +353,8 @@ func TestHistorySummaryRecovery(t *testing.T) {
 	}{
 		{"last 3 of 4, one too old", []time.Time{ago(181), ago(100), ago(50), ago(20), ago(5)}, []int{90, 40, 30, 10, 20}, 4, 20 * time.Second, 40 * time.Second},
 		{"two samples", []time.Time{ago(20), ago(5)}, []int{10, 30}, 2, 20 * time.Second, 30 * time.Second},
+		{"the 180th day in, the 181st out", []time.Time{ago(181), ago(180)}, []int{10, 20}, 1, 20 * time.Second, 20 * time.Second},
+		{"today out", []time.Time{ago(5), ago(0)}, []int{10, 30}, 1, 10 * time.Second, 10 * time.Second},
 		{"none", nil, nil, 0, 0, 0},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -297,6 +370,21 @@ func TestHistorySummaryRecovery(t *testing.T) {
 					sum.RecoverySamples, sum.RecoveryMedian, sum.RecoverySlowest, tc.samples, tc.median, tc.slowest)
 			}
 		})
+	}
+}
+
+func TestHistoryMarksTheScoredRecoveries(t *testing.T) {
+	now := time.Date(2026, 11, 19, 10, 0, 0, 0, time.UTC)
+	ago := func(d int) time.Time { return now.Truncate(24*time.Hour).AddDate(0, 0, -d).Add(6 * time.Hour) }
+	s := newTestStore(t)
+	writeChain(t, s, restartsOn([]time.Time{ago(181), ago(100), ago(50), ago(20), ago(5), ago(0)}, []int{10, 10, 10, 10, 10, 10}))
+	var got []bool
+	for _, r := range history(t, s, now, valG0Y).Recoveries {
+		got = append(got, r.Scored)
+	}
+	// The last 3 of the 180 complete UTC days before today.
+	if want := []bool{false, false, true, true, true, false}; !reflect.DeepEqual(got, want) {
+		t.Errorf("scored = %v, want %v", got, want)
 	}
 }
 

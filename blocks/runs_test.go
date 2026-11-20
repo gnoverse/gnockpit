@@ -93,6 +93,9 @@ func TestStoreFillsTheAbsenceRunsOnce(t *testing.T) {
 			if h%7 < 3 {
 				r.Absences = append(r.Absences, Absence{valG0Y, Absent})
 			}
+			if h%7 == 3 {
+				r.Absences = append(r.Absences, Absence{valG0Y, Nil}) // signs: ends the run
+			}
 			if h%5 == 0 || h%5 == 1 {
 				r.Absences = append(r.Absences, Absence{val15T, OtherBlock})
 			}
