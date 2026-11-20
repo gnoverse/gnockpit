@@ -315,7 +315,8 @@
                 white-space: normal;
                 overflow-wrap: anywhere;
             }
-            .popover .sw {
+            .popover .sw,
+            .val-cap .sw {
                 display: inline-block;
                 width: 10px;
                 height: 10px;
@@ -1661,6 +1662,51 @@
             }
             .val-stats b.err {
                 color: var(--red);
+            }
+            /* Charts: day axes scroll sideways, calendars on a phone; each
+               legend says what one bar is, then its swatches as one block. */
+            .val-axis,
+            .val-cal-scroll {
+                overflow-x: auto;
+            }
+            .val-axis svg,
+            .val-cal svg {
+                display: block;
+            }
+            .val-cal {
+                display: flex;
+            }
+            .val-cal > svg {
+                flex-shrink: 0;
+            }
+            .val-cap {
+                color: var(--fg2);
+                font-size: 11px;
+                margin-top: 6px;
+                display: flex;
+                flex-wrap: wrap;
+                gap: 4px 18px;
+                align-items: center;
+            }
+            .val-cap .unit {
+                color: var(--fg);
+            }
+            .val-cap .keys {
+                display: inline-flex;
+                flex-wrap: wrap;
+                gap: 4px 14px;
+            }
+            .val-cap .sw.round {
+                width: 6px;
+                height: 6px;
+                border-radius: 50%;
+                margin: 0 6px 1px 2px;
+            }
+            .val-cap .sw.line {
+                width: 14px;
+                height: 2px;
+                border-radius: 0;
+                vertical-align: 3px;
             }
             .vt-out {
                 color: var(--red);
@@ -7625,6 +7671,689 @@
                     return mkEl('div', null, 'val-chart', { 'data-chart': key })
                 }
 
+                // ---- Charts
+                // One day axis for every chart on a wide screen: a day is
+                // max(DAY_PX, width ÷ days) wide, month ticks under it; the
+                // axes scroll together and open on the newest day. On a phone,
+                // Uptime and Proposals are calendars.
+                var DAY_PX = 8
+                var EMPTY = 'var(--border)'
+                var BAND_FILL = {
+                    ok: 'var(--green)',
+                    warn: 'var(--yellow)',
+                    err: 'var(--red)',
+                }
+                var DELAY_FILLS = [
+                    '#484f58',
+                    '#6e7681',
+                    '#2ea043',
+                    '#7ee787',
+                    '#d29922',
+                    '#f0883e',
+                    '#f85149',
+                ]
+                var chartRep = null // the report the charts draw; null while closed
+                var chartWidth = 0 // the window width they were drawn at
+
+                function svgEl(tag, attrs) {
+                    var e = document.createElementNS(SVG_NS, tag)
+                    for (var k in attrs) e.setAttribute(k, attrs[k])
+                    return e
+                }
+                function svgRoot(w, h) {
+                    return svgEl('svg', {
+                        width: w,
+                        height: h,
+                        viewBox: '0 0 ' + w + ' ' + h,
+                    })
+                }
+                function filled(e, colour) {
+                    e.style.fill = colour
+                    return e
+                }
+                function axisText(x, y, s) {
+                    var t = filled(
+                        svgEl('text', { x: x, y: y, 'font-size': 10 }),
+                        'var(--fg2)'
+                    )
+                    t.textContent = s
+                    return t
+                }
+                function month(day) {
+                    return new Date(day + 'T00:00:00Z')
+                        .toUTCString()
+                        .slice(8, 11)
+                }
+                // DAY_LABEL_PX is the day width from which each day gets its
+                // own date under the axis: a short range has no month start.
+                var DAY_LABEL_PX = 40
+                // monthAxis draws the day axis at y under days drawn px wide: a
+                // tick and a label at each month's first day, the first
+                // month's name at the left when no month starts near it, and
+                // each day's date when days are DAY_LABEL_PX wide or more.
+                function monthAxis(svg, days, px, y) {
+                    var line = svgEl('line', {
+                        x1: 0,
+                        x2: days.length * px,
+                        y1: y,
+                        y2: y,
+                    })
+                    line.style.stroke = 'var(--border)'
+                    svg.appendChild(line)
+                    var firstStart = -1
+                    days.forEach(function (d, i) {
+                        if (d.day.slice(8) !== '01') return
+                        if (firstStart < 0) firstStart = i
+                        var tick = svgEl('line', {
+                            x1: i * px,
+                            x2: i * px,
+                            y1: y,
+                            y2: y + 4,
+                        })
+                        tick.style.stroke = 'var(--fg2)'
+                        svg.appendChild(tick)
+                    })
+                    if (px >= DAY_LABEL_PX) {
+                        days.forEach(function (d, i) {
+                            var date = String(Number(d.day.slice(8)))
+                            if (i === 0 || d.day.slice(8) === '01')
+                                date += ' ' + month(d.day)
+                            svg.appendChild(axisText(i * px + 2, y + 14, date))
+                        })
+                        return
+                    }
+                    days.forEach(function (d, i) {
+                        if (d.day.slice(8) === '01')
+                            svg.appendChild(
+                                axisText(i * px + 2, y + 14, month(d.day))
+                            )
+                    })
+                    if (firstStart < 0 || firstStart * px > DAY_LABEL_PX)
+                        svg.appendChild(axisText(2, y + 14, month(days[0].day)))
+                }
+
+                // chartDays lists the UTC days from the report's first to
+                // today: each with its counters (null without blocks in the
+                // set) and the outages that started on it.
+                function chartDays(rep) {
+                    if (!rep.days.length) return []
+                    var byDay = {}
+                    rep.days.forEach(function (c) {
+                        byDay[c.day] = c
+                    })
+                    var outages = {}
+                    rep.timeline.forEach(function (e) {
+                        if (e.kind !== 'outage') return
+                        var day = e.time.slice(0, 10)
+                        ;(outages[day] = outages[day] || []).push(e)
+                    })
+                    var today = Math.floor(Date.now() / 86400000) * 86400000
+                    var out = []
+                    for (
+                        var t = Date.parse(rep.days[0].day + 'T00:00:00Z');
+                        t <= today;
+                        t += 86400000
+                    ) {
+                        var day = new Date(t).toISOString().slice(0, 10)
+                        out.push({
+                            day: day,
+                            t: t,
+                            c:
+                                byDay[day] && byDay[day].in_set
+                                    ? byDay[day]
+                                    : null,
+                            outages: outages[day] || [],
+                        })
+                    }
+                    return out
+                }
+
+                function uptimeFill(d) {
+                    if (!d.c) return EMPTY
+                    return BAND_FILL[
+                        band.uptime((d.c.signed / d.c.in_set) * 100)
+                    ]
+                }
+                function uptimeRows(d) {
+                    if (!d.c) return [[EMPTY, 'not in the set', '']]
+                    var c = d.c
+                    var rows = [
+                        [
+                            uptimeFill(d),
+                            'signed',
+                            num(c.signed) + ' of ' + num(c.in_set),
+                        ],
+                        [
+                            null,
+                            '',
+                            ((c.signed / c.in_set) * 100).toFixed(2) + ' %',
+                        ],
+                        [null, 'absent', num(c.absent)],
+                        [null, 'other block', num(c.other_block)],
+                        [null, 'nil votes', num(c.nil) + ' (signed)'],
+                    ]
+                    d.outages.forEach(function (o) {
+                        rows.push([
+                            null,
+                            '● outage',
+                            num(o.blocks) +
+                                ' blocks, ' +
+                                dur(
+                                    Date.parse(o.end_time) - Date.parse(o.time)
+                                ) +
+                                (o.ongoing ? ', ongoing' : ''),
+                        ])
+                        rows.push([
+                            null,
+                            '',
+                            'from ' +
+                                o.time.slice(11, 16) +
+                                ' UTC, #' +
+                                num(o.height),
+                        ])
+                    })
+                    return rows
+                }
+                function proposalsFill(d) {
+                    if (!d.c || !d.c.proposals_expected) return EMPTY
+                    return BAND_FILL[
+                        band.proposals(
+                            (d.c.proposals_missed / d.c.proposals_expected) *
+                                100
+                        )
+                    ]
+                }
+                function proposalsRows(d) {
+                    if (!d.c || !d.c.proposals_expected)
+                        return [[EMPTY, 'expected', 'none']]
+                    var c = d.c
+                    return [
+                        [
+                            proposalsFill(d),
+                            'missed',
+                            num(c.proposals_missed) +
+                                ' of ' +
+                                num(c.proposals_expected),
+                        ],
+                        [
+                            null,
+                            '',
+                            (
+                                (c.proposals_missed / c.proposals_expected) *
+                                100
+                            ).toFixed(1) + ' %',
+                        ],
+                    ]
+                }
+
+                // dayBars draws one bar per day, top y, h tall, coloured and
+                // explained by fillOf and rowsOf; outage dots above the bars
+                // when dots is set.
+                function dayBars(
+                    days,
+                    px,
+                    height,
+                    y,
+                    h,
+                    axisY,
+                    fillOf,
+                    rowsOf,
+                    dots
+                ) {
+                    var svg = svgRoot(days.length * px, height)
+                    days.forEach(function (d, i) {
+                        var r = filled(
+                            svgEl('rect', {
+                                x: i * px + 1,
+                                y: y,
+                                width: px - 2,
+                                height: h,
+                                rx: 1,
+                            }),
+                            fillOf(d)
+                        )
+                        popRows(r, d.day, rowsOf(d))
+                        svg.appendChild(r)
+                        if (dots && d.outages.length)
+                            svg.appendChild(
+                                filled(
+                                    svgEl('circle', {
+                                        cx: i * px + px / 2,
+                                        cy: 4,
+                                        r: 2.5,
+                                        'pointer-events': 'none',
+                                    }),
+                                    'var(--fg)'
+                                )
+                            )
+                    })
+                    monthAxis(svg, days, px, axisY)
+                    return svg
+                }
+
+                // calendar draws one cell per day, weeks as columns from
+                // Monday, opened on the newest week by drawCharts.
+                function calendar(days, fillOf, rowsOf, dots) {
+                    var s = 13
+                    var step = s + 3
+                    var first = (new Date(days[0].t).getUTCDay() + 6) % 7
+                    var weeks = Math.ceil((days.length + first) / 7)
+                    var height = 16 + 7 * step
+                    var wrap = mkEl('div', null, 'val-cal')
+                    var labels = svgRoot(30, height)
+                    ;['Mon', 'Wed', 'Fri'].forEach(function (l, i) {
+                        labels.appendChild(
+                            axisText(0, 16 + i * 2 * step + s - 3, l)
+                        )
+                    })
+                    wrap.appendChild(labels)
+                    var svg = svgRoot(weeks * step, height)
+                    // The first week's month is named unless a month starts
+                    // in the first two weeks, whose label would collide.
+                    var startCol = -1
+                    days.forEach(function (d, i) {
+                        if (startCol < 0 && d.day.slice(8) === '01')
+                            startCol = Math.floor((i + first) / 7)
+                    })
+                    if (startCol < 0 || startCol >= 2)
+                        svg.appendChild(axisText(0, 10, month(days[0].day)))
+                    days.forEach(function (d, i) {
+                        var col = Math.floor((i + first) / 7)
+                        var row = (i + first) % 7
+                        if (d.day.slice(8) === '01')
+                            svg.appendChild(
+                                axisText(col * step, 10, month(d.day))
+                            )
+                        var r = filled(
+                            svgEl('rect', {
+                                x: col * step,
+                                y: 16 + row * step,
+                                width: s,
+                                height: s,
+                                rx: 2,
+                            }),
+                            fillOf(d)
+                        )
+                        popRows(r, d.day, rowsOf(d))
+                        svg.appendChild(r)
+                        if (dots && d.outages.length)
+                            svg.appendChild(
+                                filled(
+                                    svgEl('circle', {
+                                        cx: col * step + s / 2,
+                                        cy: 16 + row * step + s / 2,
+                                        r: 2.5,
+                                        'pointer-events': 'none',
+                                    }),
+                                    'var(--fg)'
+                                )
+                            )
+                    })
+                    var scroll = mkEl('div', null, 'val-cal-scroll')
+                    scroll.appendChild(svg)
+                    wrap.appendChild(scroll)
+                    return wrap
+                }
+
+                // scoredRecoveries returns the samples the ranking takes: the
+                // last 3 whose restart day is within the 180 complete UTC days
+                // before today.
+                function scoredRecoveries(rep) {
+                    var today = Math.floor(Date.now() / 86400000) * 86400000
+                    var from = today - 180 * 86400000
+                    return rep.recoveries
+                        .filter(function (r) {
+                            var day = Date.parse(
+                                r.restart_time.slice(0, 10) + 'T00:00:00Z'
+                            )
+                            return !r.pending && day >= from && day < today
+                        })
+                        .slice(-3)
+                }
+                function recoveryNote(r, scored) {
+                    if (scored.indexOf(r) >= 0) return 'yes (its last 3)'
+                    var today = Math.floor(Date.now() / 86400000) * 86400000
+                    var day = Date.parse(
+                        r.restart_time.slice(0, 10) + 'T00:00:00Z'
+                    )
+                    if (day >= today) return 'from tomorrow'
+                    if (day < today - 180 * 86400000)
+                        return 'no (over 180 days ago)'
+                    return 'no (before its last 3)'
+                }
+
+                // recoveryChart draws one bar per sample on its restart's day,
+                // its height on a log scale up to 24 h; a blue line over the
+                // ones the ranking takes.
+                function recoveryChart(days, px, rep) {
+                    var base = 94
+                    var svg = svgRoot(days.length * px, 120)
+                    var index = {}
+                    days.forEach(function (d, i) {
+                        index[d.day] = i
+                    })
+                    var scored = scoredRecoveries(rep)
+                    var byDay = {}
+                    rep.recoveries.forEach(function (r) {
+                        if (r.pending) return
+                        var day = r.restart_time.slice(0, 10)
+                        if (index[day] === undefined) return
+                        ;(byDay[day] = byDay[day] || []).push(r)
+                    })
+                    var lineFrom = null
+                    var lineTo = null
+                    Object.keys(byDay).forEach(function (day) {
+                        var rs = byDay[day]
+                        var span = Math.max(px - 2, 6)
+                        var bw = span / rs.length
+                        var x0 = index[day] * px + px / 2 - span / 2
+                        rs.forEach(function (r, j) {
+                            var s = Math.min(r.duration_ms / 1000, 86400)
+                            var bh = Math.max(
+                                (Math.log(1 + s / 60) / Math.log(1 + 1440)) *
+                                    (base - 24),
+                                8
+                            )
+                            var x = x0 + j * bw
+                            var bar = filled(
+                                svgEl('rect', {
+                                    x: x,
+                                    y: base - bh,
+                                    width: bw,
+                                    height: bh,
+                                    rx: 1,
+                                }),
+                                BAND_FILL[band.recovery(r.duration_ms)]
+                            )
+                            popRows(bar, day, [
+                                [
+                                    BAND_FILL[band.recovery(r.duration_ms)],
+                                    'signed again after',
+                                    dur(r.duration_ms),
+                                ],
+                                [null, 'restart', '#' + num(r.restart_height)],
+                                [null, 'scored', recoveryNote(r, scored)],
+                            ])
+                            svg.appendChild(bar)
+                            if (scored.indexOf(r) >= 0) {
+                                if (lineFrom === null || x < lineFrom)
+                                    lineFrom = x
+                                if (lineTo === null || x + bw > lineTo)
+                                    lineTo = x + bw
+                            }
+                        })
+                    })
+                    if (lineFrom !== null) {
+                        var line = svgEl('line', {
+                            class: 'val-scored-line',
+                            x1: lineFrom,
+                            x2: lineTo,
+                            y1: 16,
+                            y2: 16,
+                            'stroke-width': 2,
+                        })
+                        line.style.stroke = 'var(--blue)'
+                        svg.appendChild(line)
+                    }
+                    monthAxis(svg, days, px, base + 2)
+                    return svg
+                }
+
+                // delayLabels names the vote-delay ranges the edges bound.
+                function delayLabels(edges) {
+                    function s(ms) {
+                        return (ms < 0 ? '−' : '') + Math.abs(ms) / 1000
+                    }
+                    var out = ['< ' + s(edges[0]) + ' s']
+                    for (var i = 1; i < edges.length; i++)
+                        out.push(
+                            edges[i - 1] === -edges[i]
+                                ? '±' + s(edges[i]) + ' s'
+                                : s(edges[i - 1]) + ' to ' + s(edges[i]) + ' s'
+                        )
+                    out.push('> ' + s(edges[edges.length - 1]) + ' s')
+                    return out
+                }
+                function share(n, of) {
+                    var p = (n / of) * 100
+                    if (!n) return '0 %'
+                    return p < 1 ? '< 1 %' : Math.round(p) + ' %'
+                }
+
+                // delayChart draws one bar per day, 100 % stacked by the delay
+                // ranges, early at the bottom.
+                function delayChart(days, px, rep) {
+                    var base = 104
+                    var top = 4
+                    var svg = svgRoot(days.length * px, 128)
+                    var labels = delayLabels(rep.vote_delay_edges_ms)
+                    days.forEach(function (d, i) {
+                        if (!d.c || !d.c.votes) return
+                        var g = svgEl('g')
+                        var y = base
+                        d.c.vote_delay_buckets.forEach(function (n, j) {
+                            var h = (n / d.c.votes) * (base - top)
+                            y -= h
+                            if (h > 0)
+                                g.appendChild(
+                                    filled(
+                                        svgEl('rect', {
+                                            x: i * px + 1,
+                                            y: y,
+                                            width: px - 2,
+                                            height: h,
+                                        }),
+                                        DELAY_FILLS[j]
+                                    )
+                                )
+                        })
+                        var rows = labels.map(function (l, j) {
+                            return [
+                                DELAY_FILLS[j],
+                                l,
+                                share(d.c.vote_delay_buckets[j], d.c.votes),
+                            ]
+                        })
+                        popRows(
+                            g,
+                            d.day,
+                            [
+                                [null, 'mean', delay(d.c.vote_delay_mean_ms)],
+                            ].concat(rows.reverse())
+                        )
+                        svg.appendChild(g)
+                    })
+                    monthAxis(svg, days, px, base + 2)
+                    return svg
+                }
+
+                // legend says what one bar (or cell) is, then the swatch keys,
+                // which wrap as one block.
+                function legend(unit, keys) {
+                    var cap = mkEl('div', null, 'val-cap')
+                    cap.appendChild(mkEl('span', unit, 'unit'))
+                    var block = mkEl('span', null, 'keys')
+                    keys.forEach(function (k) {
+                        var item = mkEl('span')
+                        var sw = mkEl(
+                            'span',
+                            null,
+                            'sw' + (k[2] ? ' ' + k[2] : '')
+                        )
+                        sw.style.background = k[0]
+                        item.appendChild(sw)
+                        item.appendChild(document.createTextNode(k[1]))
+                        block.appendChild(item)
+                    })
+                    cap.appendChild(block)
+                    return cap
+                }
+
+                var charts = {
+                    uptime: function (days, px, rep, cal) {
+                        return {
+                            chart: cal
+                                ? calendar(days, uptimeFill, uptimeRows, true)
+                                : dayBars(
+                                      days,
+                                      px,
+                                      59,
+                                      9,
+                                      28,
+                                      41,
+                                      uptimeFill,
+                                      uptimeRows,
+                                      true
+                                  ),
+                            legend: legend(
+                                cal
+                                    ? 'one cell per UTC day'
+                                    : 'one bar per UTC day',
+                                [
+                                    [BAND_FILL.ok, '≥ 99.9 % signed'],
+                                    [BAND_FILL.warn, '95 to 99.9 %'],
+                                    [BAND_FILL.err, '≤ 95 %'],
+                                    [EMPTY, 'not in the set'],
+                                    [
+                                        'var(--fg)',
+                                        'an outage that day',
+                                        'round',
+                                    ],
+                                ]
+                            ),
+                        }
+                    },
+                    proposals: function (days, px, rep, cal) {
+                        return {
+                            chart: cal
+                                ? calendar(
+                                      days,
+                                      proposalsFill,
+                                      proposalsRows,
+                                      false
+                                  )
+                                : dayBars(
+                                      days,
+                                      px,
+                                      50,
+                                      0,
+                                      28,
+                                      32,
+                                      proposalsFill,
+                                      proposalsRows,
+                                      false
+                                  ),
+                            legend: legend(
+                                cal
+                                    ? 'one cell per UTC day'
+                                    : 'one bar per UTC day',
+                                [
+                                    [BAND_FILL.ok, 'none missed'],
+                                    [BAND_FILL.warn, 'under 5 % missed'],
+                                    [BAND_FILL.err, '5 % or more'],
+                                    [EMPTY, 'none expected'],
+                                ]
+                            ),
+                        }
+                    },
+                    recovery: function (days, px, rep) {
+                        return {
+                            chart: recoveryChart(days, px, rep),
+                            legend: legend('one bar per restart, on its day', [
+                                [BAND_FILL.ok, '≤ 10 min'],
+                                [BAND_FILL.warn, '10 min to 24 h'],
+                                [BAND_FILL.err, '≥ 24 h'],
+                                [
+                                    'var(--blue)',
+                                    'its last 3, the ones scored',
+                                    'line',
+                                ],
+                            ]),
+                        }
+                    },
+                    delay: function (days, px, rep) {
+                        return {
+                            chart: delayChart(days, px, rep),
+                            legend: legend(
+                                'one bar per UTC day, its precommits by delay from the commit time',
+                                delayLabels(rep.vote_delay_edges_ms).map(
+                                    function (l, j) {
+                                        return [DELAY_FILLS[j], l]
+                                    }
+                                )
+                            ),
+                        }
+                    },
+                }
+
+                // drawCharts fills the page's chart containers from chartRep.
+                function drawCharts() {
+                    var rep = chartRep
+                    if (!rep) return
+                    chartWidth = window.innerWidth
+                    var days = chartDays(rep)
+                    var boxes = body.querySelectorAll('[data-chart]')
+                    if (!days.length) {
+                        boxes.forEach(function (box) {
+                            clearChildren(box)
+                            box.appendChild(
+                                mkEl(
+                                    'div',
+                                    'nothing in the block history yet',
+                                    'val-msg'
+                                )
+                            )
+                        })
+                        return
+                    }
+                    var phone = window.innerWidth <= 640
+                    var px = Math.max(
+                        DAY_PX,
+                        boxes[0].clientWidth / days.length
+                    )
+                    boxes.forEach(function (box) {
+                        var key = box.getAttribute('data-chart')
+                        var cal =
+                            phone && (key === 'uptime' || key === 'proposals')
+                        var c = charts[key](days, px, rep, cal)
+                        clearChildren(box)
+                        if (cal) box.appendChild(c.chart)
+                        else {
+                            var axis = mkEl('div', null, 'val-axis')
+                            axis.appendChild(c.chart)
+                            box.appendChild(axis)
+                        }
+                        box.appendChild(c.legend)
+                    })
+                    body.querySelectorAll('.val-axis, .val-cal-scroll').forEach(
+                        function (s) {
+                            s.scrollLeft = s.scrollWidth
+                        }
+                    )
+                    var axes = body.querySelectorAll('.val-axis')
+                    var syncing = false
+                    axes.forEach(function (a) {
+                        a.addEventListener('scroll', function () {
+                            if (syncing) return
+                            syncing = true
+                            axes.forEach(function (o) {
+                                if (o !== a) o.scrollLeft = a.scrollLeft
+                            })
+                            syncing = false
+                        })
+                    })
+                }
+                // A width change redraws the charts: the day's width follows
+                // it, and a phone's calendars come and go at 640 px.
+                var redrawTimer = 0
+                window.addEventListener('resize', function () {
+                    clearTimeout(redrawTimer)
+                    redrawTimer = setTimeout(function () {
+                        if (chartRep && window.innerWidth !== chartWidth)
+                            drawCharts()
+                    }, 150)
+                })
+
                 // ---- Content
                 function statusLine(rep) {
                     var line = mkEl('div', null, 'val-status')
@@ -8055,6 +8784,8 @@
                     body.appendChild(scoredGroup(rep))
                     body.appendChild(delaySection(rep))
                     body.appendChild(timelineSection(rep))
+                    chartRep = rep
+                    drawCharts()
                 }
                 function message(text) {
                     clearChildren(body)
@@ -8112,6 +8843,7 @@
                 }
                 function hide() {
                     shown = null
+                    chartRep = null
                     seq++
                     modal.classList.remove('open')
                     hidePopover()
