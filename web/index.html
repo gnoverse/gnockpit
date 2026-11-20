@@ -1516,13 +1516,157 @@
                 font-size: 1rem;
                 font-weight: 600;
             }
-            .eta-modal-head button {
+            .eta-modal-head button:not(.hdr-btn) {
                 background: none;
                 border: none;
                 cursor: pointer;
                 font-size: 1.4em;
                 line-height: 1;
                 color: inherit;
+            }
+            /* ---- Validator page: the ETA planner's modal, wider, full
+               screen on a phone. Every section has the same 12 px left inset,
+               so the charts' day axes line up. */
+            #val-page {
+                width: min(1100px, 94vw);
+                max-height: 90vh;
+            }
+            @media (max-width: 640px) {
+                #val-page {
+                    width: 100vw;
+                    height: 100%;
+                    max-height: none;
+                    border: 0;
+                    border-radius: 0;
+                    padding: 16px;
+                }
+            }
+            #val-page .eta-modal-head {
+                align-items: flex-start;
+                gap: 10px;
+                margin-bottom: 6px;
+            }
+            .val-acts {
+                display: flex;
+                align-items: center;
+                gap: 8px;
+                flex-shrink: 0;
+            }
+            .val-link {
+                color: inherit;
+                text-decoration: none;
+            }
+            .val-link:hover {
+                text-decoration: underline;
+            }
+            .val-msg {
+                color: var(--fg2);
+            }
+            .val-status {
+                color: var(--fg2);
+                display: flex;
+                flex-wrap: wrap;
+                gap: 4px 14px;
+            }
+            .val-status .dot {
+                margin-right: 4px;
+            }
+            .val-status .dot.out {
+                background: var(--fg2);
+            }
+            .val-sec {
+                margin-top: 16px;
+                padding-left: 12px;
+            }
+            .val-sec h3 {
+                color: var(--blue);
+                font-size: 14px;
+                margin: 0 0 8px;
+                text-transform: uppercase;
+                letter-spacing: 1px;
+                display: flex;
+                align-items: center;
+                gap: 2px;
+            }
+            .val-sec h3 .info-btn,
+            .val-glabel .info-btn {
+                text-transform: none;
+                letter-spacing: 0;
+                font-weight: normal;
+            }
+            /* The scored group: one label and one continuous blue line down
+               its left side, around the sections the ranking scores. */
+            .val-scored {
+                margin-top: 16px;
+                padding: 2px 0 2px 12px;
+                box-shadow: inset 3px 0 0 var(--blue);
+            }
+            .val-glabel {
+                font-size: 11px;
+                text-transform: uppercase;
+                letter-spacing: 0.5px;
+                color: var(--blue);
+            }
+            .val-scored .val-sec {
+                padding-left: 0;
+            }
+            .val-scored .val-sec:first-of-type {
+                margin-top: 8px;
+            }
+            .kv .v.val-text {
+                word-break: normal;
+                overflow-wrap: break-word;
+            }
+            /* Stats lines: per window, its name small, then label / bold
+               value pairs; a divider between windows. */
+            .val-stats {
+                display: flex;
+                flex-wrap: wrap;
+                gap: 6px 0;
+                margin-bottom: 8px;
+                align-items: baseline;
+            }
+            .val-win {
+                display: inline-flex;
+                flex-wrap: wrap;
+                align-items: baseline;
+                gap: 4px 22px;
+                padding: 0 20px;
+                border-left: 1px solid var(--border);
+            }
+            .val-win:first-child {
+                padding-left: 0;
+                border-left: 0;
+            }
+            .val-win > .w {
+                color: var(--fg2);
+                font-size: 11px;
+                text-transform: uppercase;
+                letter-spacing: 0.5px;
+                margin-right: -8px;
+            }
+            .val-stats .l {
+                color: var(--fg2);
+                margin-right: 6px;
+            }
+            .val-stats b {
+                color: var(--fg);
+                font-variant-numeric: tabular-nums;
+            }
+            .val-stats b.ok {
+                color: var(--green);
+            }
+            .val-stats b.warn {
+                color: var(--yellow);
+            }
+            .val-stats b.err {
+                color: var(--red);
+            }
+            .vt-out {
+                color: var(--red);
+            }
+            .vt-rec {
+                color: var(--green);
             }
             .eta-field {
                 margin-bottom: 12px;
@@ -2754,6 +2898,33 @@
                 )
             }
 
+            // valLink links the page of the validator with address (a plain
+            // click opens it in a modal: see the validator page section).
+            // content is its name, as text or a node.
+            function valLink(address, content) {
+                var a = document.createElement('a')
+                a.className = 'val-link'
+                a.href = '?val=' + encodeURIComponent(address)
+                if (typeof content === 'string') a.textContent = content
+                else a.appendChild(content)
+                return a
+            }
+
+            // timeAgo writes how long ago an RFC 3339 time was, roughly.
+            function timeAgo(iso) {
+                var m = Math.round((Date.now() - Date.parse(iso)) / 60000)
+                if (m < 1) return 'just now'
+                if (m < 60) return m + ' min ago'
+                var h = Math.round(m / 60)
+                if (h < 48) return h + ' h ago'
+                return Math.round(h / 24) + ' d ago'
+            }
+
+            // utcMinute writes an RFC 3339 UTC time to the minute.
+            function utcMinute(iso) {
+                return iso.slice(0, 16).replace('T', ' ') + ' UTC'
+            }
+
             // midTruncCell builds a peers/validators cell that shows the full text
             // when the column is wide enough and truncates in the middle
             // (start…end) when it isn't. opts: rows (its popover), copy,
@@ -3201,7 +3372,7 @@
                             cleanName.length > 20
                                 ? shortAddr(cleanName)
                                 : cleanName
-                        nameTd.appendChild(document.createTextNode(displayName))
+                        nameTd.appendChild(valLink(v.address, displayName))
                         if (displayName !== cleanName) {
                             nameTd.setAttribute('data-popover', cleanName)
                             nameTd.classList.add('tap-popover')
@@ -3534,9 +3705,10 @@
                     clearChildren(peerContainer)
 
                     function makeCard(data) {
-                        // data: { name, isUs, dotClass, healthText, healthCls, address, ip,
-                        //         consensus, missed100, missed100Cls, speed, speedCls,
-                        //         rpcUrl, rpcText, rpcCls }
+                        // data: { name, valAddress (a validator's: its name links
+                        //         its page), isUs, dotClass, healthText, healthCls,
+                        //         address, ip, consensus, missed100, missed100Cls,
+                        //         speed, speedCls, rpcUrl, rpcText, rpcCls }
                         var card = document.createElement('div')
                         card.className =
                             'peer-card ' + (data.rpcUrl ? 'has-rpc' : 'no-rpc')
@@ -3558,7 +3730,11 @@
                                       : 'var(--yellow)'
                             nameSpan.appendChild(dot)
                         }
-                        nameSpan.appendChild(document.createTextNode(data.name))
+                        nameSpan.appendChild(
+                            data.valAddress
+                                ? valLink(data.valAddress, data.name)
+                                : document.createTextNode(data.name)
+                        )
                         if (data.isUs || data.source)
                             nameSpan.appendChild(
                                 mkEl('span', ' (source)', 'source-tag')
@@ -3733,6 +3909,7 @@
                             valContainer.appendChild(
                                 makeCard({
                                     name: cleanName || shortAddr(v.address),
+                                    valAddress: v.address,
                                     isUs: isUs,
                                     address: shortAddr(v.address),
                                     fullAddress: v.address,
@@ -5628,6 +5805,28 @@
                 <div class="eta-halt-row" id="eta-halt-row"></div>
             </div>
         </div>
+        <div id="val-modal" class="eta-modal">
+            <div
+                id="val-page"
+                class="eta-modal-inner"
+                role="dialog"
+                aria-modal="true"
+                aria-labelledby="val-title"
+            >
+                <div class="eta-modal-head">
+                    <h2 id="val-title"></h2>
+                    <div class="val-acts">
+                        <button class="hdr-btn" id="val-link-btn">
+                            ⧉ link
+                        </button>
+                        <button id="val-close" aria-label="Close">
+                            &times;
+                        </button>
+                    </div>
+                </div>
+                <div id="val-body"></div>
+            </div>
+        </div>
         <script>
             // ---- Block ETA
             // Countdown cards and the planner. The cards poll /api/eta; between
@@ -7041,18 +7240,8 @@
                 function who(m) {
                     return m.moniker || short(m.address)
                 }
-                function ago(iso) {
-                    var m = Math.round((Date.now() - Date.parse(iso)) / 60000)
-                    if (m < 1) return 'just now'
-                    if (m < 60) return m + ' min ago'
-                    var h = Math.round(m / 60)
-                    if (h < 48) return h + ' h ago'
-                    return Math.round(h / 24) + ' d ago'
-                }
-                function utc(iso) {
-                    return iso.slice(0, 16).replace('T', ' ') + ' UTC'
-                }
-                // names lists members, their names in bold: [text, bold] pairs.
+                // names lists members, their names in bold and linked to their
+                // pages: [text, bold, address] segments.
                 function names(ms) {
                     var out = []
                     ms.forEach(function (m, i) {
@@ -7061,7 +7250,7 @@
                                 i === ms.length - 1 ? ' and ' : ', ',
                                 false,
                             ])
-                        out.push([who(m), true])
+                        out.push([who(m), true, m.address])
                     })
                     return out
                 }
@@ -7116,7 +7305,7 @@
                             k: '↕',
                             cls: 'vt-pow',
                             what: [
-                                [who(m), true],
+                                [who(m), true, m.address],
                                 [' power ' + m.before + ' → ' + m.after, false],
                             ],
                             p: '',
@@ -7127,7 +7316,11 @@
                             k: '⇄',
                             cls: 'vt-rot',
                             what: [
-                                [r.moniker || short(r.new_address), true],
+                                [
+                                    r.moniker || short(r.new_address),
+                                    true,
+                                    r.new_address,
+                                ],
                                 [' rotated its key', false],
                             ],
                             p:
@@ -7154,19 +7347,24 @@
                                 : '#' +
                                       c.height.toLocaleString('en-US') +
                                       ' · ' +
-                                      ago(c.time)
+                                      timeAgo(c.time)
                         )
-                        h.setAttribute('data-popover', utc(c.time))
+                        h.setAttribute('data-popover', utcMinute(c.time))
                         h.classList.add('tap-popover')
                         r.appendChild(h)
                         r.appendChild(el('span', 'k ' + part.cls, part.k))
                         var w = el('span', 'w')
                         part.what.forEach(function (seg) {
-                            w.appendChild(
-                                seg[1]
-                                    ? el('b', null, seg[0])
-                                    : document.createTextNode(seg[0])
-                            )
+                            if (seg[2])
+                                w.appendChild(
+                                    valLink(seg[2], el('b', null, seg[0]))
+                                )
+                            else
+                                w.appendChild(
+                                    seg[1]
+                                        ? el('b', null, seg[0])
+                                        : document.createTextNode(seg[0])
+                                )
                         })
                         if (part.p) {
                             w.appendChild(document.createTextNode(' '))
@@ -7308,6 +7506,680 @@
                     saved = localStorage.getItem(VIEW_KEY) || 'live'
                 } catch (e) {}
                 setView(saved === 'timeline' ? 'timeline' : 'live')
+            })()
+        </script>
+        <script>
+            // ---- Validator page
+            // A validator's page opens in a modal over the dashboard, from a
+            // click on its name (validators table, phone card, Timeline view)
+            // or from ?val= in the URL, and reads /api/validator. Opening
+            // pushes ?val=, so Back closes it; closing restores the URL.
+            ;(function () {
+                var modal = $('val-modal')
+                var body = $('val-body')
+                var title = $('val-title')
+                var shown = null // the ?val= the page shows; null while closed
+                var pushed = false // the URL's ?val= is an entry this page pushed
+                var seq = 0 // the read in force: a newer one drops older answers
+                var opener = null // focused before opening, focused again on close
+
+                // band colours a scored value by where it lands on the scoring
+                // map: ok where the sub-score is full, warn partial, err zero.
+                var band = {
+                    uptime: function (pct) {
+                        return pct >= 99.9 ? 'ok' : pct > 95 ? 'warn' : 'err'
+                    },
+                    outages: function (n) {
+                        return n === 0 ? 'ok' : n < 10 ? 'warn' : 'err'
+                    },
+                    proposals: function (pct) {
+                        return pct === 0 ? 'ok' : pct < 5 ? 'warn' : 'err'
+                    },
+                    recovery: function (ms) {
+                        return ms <= 600000
+                            ? 'ok'
+                            : ms < 86400000
+                              ? 'warn'
+                              : 'err'
+                    },
+                }
+
+                // ---- Formats
+                function num(n) {
+                    return n.toLocaleString('en-US')
+                }
+                // dur writes a duration: seconds kept under an hour, days from
+                // 48 h.
+                function dur(ms) {
+                    var s = Math.round(ms / 1000)
+                    if (s < 60) return s + ' s'
+                    if (s < 3600)
+                        return (
+                            Math.floor(s / 60) +
+                            ' min ' +
+                            String(s % 60).padStart(2, '0') +
+                            ' s'
+                        )
+                    var h = Math.floor(s / 3600)
+                    if (h >= 48) return Math.round(h / 24) + ' d'
+                    return (
+                        h +
+                        ' h ' +
+                        String(Math.floor((s % 3600) / 60)).padStart(2, '0') +
+                        ' min'
+                    )
+                }
+                // delay writes a vote delay in seconds, signed: negative is
+                // early; one that rounds to zero has no sign.
+                function delay(ms) {
+                    var s = (Math.abs(ms) / 1000).toFixed(2)
+                    if (s === '0.00') return s + ' s'
+                    return (ms < 0 ? '−' : '+') + s + ' s'
+                }
+
+                // ---- Building blocks
+                // info builds an ⓘ whose popover says what a datum is, where it
+                // comes from, and whether the ranking scores it.
+                function info(what, source, scored) {
+                    var i = mkEl('span', 'ⓘ', 'info-btn')
+                    i.setAttribute(
+                        'data-popover',
+                        'What: ' +
+                            what +
+                            '\nSource: ' +
+                            source +
+                            '\nScored: ' +
+                            (scored
+                                ? 'yes, ' + scored
+                                : 'no, shown for monitoring')
+                    )
+                    return i
+                }
+                function section(key, name, i) {
+                    var sec = mkEl('div', null, 'val-sec', {
+                        'data-section': key,
+                    })
+                    var h = mkEl('h3', name)
+                    h.appendChild(i)
+                    sec.appendChild(h)
+                    return sec
+                }
+                // statsLine builds a section's stats: [window, [[label, value,
+                // band class or '']…]] per window.
+                function statsLine(windows) {
+                    var line = mkEl('div', null, 'val-stats')
+                    windows.forEach(function (w) {
+                        var win = mkEl('span', null, 'val-win')
+                        win.appendChild(mkEl('span', w[0], 'w'))
+                        w[1].forEach(function (st) {
+                            var item = mkEl('span')
+                            item.appendChild(mkEl('span', st[0], 'l'))
+                            item.appendChild(mkEl('b', st[1], st[2]))
+                            win.appendChild(item)
+                        })
+                        line.appendChild(win)
+                    })
+                    return line
+                }
+                function chart(key) {
+                    return mkEl('div', null, 'val-chart', { 'data-chart': key })
+                }
+
+                // ---- Content
+                function statusLine(rep) {
+                    var line = mkEl('div', null, 'val-status')
+                    var st = rep.status
+                    if (st) {
+                        var text = st.in_set ? 'in the set' : 'not in the set'
+                        if (st.since_time) {
+                            var days = Math.floor(
+                                (Date.now() - Date.parse(st.since_time)) /
+                                    86400000
+                            )
+                            text +=
+                                ' since ' +
+                                st.since_time.slice(0, 10) +
+                                ' (' +
+                                days +
+                                ' d)'
+                        }
+                        if (st.in_set)
+                            text +=
+                                ' · power ' +
+                                st.power +
+                                ' (' +
+                                (st.share * 100).toFixed(1) +
+                                ' %)'
+                        var s = mkEl('span')
+                        s.appendChild(
+                            mkEl(
+                                'span',
+                                null,
+                                'dot ' + (st.in_set ? 'green' : 'out')
+                            )
+                        )
+                        s.appendChild(document.createTextNode(text))
+                        s.appendChild(
+                            info(
+                                'whether it is in the validator set, since when without a break (key rotations included), its voting power and share of the set',
+                                "the node's current validator set; the block history's set changes for since",
+                                ''
+                            )
+                        )
+                        line.appendChild(s)
+                    }
+                    var loc = rep.location
+                    if (loc && (loc.country || loc.provider)) {
+                        var where = mkEl(
+                            'span',
+                            (loc.country ? countryName(loc.country) : '—') +
+                                ' · ' +
+                                (loc.provider || '—')
+                        )
+                        where.appendChild(
+                            info(
+                                'where its node is hosted',
+                                "its matched peer's IP, through the GeoIP and ASN databases",
+                                ''
+                            )
+                        )
+                        line.appendChild(where)
+                    }
+                    if (loc && loc.version) {
+                        var version = mkEl('span', loc.version)
+                        version.appendChild(
+                            info(
+                                'the gno version its node reports',
+                                "its matched peer's net_info",
+                                ''
+                            )
+                        )
+                        line.appendChild(version)
+                    }
+                    return line
+                }
+
+                function profileSection(rep) {
+                    var sec = section(
+                        'profile',
+                        'Profile',
+                        info(
+                            "what the operator wrote in its valopers profile, and the realm's state for it",
+                            'the valopers realm (gno.land/r/gnops/valopers), read every 15 min',
+                            ''
+                        )
+                    )
+                    var kv = mkEl('div', null, 'kv')
+                    function row(k, v, cls) {
+                        kv.appendChild(mkEl('span', k, 'k'))
+                        kv.appendChild(
+                            mkEl('span', v, 'v' + (cls ? ' ' + cls : ''))
+                        )
+                    }
+                    var p = rep.profile
+                    if (p) {
+                        row('description', p.description || '—', 'val-text')
+                        row('server type', p.server_type || '—')
+                        row('operator', p.operator)
+                        row('signing address', p.signing_address)
+                        row('signing key', p.signing_pubkey)
+                        if ('keep_running' in p)
+                            row('keep running', p.keep_running ? 'yes' : 'no')
+                        if ('last_rotation_height' in p)
+                            row(
+                                'last rotation',
+                                '#' + num(p.last_rotation_height)
+                            )
+                    } else {
+                        var keys = rep.keys || []
+                        row('operator', rep.operator || '—')
+                        row(
+                            'signing address',
+                            keys.length
+                                ? keys[keys.length - 1].address
+                                : rep.address
+                        )
+                        row('profile', 'none in the valopers realm')
+                    }
+                    sec.appendChild(kv)
+                    return sec
+                }
+
+                function scoredGroup(rep) {
+                    var sm = rep.summary
+                    var live = rep.live
+                    var group = mkEl('div', null, 'val-scored')
+                    var label = mkEl(
+                        'div',
+                        'scored by the ranking',
+                        'val-glabel'
+                    )
+                    label.appendChild(
+                        info(
+                            'the sections the validator ranking scores; its score combines uptime (50 %), outages (20 %), recovery (20 %) and proposals (10 %)',
+                            'the block history',
+                            'all three, with the weights above'
+                        )
+                    )
+                    group.appendChild(label)
+
+                    var up = section(
+                        'uptime',
+                        'Uptime',
+                        info(
+                            'per UTC day, of the blocks it was in the set for: signed (a nil vote counts as signed), absent from the commit, or voted for another block',
+                            "the block history: every block's commit",
+                            'signed ÷ blocks in the set (50 %), and outages, runs of 10 or more absences (20 %), over the 30 complete UTC days before today; the ranking leaves recovery runs out, the figures here count every height'
+                        )
+                    )
+                    var signed = sm.in_set
+                        ? (sm.signed / sm.in_set) * 100
+                        : null
+                    up.appendChild(
+                        statsLine([
+                            [
+                                'last 30 days',
+                                [
+                                    [
+                                        'signed',
+                                        signed === null
+                                            ? '—'
+                                            : signed.toFixed(2) + ' %',
+                                        signed === null
+                                            ? ''
+                                            : band.uptime(signed),
+                                    ],
+                                    [
+                                        'outages',
+                                        num(sm.outages),
+                                        sm.in_set
+                                            ? band.outages(sm.outages)
+                                            : '',
+                                    ],
+                                    ['nil votes', num(sm.nil), ''],
+                                    ['other block', num(sm.other_block), ''],
+                                ],
+                            ],
+                        ])
+                    )
+                    up.appendChild(chart('uptime'))
+                    group.appendChild(up)
+
+                    var pr = section(
+                        'proposals',
+                        'Proposals',
+                        info(
+                            'per UTC day: the rounds it was the expected proposer of until the block was made, and those it missed',
+                            "the block history: block headers and each round's expected proposer",
+                            'missed ÷ expected (10 %) over the 30 complete UTC days before today; the ranking counts only heights it signed and leaves restart heights out, the figures here count every height'
+                        )
+                    )
+                    var pm = sm.proposals_missed
+                    var pe = sm.proposals_expected
+                    pr.appendChild(
+                        statsLine([
+                            [
+                                'last 30 days',
+                                [
+                                    [
+                                        'missed',
+                                        pe
+                                            ? num(pm) +
+                                              ' of ' +
+                                              num(pe) +
+                                              ' (' +
+                                              ((pm / pe) * 100).toFixed(1) +
+                                              ' %)'
+                                            : 'none expected',
+                                        pe
+                                            ? band.proposals((pm / pe) * 100)
+                                            : '',
+                                    ],
+                                ],
+                            ],
+                            [
+                                'last 24 h',
+                                [
+                                    [
+                                        'missed',
+                                        live.expected_proposals_24h
+                                            ? num(live.missed_proposals_24h) +
+                                              ' of ' +
+                                              num(live.expected_proposals_24h)
+                                            : 'none expected',
+                                        '',
+                                    ],
+                                ],
+                            ],
+                        ])
+                    )
+                    pr.appendChild(chart('proposals'))
+                    group.appendChild(pr)
+
+                    var rc = sm.recovery
+                    var re = section(
+                        'recovery',
+                        'Recovery',
+                        info(
+                            'after a restart (two blocks more than 2 min apart), how long it took to sign again; it gets a sample only if it was signing before the restart',
+                            'the block history: restart gaps and absences',
+                            'the median of its last 3 samples within the 180 complete UTC days before today (20 %)'
+                        )
+                    )
+                    re.appendChild(
+                        statsLine([
+                            [
+                                'last 180 days',
+                                [
+                                    [
+                                        'median of its last 3',
+                                        rc.samples ? dur(rc.median_ms) : '—',
+                                        rc.samples
+                                            ? band.recovery(rc.median_ms)
+                                            : '',
+                                    ],
+                                    ['restarts', num(rc.samples), ''],
+                                    [
+                                        'slowest',
+                                        rc.samples ? dur(rc.slowest_ms) : '—',
+                                        '',
+                                    ],
+                                ],
+                            ],
+                        ])
+                    )
+                    re.appendChild(chart('recovery'))
+                    group.appendChild(re)
+                    return group
+                }
+
+                function delaySection(rep) {
+                    var sec = section(
+                        'delay',
+                        'Vote delay',
+                        info(
+                            "how far its precommits' times are from the commit's voting-power-weighted median time; negative is early",
+                            'the block history: daily vote-delay histograms; the live window for the last 100 blocks',
+                            ''
+                        )
+                    )
+                    var live = rep.live.vote_delay_ms
+                    sec.appendChild(
+                        statsLine([
+                            [
+                                'last 100 blocks',
+                                [
+                                    [
+                                        'median',
+                                        live === null ? '—' : delay(live),
+                                        '',
+                                    ],
+                                ],
+                            ],
+                            [
+                                'last 30 days',
+                                [
+                                    [
+                                        'mean',
+                                        rep.summary.votes
+                                            ? delay(
+                                                  rep.summary.vote_delay_mean_ms
+                                              )
+                                            : '—',
+                                        '',
+                                    ],
+                                ],
+                            ],
+                        ])
+                    )
+                    sec.appendChild(chart('delay'))
+                    return sec
+                }
+
+                // timelineRow builds a Timeline entry in the Timeline view's
+                // row style.
+                function timelineRow(e) {
+                    var k, cls, what, p
+                    switch (e.kind) {
+                        case 'recovered':
+                            k = '↻'
+                            cls = 'vt-rec'
+                            what = [
+                                'recovered in ',
+                                [
+                                    dur(e.duration_ms),
+                                    band.recovery(e.duration_ms),
+                                ],
+                            ]
+                            p = 'restart at #' + num(e.restart_height)
+                            break
+                        case 'outage':
+                            k = '■'
+                            cls = 'vt-out'
+                            what = ['outage of ' + num(e.blocks) + ' blocks']
+                            p =
+                                dur(
+                                    Date.parse(e.end_time) - Date.parse(e.time)
+                                ) + (e.ongoing ? ', ongoing' : '')
+                            break
+                        case 'power':
+                            k = '↕'
+                            cls = 'vt-pow'
+                            what = ['power ' + e.before + ' → ' + e.after]
+                            p = ''
+                            break
+                        case 'rotated':
+                            k = '⇄'
+                            cls = 'vt-rot'
+                            what = ['rotated its key']
+                            p =
+                                shortAddr(e.old_address) +
+                                ' → ' +
+                                shortAddr(e.new_address)
+                            break
+                        case 'joined':
+                        case 'left':
+                        case 'genesis':
+                            k = { joined: '+', left: '−', genesis: '◆' }[e.kind]
+                            cls = {
+                                joined: 'vt-add',
+                                left: 'vt-rm',
+                                genesis: 'vt-gen',
+                            }[e.kind]
+                            what = [
+                                e.kind === 'genesis'
+                                    ? 'in the genesis set'
+                                    : e.kind,
+                            ]
+                            p = 'power ' + e.power
+                            break
+                        default:
+                            return null
+                    }
+                    var r = mkEl('div', null, 'vt-row')
+                    var h = mkEl(
+                        'span',
+                        '#' + num(e.height) + ' · ' + timeAgo(e.time),
+                        'h tap-popover',
+                        { 'data-popover': utcMinute(e.time) }
+                    )
+                    r.appendChild(h)
+                    r.appendChild(mkEl('span', k, 'k ' + cls))
+                    var w = mkEl('span', null, 'w')
+                    what.forEach(function (seg) {
+                        w.appendChild(
+                            typeof seg === 'string'
+                                ? document.createTextNode(seg)
+                                : mkEl('b', seg[0], seg[1])
+                        )
+                    })
+                    if (p) {
+                        w.appendChild(document.createTextNode(' '))
+                        w.appendChild(mkEl('span', p, 'p'))
+                    }
+                    r.appendChild(w)
+                    r.appendChild(mkEl('span', '', 'n'))
+                    return r
+                }
+
+                function timelineSection(rep) {
+                    var sec = section(
+                        'timeline',
+                        'Timeline',
+                        info(
+                            'its changes: joins, leaves, power, key rotations, outages, recoveries after a restart',
+                            'the block history: validator sets, set-change events, absences, restart gaps',
+                            'its outages and recoveries (see Uptime and Recovery); the rest is not'
+                        )
+                    )
+                    var rows = rep.timeline.map(timelineRow).filter(Boolean)
+                    if (!rows.length)
+                        sec.appendChild(
+                            mkEl(
+                                'div',
+                                'nothing in the block history yet',
+                                'val-msg'
+                            )
+                        )
+                    rows.forEach(function (r) {
+                        sec.appendChild(r)
+                    })
+                    return sec
+                }
+
+                function render(rep) {
+                    title.textContent = rep.moniker || shortAddr(rep.address)
+                    clearChildren(body)
+                    body.appendChild(statusLine(rep))
+                    body.appendChild(profileSection(rep))
+                    body.appendChild(scoredGroup(rep))
+                    body.appendChild(delaySection(rep))
+                    body.appendChild(timelineSection(rep))
+                }
+                function message(text) {
+                    clearChildren(body)
+                    body.appendChild(mkEl('div', text, 'val-msg'))
+                }
+
+                // ---- Opening and closing
+                function urlWith(val) {
+                    var p = new URLSearchParams(location.search)
+                    if (val) p.set('val', val)
+                    else p.delete('val')
+                    var s = p.toString()
+                    return (
+                        location.pathname + (s ? '?' + s : '') + location.hash
+                    )
+                }
+                // show opens the modal on val and reads its report; the URL
+                // follows to the report's operator when it names one.
+                function show(val) {
+                    shown = val
+                    if (!modal.classList.contains('open')) {
+                        opener = document.activeElement
+                        modal.classList.add('open')
+                    }
+                    title.textContent = shortAddr(val)
+                    message('loading…')
+                    $('val-close').focus()
+                    var s = ++seq
+                    fetch('/api/validator?val=' + encodeURIComponent(val))
+                        .then(function (res) {
+                            return res.json().then(function (d) {
+                                return { ok: res.ok, d: d }
+                            })
+                        })
+                        .then(function (r) {
+                            if (s !== seq) return
+                            if (!r.ok) {
+                                message(r.d.error || 'could not load')
+                                return
+                            }
+                            render(r.d)
+                            if (r.d.operator && r.d.operator !== val) {
+                                shown = r.d.operator
+                                history.replaceState(
+                                    history.state ? { val: shown } : null,
+                                    '',
+                                    urlWith(shown)
+                                )
+                            }
+                        })
+                        .catch(function (e) {
+                            if (s === seq)
+                                message('could not load: ' + e.message)
+                        })
+                }
+                function hide() {
+                    shown = null
+                    seq++
+                    modal.classList.remove('open')
+                    hidePopover()
+                    if (opener && opener.focus) opener.focus()
+                    opener = null
+                }
+                window.openValidator = function (val) {
+                    if (
+                        new URLSearchParams(location.search).get('val') !== val
+                    ) {
+                        history.pushState({ val: val }, '', urlWith(val))
+                        pushed = true
+                    }
+                    show(val)
+                }
+                window.closeValidator = function () {
+                    if (!shown) return
+                    hide()
+                    if (pushed) {
+                        pushed = false
+                        history.back()
+                    } else history.replaceState(null, '', urlWith(null))
+                }
+                window.addEventListener('popstate', function () {
+                    var val = new URLSearchParams(location.search).get('val')
+                    if (val) {
+                        pushed = !!(history.state && history.state.val)
+                        if (val !== shown) show(val)
+                    } else if (shown) {
+                        pushed = false
+                        hide()
+                    }
+                })
+                $('val-close').addEventListener('click', closeValidator)
+                modal.addEventListener('click', function (e) {
+                    if (e.target === modal) closeValidator()
+                })
+                document.addEventListener('keydown', function (e) {
+                    if (e.key === 'Escape' && shown) closeValidator()
+                })
+                $('val-link-btn').addEventListener('click', function (e) {
+                    copyNotify(location.href, e)
+                })
+                // A plain click on a validator's name opens its page, and no
+                // other handler sees it (the row's or the card's copy); a
+                // modified click follows the link.
+                document.addEventListener(
+                    'click',
+                    function (e) {
+                        if (!(e.target instanceof Element)) return
+                        var a = e.target.closest('a.val-link')
+                        if (!a) return
+                        if (
+                            e.button !== 0 ||
+                            e.metaKey ||
+                            e.ctrlKey ||
+                            e.shiftKey ||
+                            e.altKey
+                        )
+                            return
+                        e.preventDefault()
+                        e.stopPropagation()
+                        openValidator(new URL(a.href).searchParams.get('val'))
+                    },
+                    true
+                )
+                var initial = new URLSearchParams(location.search).get('val')
+                if (initial) show(initial)
             })()
         </script>
     </body>
