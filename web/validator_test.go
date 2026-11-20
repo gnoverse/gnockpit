@@ -415,14 +415,23 @@ func TestValidatorStatusSinceUnknown(t *testing.T) {
 		t.Errorf("out of the set after a stored join: status = %v, want %v", body["status"], want)
 	}
 
-	// In the node's set, its join below the stored history.
+	// In the node's set, its join below the stored history: since before
+	// the history's first block.
 	s3 := newBlocksStore(t)
 	putBlocks(t, s3, at, "S1", []blocks.Member{lone, {Address: valOldKey, Power: 4}}, 20, 30, nil)
 	srv3 := &Server{Blocks: s3, BlockFill: fakeFill{ChainID: "onyx-1", From: 20, To: 30}}
 	srv3.setSnapshot(&node.Snapshot{Validators: []node.Validator{{Address: valLoneKey, VotingPower: "6"}, {Address: valOldKey, VotingPower: "4"}}})
-	want = map[string]any{"in_set": true, "signing_address": valOldKey, "power": 4.0, "share": 0.4}
+	want = map[string]any{"in_set": true, "since_height": 20.0, "since_time": timeOf(at(20)), "since_before": true, "signing_address": valOldKey, "power": 4.0, "share": 0.4}
 	if _, body := getValidator(t, srv3, "?val="+valOldKey); !reflect.DeepEqual(body["status"], want) {
 		t.Errorf("joined below the history: status = %v, want %v", body["status"], want)
+	}
+
+	// Out of the node's set while the stored history ends with it in the
+	// set: its leave is not stored yet, so no since.
+	srv3.setSnapshot(&node.Snapshot{Validators: []node.Validator{{Address: valLoneKey, VotingPower: "6"}}})
+	want = map[string]any{"in_set": false, "power": 0.0, "share": 0.0}
+	if _, body := getValidator(t, srv3, "?val="+valOldKey); !reflect.DeepEqual(body["status"], want) {
+		t.Errorf("leave not stored yet: status = %v, want %v", body["status"], want)
 	}
 }
 

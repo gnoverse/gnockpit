@@ -37,12 +37,15 @@ type validatorReport struct {
 
 // validatorStatus is the validator's place in the node's current set, and the
 // height it holds it since: in the set, its latest join with no leave after
-// (a key rotation is no leave); out of it, its latest leave. Since is omitted
-// when that height is below the stored history.
+// (a key rotation is no leave); out of it, its latest leave. In the set with
+// no join or leave stored, since is the stored history's first block and
+// SinceBefore is set: it joined before. Since is omitted when the stored
+// history contradicts the current set (a change not stored yet).
 type validatorStatus struct {
 	InSet          bool    `json:"in_set"`
 	SinceHeight    int64   `json:"since_height,omitempty"`
 	SinceTime      string  `json:"since_time,omitempty"`
+	SinceBefore    bool    `json:"since_before,omitempty"`    // since is a bound: it joined before
 	SigningAddress string  `json:"signing_address,omitempty"` // its key in the set
 	Power          int64   `json:"power"`
 	Share          float64 `json:"share"` // of the set's total power
@@ -265,7 +268,7 @@ func (s *Server) buildValidatorReport(ctx context.Context, val string, ref valid
 	}
 	rep.Live = s.liveOf(src.snap, liveKey)
 
-	_, high, err := s.Blocks.Range(ctx)
+	low, high, err := s.Blocks.Range(ctx)
 	if err != nil {
 		return validatorReport{}, err
 	}
@@ -277,6 +280,15 @@ func (s *Server) buildValidatorReport(ctx context.Context, val string, ref valid
 	if rep.Status != nil {
 		if e, ok := statusSince(setEntries, rep.Status.InSet); ok {
 			rep.Status.SinceHeight, rep.Status.SinceTime = e.Height, e.Time
+		} else if rep.Status.InSet && !membershipStored(setEntries) {
+			at, ok, err := s.Blocks.TimeAt(ctx, low)
+			if err != nil {
+				return validatorReport{}, err
+			}
+			if ok {
+				rep.Status.SinceHeight, rep.Status.SinceTime = low, at.UTC().Format(historyTime)
+				rep.Status.SinceBefore = true
+			}
 		}
 	}
 	h, err := s.Blocks.ValidatorHistory(ctx, addresses, now)

@@ -116,6 +116,14 @@ func statusSince(entries []timelineEntry, inSet bool) (since timelineEntry, ok b
 	return leave, leave.Height > 0 && leave.Height >= join.Height
 }
 
+// membershipStored reports whether the set change entries hold a join, the
+// genesis set or a leave.
+func membershipStored(entries []timelineEntry) bool {
+	return slices.ContainsFunc(entries, func(e timelineEntry) bool {
+		return e.Kind == "joined" || e.Kind == "genesis" || e.Kind == "left"
+	})
+}
+
 // historyEntries returns the timeline: the set change entries, the outages
 // and the recoveries, the pending ones as recovering, newest first.
 func historyEntries(setEntries []timelineEntry, h blocks.History) []timelineEntry {
