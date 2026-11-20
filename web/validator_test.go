@@ -22,10 +22,14 @@ const (
 	valUnknown     = "g1vdhhxmt0wvkhgetnwskkzerywfjhxuep35wa6p" // valid, in no set
 )
 
+// valNow is the tests' clock: the fixtures' days and the reports' windows
+// read one instant, whatever midnight a run spans.
+var valNow = time.Now().UTC()
+
 func getValidator(t *testing.T, srv *Server, query string) (int, map[string]any) {
 	t.Helper()
 	rec := httptest.NewRecorder()
-	srv.handleValidator(rec, httptest.NewRequest(http.MethodGet, "/api/validator"+query, nil))
+	srv.serveValidator(rec, httptest.NewRequest(http.MethodGet, "/api/validator"+query, nil), valNow)
 	if got := rec.Header().Get("Access-Control-Allow-Origin"); got != "*" {
 		t.Errorf("CORS header = %q, want *", got)
 	}
@@ -38,7 +42,7 @@ func getValidator(t *testing.T, srv *Server, query string) (int, map[string]any)
 
 // valDay is midnight UTC two days ago: a complete day of the scoring window.
 func valDay() time.Time {
-	return time.Now().UTC().Truncate(24*time.Hour).AddDate(0, 0, -2)
+	return valNow.Truncate(24*time.Hour).AddDate(0, 0, -2)
 }
 
 // secondsFrom returns the time of height h, h seconds after base.
@@ -311,10 +315,14 @@ func TestValidatorStatusSince(t *testing.T) {
 
 func TestValidatorTimeline(t *testing.T) {
 	base := valDay()
-	// Heights 5 s apart; block 26 comes 10 min late: a restart after 25.
+	// Heights 5 s apart; blocks 26 and 36 come 10 min late: restarts after
+	// 25 and 35, the second one with the key still down at the head.
 	at := func(h int64) time.Time {
 		t := base.Add(time.Duration(h) * 5 * time.Second)
 		if h >= 26 {
+			t = t.Add(10 * time.Minute)
+		}
+		if h >= 36 {
 			t = t.Add(10 * time.Minute)
 		}
 		return t
@@ -329,12 +337,17 @@ func TestValidatorTimeline(t *testing.T) {
 	lone := blocks.Member{Address: valLoneKey, Power: 1}
 	s := newBlocksStore(t)
 	putBlocks(t, s, at, "T1", []blocks.Member{lone, {Address: valOldKey, Power: 1}}, 1, 30, absent)
-	putBlocks(t, s, at, "T2", []blocks.Member{lone, {Address: valOldKey, Power: 2}}, 31, 40, nil)
+	down := map[int64][]string{}
+	for h := int64(35); h <= 40; h++ {
+		down[h] = []string{valOldKey}
+	}
+	putBlocks(t, s, at, "T2", []blocks.Member{lone, {Address: valOldKey, Power: 2}}, 31, 40, down)
 	srv := &Server{Blocks: s, BlockFill: fakeFill{ChainID: "onyx-1", From: 1, To: 40, Complete: true}}
 
 	_, body := getValidator(t, srv, "?val="+valOldKey)
 	recovery := float64(at(29).Sub(at(26)).Milliseconds())
 	wantTimeline := []any{
+		map[string]any{"kind": "recovering", "height": 35.0, "time": timeOf(at(36)), "restart_height": 35.0},
 		map[string]any{"kind": "power", "height": 31.0, "time": timeOf(at(31)), "before": 1.0, "after": 2.0},
 		map[string]any{"kind": "recovered", "height": 28.0, "time": timeOf(at(29)), "restart_height": 25.0, "duration_ms": recovery},
 		map[string]any{"kind": "outage", "height": 5.0, "time": timeOf(at(5)), "to": 16.0, "blocks": 12.0, "end_time": timeOf(at(17)), "ongoing": false},
@@ -343,20 +356,98 @@ func TestValidatorTimeline(t *testing.T) {
 	if !reflect.DeepEqual(body["timeline"], wantTimeline) {
 		t.Errorf("timeline = %v, want %v", body["timeline"], wantTimeline)
 	}
-	wantRecoveries := []any{map[string]any{
-		"restart_height": 25.0, "restart_time": timeOf(at(26)), "signed_at": 28.0, "duration_ms": recovery, "pending": false,
-	}}
+	wantRecoveries := []any{
+		map[string]any{"restart_height": 25.0, "restart_time": timeOf(at(26)), "signed_at": 28.0, "duration_ms": recovery, "pending": false, "scored": true},
+		map[string]any{"restart_height": 35.0, "restart_time": timeOf(at(36)), "signed_at": 0.0, "duration_ms": 0.0, "pending": true, "scored": false},
+	}
 	if !reflect.DeepEqual(body["recoveries"], wantRecoveries) {
 		t.Errorf("recoveries = %v, want %v", body["recoveries"], wantRecoveries)
 	}
-	today := time.Now().UTC().Truncate(24 * time.Hour)
+	today := valNow.Truncate(24 * time.Hour)
 	wantSummary := map[string]any{
 		"first_day": today.AddDate(0, 0, -30).Format(time.DateOnly), "last_day": today.AddDate(0, 0, -1).Format(time.DateOnly),
-		"in_set": 40.0, "signed": 25.0, "absent": 15.0, "nil": 0.0, "other_block": 0.0, "outages": 1.0,
-		"proposals_expected": 0.0, "proposals_missed": 0.0, "votes": 25.0, "vote_delay_mean_ms": 0.0,
+		"in_set": 40.0, "signed": 19.0, "absent": 21.0, "nil": 0.0, "other_block": 0.0, "outages": 1.0,
+		"proposals_expected": 0.0, "proposals_missed": 0.0, "votes": 19.0, "vote_delay_mean_ms": 0.0,
 		"recovery": map[string]any{"samples": 1.0, "median_ms": recovery, "slowest_ms": recovery},
 	}
 	if !reflect.DeepEqual(body["summary"], wantSummary) {
 		t.Errorf("summary = %v, want %v", body["summary"], wantSummary)
+	}
+}
+
+func TestValidatorLiveOutOfTheSet(t *testing.T) {
+	// Out of the current set: the live figures are its newest key's.
+	srv := rotationServer(t)
+	srv.setSnapshot(&node.Snapshot{Validators: []node.Validator{{Address: valLoneKey, VotingPower: "1"}}})
+	srv.missed24h = map[string]int{valOldKey: 2, valNewKey: 5}
+	if _, body := getValidator(t, srv, "?val="+valOperator); body["live"].(map[string]any)["missed_24h"] != 5.0 {
+		t.Errorf("live = %v, want the newest key's 5 missed", body["live"])
+	}
+}
+
+func TestValidatorStatusSinceUnknown(t *testing.T) {
+	at := secondsFrom(valDay())
+	lone := blocks.Member{Address: valLoneKey, Power: 6}
+	s := newBlocksStore(t)
+	putBlocks(t, s, at, "S0", []blocks.Member{lone}, 1, 49, nil)
+	putBlocks(t, s, at, "S1", []blocks.Member{lone, {Address: valOldKey, Power: 4}}, 50, 99, nil)
+	putBlocks(t, s, at, "S0", []blocks.Member{lone}, 100, 101, nil)
+	putValEvents(t, s, 50, blocks.Event{Type: "ValidatorAdded", Operator: valOperator, Address: valOldKey, Power: 4, Applied: true})
+	putValEvents(t, s, 100, blocks.Event{Type: "ValidatorRemoved", Operator: valOperator, Address: valOldKey, Applied: true})
+	srv := &Server{Blocks: s, BlockFill: fakeFill{ChainID: "onyx-1", From: 1, To: 101, Complete: true}}
+	// In the node's set, though the stored history ends with its leave: its
+	// rejoin is not stored yet.
+	srv.setSnapshot(&node.Snapshot{Validators: []node.Validator{{Address: valLoneKey, VotingPower: "6"}, {Address: valOldKey, VotingPower: "4"}}})
+	want := map[string]any{"in_set": true, "signing_address": valOldKey, "power": 4.0, "share": 0.4}
+	if _, body := getValidator(t, srv, "?val="+valOperator); !reflect.DeepEqual(body["status"], want) {
+		t.Errorf("in the set after a stored leave: status = %v, want %v", body["status"], want)
+	}
+
+	// Out of the node's set, the stored history ending with its join.
+	s2 := newBlocksStore(t)
+	putBlocks(t, s2, at, "S0", []blocks.Member{lone}, 1, 49, nil)
+	putBlocks(t, s2, at, "S1", []blocks.Member{lone, {Address: valOldKey, Power: 4}}, 50, 99, nil)
+	putValEvents(t, s2, 50, blocks.Event{Type: "ValidatorAdded", Operator: valOperator, Address: valOldKey, Power: 4, Applied: true})
+	srv2 := &Server{Blocks: s2, BlockFill: fakeFill{ChainID: "onyx-1", From: 1, To: 99, Complete: true}}
+	srv2.setSnapshot(&node.Snapshot{Validators: []node.Validator{{Address: valLoneKey, VotingPower: "6"}}})
+	want = map[string]any{"in_set": false, "power": 0.0, "share": 0.0}
+	if _, body := getValidator(t, srv2, "?val="+valOperator); !reflect.DeepEqual(body["status"], want) {
+		t.Errorf("out of the set after a stored join: status = %v, want %v", body["status"], want)
+	}
+
+	// In the node's set, its join below the stored history.
+	s3 := newBlocksStore(t)
+	putBlocks(t, s3, at, "S1", []blocks.Member{lone, {Address: valOldKey, Power: 4}}, 20, 30, nil)
+	srv3 := &Server{Blocks: s3, BlockFill: fakeFill{ChainID: "onyx-1", From: 20, To: 30}}
+	srv3.setSnapshot(&node.Snapshot{Validators: []node.Validator{{Address: valLoneKey, VotingPower: "6"}, {Address: valOldKey, VotingPower: "4"}}})
+	want = map[string]any{"in_set": true, "signing_address": valOldKey, "power": 4.0, "share": 0.4}
+	if _, body := getValidator(t, srv3, "?val="+valOldKey); !reflect.DeepEqual(body["status"], want) {
+		t.Errorf("joined below the history: status = %v, want %v", body["status"], want)
+	}
+}
+
+func TestStatusSince(t *testing.T) {
+	join := timelineEntry{Kind: "joined", Height: 50}
+	gen := timelineEntry{Kind: "genesis", Height: 1}
+	leave := timelineEntry{Kind: "left", Height: 80}
+	rot := timelineEntry{Kind: "rotated", Height: 90}
+	for _, tc := range []struct {
+		name    string
+		entries []timelineEntry
+		inSet   bool
+		want    int64 // the since height; 0 when none
+	}{
+		{"in: its join", []timelineEntry{join, rot}, true, 50},
+		{"in: genesis", []timelineEntry{gen, rot}, true, 1},
+		{"in: left last", []timelineEntry{join, leave}, true, 0},
+		{"in: none stored", []timelineEntry{rot}, true, 0},
+		{"out: its leave", []timelineEntry{join, leave}, false, 80},
+		{"out: joined last", []timelineEntry{leave, {Kind: "joined", Height: 85}}, false, 0},
+		{"out: none stored", nil, false, 0},
+	} {
+		got, ok := statusSince(tc.entries, tc.inSet)
+		if ok != (tc.want > 0) || (ok && got.Height != tc.want) {
+			t.Errorf("%s: since %d, %v; want %d", tc.name, got.Height, ok, tc.want)
+		}
 	}
 }

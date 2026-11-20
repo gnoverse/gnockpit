@@ -367,3 +367,21 @@ func TestHistoryRejectsABadChangesQuery(t *testing.T) {
 		}
 	}
 }
+
+func TestRefreshMissedCountsMissedProposals(t *testing.T) {
+	// B was round 0's proposer; A proposed the block at round 1.
+	s := newBlocksStore(t)
+	late := histBlock(1, time.Now().Add(-time.Hour))
+	late.Round, late.Rounds = 1, []string{histValB, histValA}
+	if err := s.Write(context.Background(), []blocks.Record{late}); err != nil {
+		t.Fatal(err)
+	}
+	srv := &Server{Blocks: s}
+	srv.refreshMissed(context.Background())
+	if got := srv.proposals24h[histValB]; got != [2]int{1, 1} {
+		t.Errorf("B proposals 24h = %v, want 1 expected, 1 missed", got)
+	}
+	if got := srv.proposals24h[histValA]; got != [2]int{1, 0} {
+		t.Errorf("A proposals 24h = %v, want 1 expected, none missed", got)
+	}
+}

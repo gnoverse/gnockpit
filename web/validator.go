@@ -1,7 +1,6 @@
 package web
 
 import (
-	"cmp"
 	"context"
 	"errors"
 	"log"
@@ -75,50 +74,6 @@ type validatorProfile struct {
 	LastRotationHeight *int64 `json:"last_rotation_height,omitempty"`
 }
 
-// timelineEntry is one entry of a validator's timeline: its kind's fields
-// are set, the other kinds' are nil.
-type timelineEntry struct {
-	Kind   string `json:"kind"` // recovered, outage, power, rotated, joined, left or genesis
-	Height int64  `json:"height"`
-	Time   string `json:"time"`
-	*timelineRecovery
-	*timelineOutage
-	*timelinePower
-	*timelineRotation
-	*timelineMembership
-}
-
-// timelineRecovery is a recovered entry: Height is the first height signed
-// after the restart at RestartHeight, Time the time that signature landed.
-type timelineRecovery struct {
-	RestartHeight int64 `json:"restart_height"`
-	DurationMs    int64 `json:"duration_ms"`
-}
-
-// timelineOutage is an outage entry: Height is its first height.
-type timelineOutage struct {
-	To      int64  `json:"to"`
-	Blocks  int64  `json:"blocks"`
-	EndTime string `json:"end_time"`
-	Ongoing bool   `json:"ongoing"`
-}
-
-type timelinePower struct {
-	Before int64 `json:"before"`
-	After  int64 `json:"after"`
-}
-
-type timelineRotation struct {
-	OldAddress string `json:"old_address"`
-	NewAddress string `json:"new_address"`
-}
-
-// timelineMembership is a joined, left or genesis entry: the power the key
-// came in or went out with.
-type timelineMembership struct {
-	Power int64 `json:"power"`
-}
-
 // signingCounts are a validator's counters over a span of blocks: a nil
 // vote signs.
 type signingCounts struct {
@@ -144,7 +99,8 @@ type validatorRecovery struct {
 	RestartTime   string `json:"restart_time"`   // block b+1's
 	SignedAt      int64  `json:"signed_at"`      // 0 while pending
 	DurationMs    int64  `json:"duration_ms"`
-	Pending       bool   `json:"pending"` // still absent at the newest block
+	Pending       bool   `json:"pending"` // block signed_at+1, which times it, is not stored yet
+	Scored        bool   `json:"scored"`  // one of the last 3 samples of the 180 complete UTC days before today
 }
 
 // validatorSummary is the validator's raw figures over the scoring window:
@@ -178,7 +134,12 @@ type validatorLive struct {
 // handleValidator serves what gnockpit knows of the validator ?val= names
 // (its operator or one of its signing keys) as JSON, CORS-open.
 func (s *Server) handleValidator(w http.ResponseWriter, r *http.Request) {
-	rep, status, err := s.validatorReport(r.Context(), r.URL.Query().Get("val"), time.Now())
+	s.serveValidator(w, r, time.Now())
+}
+
+// serveValidator answers a /api/validator request as of now.
+func (s *Server) serveValidator(w http.ResponseWriter, r *http.Request, now time.Time) {
+	rep, status, err := s.validatorReport(r.Context(), r.URL.Query().Get("val"), now)
 	if err != nil {
 		serveJSON(w, "validator", status, errorBody{Error: err.Error()})
 		return
@@ -193,11 +154,11 @@ func (s *Server) validatorReport(ctx context.Context, val string, now time.Time)
 	if _, err := crypto.AddressFromBech32(val); err != nil {
 		return validatorReport{}, http.StatusBadRequest, errors.New("val must be a g1 address")
 	}
-	snap := s.getSnapshot()
+	src := reportSources{snap: s.getSnapshot()}
 	s.mu.RLock()
-	valopers := s.valopers
+	src.valopers = s.valopers
 	s.mu.RUnlock()
-	operator, spans, found, err := s.resolveValidator(ctx, val, valopers, snap)
+	ref, found, err := s.resolveValidator(ctx, val, src)
 	if err != nil {
 		log.Printf("validator %s: %v", val, err)
 		return validatorReport{}, http.StatusInternalServerError, errors.New("internal error")
@@ -205,7 +166,7 @@ func (s *Server) validatorReport(ctx context.Context, val string, now time.Time)
 	if !found {
 		return validatorReport{}, http.StatusNotFound, errors.New("unknown validator")
 	}
-	rep, err := s.buildValidatorReport(ctx, val, operator, spans, valopers, snap, now)
+	rep, err := s.buildValidatorReport(ctx, val, ref, src, now)
 	if err != nil {
 		log.Printf("validator %s: %v", val, err)
 		return validatorReport{}, http.StatusInternalServerError, errors.New("internal error")
@@ -213,27 +174,43 @@ func (s *Server) validatorReport(ctx context.Context, val string, now time.Time)
 	return rep, http.StatusOK, nil
 }
 
+// validatorRef is the validator a ?val= resolves to: its operator, "" for an
+// unlinked key, and its signing keys.
+type validatorRef struct {
+	operator string
+	spans    []blocks.KeySpan
+}
+
+// reportSources is what a report reads beside the store, once per request:
+// the valopers profiles and the node's snapshot.
+type reportSources struct {
+	valopers map[string]node.Valoper
+	snap     *node.Snapshot
+}
+
 // resolveValidator finds the validator val names, in this order: the
 // operator val is; the operator an event links val to as a signing key; the
 // operator whose profile names val as its signing key; else val alone as an
 // unlinked key, operator "", when a stored or the current set holds it.
 // found is false when gnockpit knows nothing of val.
-func (s *Server) resolveValidator(ctx context.Context, val string, valopers map[string]node.Valoper, snap *node.Snapshot) (operator string, spans []blocks.KeySpan, found bool, err error) {
+func (s *Server) resolveValidator(ctx context.Context, val string, src reportSources) (ref validatorRef, found bool, err error) {
 	operatorKeys := func(op string) ([]blocks.KeySpan, error) {
-		return s.Blocks.OperatorKeys(ctx, op, valopers[op].SigningAddress)
+		return s.Blocks.OperatorKeys(ctx, op, src.valopers[op].SigningAddress)
 	}
-	if spans, err = operatorKeys(val); err != nil {
-		return "", nil, false, err
+	spans, err := operatorKeys(val)
+	if err != nil {
+		return validatorRef{}, false, err
 	}
-	if _, isProfile := valopers[val]; isProfile || len(spans) > 0 {
-		return val, spans, true, nil
+	if _, isProfile := src.valopers[val]; isProfile || len(spans) > 0 {
+		return validatorRef{operator: val, spans: spans}, true, nil
 	}
-	if operator, err = s.Blocks.OperatorOf(ctx, val); err != nil {
-		return "", nil, false, err
+	operator, err := s.Blocks.OperatorOf(ctx, val)
+	if err != nil {
+		return validatorRef{}, false, err
 	}
 	if operator == "" {
-		for _, op := range slices.Sorted(maps.Keys(valopers)) {
-			if valopers[op].SigningAddress == val {
+		for _, op := range slices.Sorted(maps.Keys(src.valopers)) {
+			if src.valopers[op].SigningAddress == val {
 				operator = op
 				break
 			}
@@ -241,34 +218,34 @@ func (s *Server) resolveValidator(ctx context.Context, val string, valopers map[
 	}
 	if operator != "" {
 		if spans, err = operatorKeys(operator); err != nil {
-			return "", nil, false, err
+			return validatorRef{}, false, err
 		}
-		return operator, spans, true, nil
+		return validatorRef{operator: operator, spans: spans}, true, nil
 	}
 	known, err := s.Blocks.Known(ctx, val)
 	if err != nil {
-		return "", nil, false, err
+		return validatorRef{}, false, err
 	}
-	if _, inSet := currentSet(snap)[val]; !known && !inSet {
-		return "", nil, false, nil
+	if _, inSet := currentSet(src.snap)[val]; !known && !inSet {
+		return validatorRef{}, false, nil
 	}
-	return "", []blocks.KeySpan{{Address: val}}, true, nil
+	return validatorRef{spans: []blocks.KeySpan{{Address: val}}}, true, nil
 }
 
-func (s *Server) buildValidatorReport(ctx context.Context, val, operator string, spans []blocks.KeySpan, valopers map[string]node.Valoper, snap *node.Snapshot, now time.Time) (validatorReport, error) {
+func (s *Server) buildValidatorReport(ctx context.Context, val string, ref validatorRef, src reportSources, now time.Time) (validatorReport, error) {
 	edges := blocks.DelayEdges()
 	rep := validatorReport{
-		Chain: s.BlockFill.Progress().ChainID, Address: val, Operator: operator,
-		Keys: make([]validatorKey, len(spans)), VoteDelayEdgesMs: edges[:],
+		Chain: s.BlockFill.Progress().ChainID, Address: val, Operator: ref.operator,
+		Keys: make([]validatorKey, len(ref.spans)), VoteDelayEdgesMs: edges[:],
 	}
 	var addresses []string // oldest key first
-	for i, k := range spans {
+	for i, k := range ref.spans {
 		rep.Keys[i] = validatorKey{Address: k.Address, From: k.From, To: k.To}
 		if !slices.Contains(addresses, k.Address) {
 			addresses = append(addresses, k.Address)
 		}
 	}
-	rep.Status = statusOf(snap, addresses)
+	rep.Status = statusOf(src.snap, addresses)
 	liveKey := ""
 	switch {
 	case rep.Status != nil && rep.Status.InSet:
@@ -276,17 +253,17 @@ func (s *Server) buildValidatorReport(ctx context.Context, val, operator string,
 	case len(addresses) > 0:
 		liveKey = addresses[len(addresses)-1]
 	}
-	if p, ok := valopers[operator]; ok && operator != "" {
+	if p, ok := src.valopers[ref.operator]; ok && ref.operator != "" {
 		rep.Profile, rep.Moniker = profileOf(p), p.Moniker
 	} else {
 		rep.Moniker = s.moniker(liveKey)
 	}
-	if snap != nil {
-		if p, ok := peersByValAddr(snap.Peers)[liveKey]; ok {
+	if src.snap != nil {
+		if p, ok := peersByValAddr(src.snap.Peers)[liveKey]; ok {
 			rep.Location = &validatorLocation{Country: p.Country, City: p.City, Provider: p.Provider, Version: p.Version}
 		}
 	}
-	rep.Live = s.liveOf(snap, liveKey)
+	rep.Live = s.liveOf(src.snap, liveKey)
 
 	_, high, err := s.Blocks.Range(ctx)
 	if err != nil {
@@ -323,7 +300,7 @@ func (s *Server) buildValidatorReport(ctx context.Context, val, operator string,
 	for i, r := range h.Recoveries {
 		rep.Recoveries[i] = validatorRecovery{
 			RestartHeight: r.Restart, RestartTime: r.RestartTime.UTC().Format(historyTime),
-			SignedAt: r.SignedAt, DurationMs: r.Duration.Milliseconds(), Pending: r.Pending,
+			SignedAt: r.SignedAt, DurationMs: r.Duration.Milliseconds(), Pending: r.Pending, Scored: r.Scored,
 		}
 	}
 	sm := h.Summary
@@ -407,95 +384,4 @@ func (s *Server) liveOf(snap *node.Snapshot, key string) validatorLive {
 	s.mu.RUnlock()
 	live.ExpectedProposals24h, live.MissedProposals24h = proposals[0], proposals[1]
 	return live
-}
-
-// setChangeEntries returns the timeline entries of the set changes that
-// touch the keys addresses, ascending. A rotation is one entry; a key the
-// genesis set holds is a genesis entry.
-func setChangeEntries(changes []blocks.ValsetChange, addresses []string) []timelineEntry {
-	var out []timelineEntry
-	for _, c := range changes {
-		entry := func(kind string) timelineEntry {
-			return timelineEntry{Kind: kind, Height: c.Height, Time: c.Time.UTC().Format(historyTime)}
-		}
-		for _, m := range c.Added {
-			if slices.Contains(addresses, m.Address) {
-				e := entry("joined")
-				if c.Height == 1 {
-					e.Kind = "genesis"
-				}
-				e.timelineMembership = &timelineMembership{Power: m.Power}
-				out = append(out, e)
-			}
-		}
-		for _, m := range c.Removed {
-			if slices.Contains(addresses, m.Address) {
-				e := entry("left")
-				e.timelineMembership = &timelineMembership{Power: m.Power}
-				out = append(out, e)
-			}
-		}
-		for _, p := range c.Repowered {
-			if slices.Contains(addresses, p.Address) {
-				e := entry("power")
-				e.timelinePower = &timelinePower{Before: p.Before, After: p.After}
-				out = append(out, e)
-			}
-		}
-		for _, r := range c.Rotated {
-			if slices.Contains(addresses, r.OldAddress) || slices.Contains(addresses, r.NewAddress) {
-				e := entry("rotated")
-				e.timelineRotation = &timelineRotation{OldAddress: r.OldAddress, NewAddress: r.NewAddress}
-				out = append(out, e)
-			}
-		}
-	}
-	return out
-}
-
-// statusSince returns the set change entry (ascending entries) a status
-// counts from: in the set, its latest join with no leave after; out of it,
-// its latest leave. ok is false when the stored history holds none.
-func statusSince(entries []timelineEntry, inSet bool) (since timelineEntry, ok bool) {
-	var join, leave timelineEntry
-	for _, e := range entries {
-		switch e.Kind {
-		case "joined", "genesis":
-			join = e
-		case "left":
-			leave = e
-		}
-	}
-	if inSet {
-		return join, join.Height > 0 && join.Height >= leave.Height
-	}
-	return leave, leave.Height > 0 && leave.Height >= join.Height
-}
-
-// historyEntries returns the timeline: the set change entries, the outages
-// and the recoveries, newest first.
-func historyEntries(setEntries []timelineEntry, h blocks.History) []timelineEntry {
-	out := slices.Clone(setEntries)
-	for _, o := range h.Outages {
-		out = append(out, timelineEntry{
-			Kind: "outage", Height: o.First, Time: o.FirstTime.UTC().Format(historyTime),
-			timelineOutage: &timelineOutage{To: o.Last, Blocks: o.Last - o.First + 1, EndTime: o.EndTime.UTC().Format(historyTime), Ongoing: o.Ongoing},
-		})
-	}
-	for _, r := range h.Recoveries {
-		if r.Pending {
-			continue
-		}
-		// Its precommit for SignedAt is in block SignedAt+1, whose time is
-		// RestartTime + Duration.
-		out = append(out, timelineEntry{
-			Kind: "recovered", Height: r.SignedAt, Time: r.RestartTime.Add(r.Duration).UTC().Format(historyTime),
-			timelineRecovery: &timelineRecovery{RestartHeight: r.Restart, DurationMs: r.Duration.Milliseconds()},
-		})
-	}
-	slices.SortStableFunc(out, func(a, b timelineEntry) int { return cmp.Compare(b.Height, a.Height) })
-	if out == nil {
-		out = []timelineEntry{}
-	}
-	return out
 }
