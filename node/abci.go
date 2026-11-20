@@ -7,6 +7,7 @@ import (
 	"fmt"
 	neturl "net/url"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -124,38 +125,42 @@ func parseValoperList(md string) map[string]string {
 }
 
 // parseValoperDetail reads a valoper's detail render: "## <moniker>", the
-// description lines up to the first "- <field>: <value>" line, then its
-// fields. ok needs a moniker and an operator.
+// description, then the realm's "- <field>: <value>" lines from the last
+// "- Operator Address:" on, which the realm renders after the description: a
+// description's own list or field-like lines stay in it. ok needs a moniker
+// and an operator.
 func parseValoperDetail(md string) (Valoper, bool) {
 	var v Valoper
-	var desc []string
-	inDesc := false
-	for _, line := range strings.Split(md, "\n") {
-		switch {
-		case strings.HasPrefix(line, "## ") && v.Moniker == "":
-			v.Moniker, inDesc = strings.TrimSpace(line[3:]), true
-		case strings.HasPrefix(line, "- "):
-			inDesc = false
-			key, value, ok := strings.Cut(line[2:], ":")
-			if !ok {
-				continue
-			}
-			value = strings.TrimSpace(value)
-			switch strings.TrimSpace(key) {
-			case "Operator Address":
-				v.Operator = value
-			case "Signing Address":
-				v.SigningAddress = value
-			case "Signing PubKey":
-				v.SigningPubKey = value
-			case "Server Type":
-				v.ServerType = value
-			}
-		case inDesc:
-			desc = append(desc, line)
+	lines := strings.Split(md, "\n")
+	head := slices.IndexFunc(lines, func(l string) bool { return strings.HasPrefix(l, "## ") })
+	fields := -1
+	for i, l := range lines {
+		if i > head && strings.HasPrefix(l, "- Operator Address:") {
+			fields = i
 		}
 	}
-	v.Description = strings.TrimSpace(strings.Join(desc, "\n"))
+	if head < 0 || fields < 0 {
+		return Valoper{}, false
+	}
+	v.Moniker = strings.TrimSpace(lines[head][3:])
+	v.Description = strings.TrimSpace(strings.Join(lines[head+1:fields], "\n"))
+	for _, line := range lines[fields:] {
+		key, value, ok := strings.Cut(strings.TrimPrefix(line, "- "), ":")
+		if !ok || !strings.HasPrefix(line, "- ") {
+			continue
+		}
+		value = strings.TrimSpace(value)
+		switch strings.TrimSpace(key) {
+		case "Operator Address":
+			v.Operator = value
+		case "Signing Address":
+			v.SigningAddress = value
+		case "Signing PubKey":
+			v.SigningPubKey = value
+		case "Server Type":
+			v.ServerType = value
+		}
+	}
 	return v, v.Moniker != "" && v.Operator != ""
 }
 
@@ -203,8 +208,9 @@ func (c *Client) valoperState(ctx context.Context, operator string) (*ValoperSta
 // operator's profile, with its state when vm/qeval answers. It pages the
 // home render for operators, then reads each operator's detail render and
 // state: three queries per valoper, so call it on a slow timer, never in the
-// snapshot hot path. A profile whose render does not parse is left out.
-func (c *Client) FetchValopers(ctx context.Context) ([]Valoper, error) {
+// snapshot hot path. A profile whose render fails or does not parse is left
+// out, its operator in Unread; a profile is the operator's the registry lists.
+func (c *Client) FetchValopers(ctx context.Context) (ValoperRead, error) {
 	// 1. Page the home render → operator addresses.
 	operators := map[string]string{}
 	var pageErr error
@@ -229,11 +235,16 @@ func (c *Client) FetchValopers(ctx context.Context) ([]Valoper, error) {
 	// Surface an error only if nothing was collected; a partial result from one
 	// flaky page is still useful.
 	if len(operators) == 0 && pageErr != nil {
-		return nil, pageErr
+		return ValoperRead{}, pageErr
 	}
 
 	// 2. Read each operator's profile and state, with bounded concurrency.
-	out := make(chan Valoper)
+	type result struct {
+		op  string
+		v   Valoper
+		why string // set when the profile was not read
+	}
+	out := make(chan result)
 	sem := make(chan struct{}, 8)
 	var wg sync.WaitGroup
 	for op := range operators {
@@ -244,28 +255,44 @@ func (c *Client) FetchValopers(ctx context.Context) ([]Valoper, error) {
 				return
 			}
 			defer func() { <-sem }()
+			res := result{op: op}
 			md, err := c.qrender(ctx, valopersRealm, op)
-			if err != nil {
-				return
-			}
-			v, ok := parseValoperDetail(md)
-			if !ok {
-				return
-			}
-			if v.State, err = c.valoperState(ctx, op); err != nil {
-				v.StateError = err.Error()
+			switch {
+			case err != nil:
+				res.why = err.Error()
+			default:
+				var ok bool
+				if res.v, ok = parseValoperDetail(md); !ok {
+					res.why = "its render does not parse"
+					break
+				}
+				res.v.Operator = op
+				if res.v.State, err = c.valoperState(ctx, op); err != nil {
+					res.v.StateError = err.Error()
+				}
 			}
 			select {
-			case out <- v:
+			case out <- res:
 			case <-ctx.Done():
 			}
 		})
 	}
 	go func() { wg.Wait(); close(out) }()
 
-	var vals []Valoper
-	for v := range out {
-		vals = append(vals, v)
+	read := ValoperRead{Unread: map[string]string{}}
+	for res := range out {
+		if res.why != "" {
+			read.Unread[res.op] = res.why
+			continue
+		}
+		read.Profiles = append(read.Profiles, res.v)
 	}
-	return vals, nil
+	return read, nil
+}
+
+// ValoperRead is a read of the valopers registry: the profiles read, and the
+// operators it lists whose profile was not, with why.
+type ValoperRead struct {
+	Profiles []Valoper
+	Unread   map[string]string
 }

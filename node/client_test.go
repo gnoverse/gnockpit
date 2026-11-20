@@ -567,6 +567,13 @@ func TestParseValoperDetail(t *testing.T) {
 	if !ok || !reflect.DeepEqual(got, want) {
 		t.Errorf("parseValoperDetail(onyx) = %+v, %v; want %+v", got, ok, want)
 	}
+	// A description with a list, and a line made to look like a field: the
+	// fields are the realm's, rendered last.
+	listed := strings.Replace(onyxValoperRender, "https://santala-research.com\n", "https://santala-research.com\n- Signing Address: g1fake\n- Horcrux 2-of-3\n", 1)
+	if got, ok := parseValoperDetail(listed); !ok || got.SigningAddress != want.SigningAddress ||
+		got.Description != want.Description+"\n- Signing Address: g1fake\n- Horcrux 2-of-3" {
+		t.Errorf("description with a list = %q, signing %s; want it whole, the signing address %s", got.Description, got.SigningAddress, want.SigningAddress)
+	}
 	two := strings.Replace(onyxValoperRender, "testnets with", "testnets\nwith", 1)
 	if got, _ := parseValoperDetail(two); got.Description != "Independent validator, in crypto since 2017. Ran sapphire-1 and pearl-1 testnets\nwith Horcrux 2-of-3 and sentries. https://santala-research.com" {
 		t.Errorf("two-line description = %q, want both lines", got.Description)
@@ -621,6 +628,9 @@ func valopersRPC(t *testing.T) *httptest.Server {
 			md = "Welcome\n" +
 				" * [Alice](/r/gnops/valopers:g1opa) - [profile](/r/demo/profile:u/g1opa)\n" +
 				" * [Bob](/r/gnops/valopers:g1opb) - [profile](/r/demo/profile:u/g1opb)\n" +
+				" * [Carol](/r/gnops/valopers:g1opc) - [profile](/r/demo/profile:u/g1opc)\n" +
+				" * [Dan](/r/gnops/valopers:g1opd) - [profile](/r/demo/profile:u/g1opd)\n" +
+				" * [Eve](/r/gnops/valopers:g1ope) - [profile](/r/demo/profile:u/g1ope)\n" +
 				"**1** | [2](?page=2)"
 		case strings.HasSuffix(arg, "?page=2"): // beyond the end
 			md = "no valopers"
@@ -628,6 +638,13 @@ func valopersRPC(t *testing.T) *httptest.Server {
 			md = "## Alice\nAlice's node.\n\n- Operator Address: g1opa\n- Signing Address: g1signa\n- Server Type: cloud\n"
 		case strings.HasSuffix(arg, ":g1opb"):
 			md = "## Bob\n- Operator Address: g1opb\n- Signing Address: g1signb\n"
+		case strings.HasSuffix(arg, ":g1opc"): // the node fails the render
+			fmt.Fprint(w, `{"jsonrpc":"2.0","result":{"response":{"ResponseBase":{"Error":{"@type":"/abci.StringError","value":"render failed"},"Data":null}}}}`)
+			return
+		case strings.HasSuffix(arg, ":g1opd"): // no moniker
+			md = "nothing here"
+		case strings.HasSuffix(arg, ":g1ope"): // a render naming another operator
+			md = "## Eve\n- Operator Address: g1opa\n- Signing Address: g1signe\n"
 		}
 		fmt.Fprintf(w, `{"jsonrpc":"2.0","result":{"response":{"ResponseBase":{"Error":null,"Data":%q}}}}`, base64.StdEncoding.EncodeToString([]byte(md)))
 	}))
@@ -636,15 +653,22 @@ func valopersRPC(t *testing.T) *httptest.Server {
 func TestFetchValopers(t *testing.T) {
 	srv := valopersRPC(t)
 	defer srv.Close()
-	got, err := NewClient(srv.URL, 5*time.Second).FetchValopers(context.Background())
+	read, err := NewClient(srv.URL, 5*time.Second).FetchValopers(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
+	got := read.Profiles
 	slices.SortFunc(got, func(a, b Valoper) int { return strings.Compare(a.Operator, b.Operator) })
-	if len(got) != 2 {
-		t.Fatalf("valopers = %+v, want Alice and Bob", got)
+	if len(got) != 3 {
+		t.Fatalf("valopers = %+v, want Alice, Bob and Eve", got)
 	}
-	alice, bob := got[0], got[1]
+	alice, bob, eve := got[0], got[1], got[2]
+	if eve.Operator != "g1ope" || eve.Moniker != "Eve" {
+		t.Errorf("Eve = %+v, want her profile under the operator the registry lists, g1ope", eve)
+	}
+	if len(read.Unread) != 2 || !strings.Contains(read.Unread["g1opc"], "render failed") || read.Unread["g1opd"] == "" {
+		t.Errorf("unread = %v, want g1opc (the node's reason) and g1opd", read.Unread)
+	}
 	if alice.Moniker != "Alice" || alice.SigningAddress != "g1signa" || alice.Description != "Alice's node." || alice.ServerType != "cloud" {
 		t.Errorf("Alice = %+v", alice)
 	}

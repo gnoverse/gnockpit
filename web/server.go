@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"maps"
 	"net/http"
 	"slices"
 	"sort"
@@ -824,14 +825,29 @@ func (s *Server) valoperRefreshLoop(ctx context.Context) {
 // validator page and seeds validator names from them (non-overwriting /
 // upgrading unknown-val-N; the next snapshot's ensureValidatorNames picks
 // them up). A profile whose state vm/qeval did not answer is kept without
-// it, logged once per refresh.
+// it, and one the read missed keeps its last read; each logged once per
+// refresh.
 func (s *Server) refreshValopers(ctx context.Context) {
-	vals, err := s.Client.FetchValopers(ctx)
+	read, err := s.Client.FetchValopers(ctx)
 	if err != nil {
 		log.Printf("valoper refresh failed: %v", err)
 		return
 	}
-	byOperator := make(map[string]node.Valoper, len(vals))
+	vals := read.Profiles
+	byOperator := make(map[string]node.Valoper, len(vals)+len(read.Unread))
+	if len(read.Unread) > 0 {
+		s.mu.RLock()
+		last := s.valopers
+		s.mu.RUnlock()
+		unread := slices.Sorted(maps.Keys(read.Unread))
+		for _, op := range unread {
+			if p, ok := last[op]; ok {
+				byOperator[op] = p
+			}
+		}
+		log.Printf("valoper profile unread for %d of %d, the last read kept: %s",
+			len(unread), len(vals)+len(unread), read.Unread[unread[0]])
+	}
 	names := map[string]string{}
 	var noState int
 	var firstErr string
