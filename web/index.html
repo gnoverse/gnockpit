@@ -582,6 +582,26 @@
                 color: var(--fg);
                 background: var(--bg);
             }
+            /* The Live / Timeline toggle sits centred in the validators
+               card's header on a wide screen. */
+            @media (min-width: 641px) {
+                #validators-card > .card-header-row {
+                    display: grid;
+                    grid-template-columns: 1fr auto 1fr;
+                }
+                #validators-card > .card-header-row > h2 {
+                    justify-self: start;
+                }
+                #validators-card
+                    > .card-header-row
+                    > #validators-compact-label {
+                    justify-self: end;
+                }
+            }
+            /* A validator's phone card: label beside value, two even columns. */
+            #validators-cards .peer-card-kv {
+                grid-template-columns: auto minmax(0, 1fr) auto minmax(0, 1fr);
+            }
             #validators-timeline {
                 display: none;
                 font-size: 13px;
@@ -799,25 +819,14 @@
                 flex-direction: column;
                 gap: 4px;
             }
+            /* The map's Country / Provider toggle: the validators card's
+               toggle, as wide as the list below it. */
             .map-list-toggle {
                 flex: 0 0 auto;
                 display: flex;
-                gap: 4px;
             }
             .map-list-toggle button {
                 flex: 1 1 0;
-                background: var(--bg);
-                border: 1px solid var(--border);
-                color: var(--fg2);
-                font-size: 11px;
-                padding: 3px 4px;
-                border-radius: 4px;
-                cursor: pointer;
-            }
-            .map-list-toggle button.active {
-                background: var(--bg2);
-                color: var(--fg);
-                border-color: var(--blue);
             }
             .map-country-list {
                 flex: 1 1 auto;
@@ -2182,17 +2191,21 @@
                         <div class="map-list-col">
                             <div class="map-list-inner">
                                 <div
-                                    class="map-list-toggle"
+                                    class="view-seg map-list-toggle"
                                     id="map-list-toggle"
                                 >
                                     <button
                                         type="button"
                                         data-mode="country"
-                                        class="active"
+                                        aria-pressed="true"
                                     >
                                         Country
                                     </button>
-                                    <button type="button" data-mode="provider">
+                                    <button
+                                        type="button"
+                                        data-mode="provider"
+                                        aria-pressed="false"
+                                    >
                                         Provider
                                     </button>
                                 </div>
@@ -2271,15 +2284,16 @@
                     <div class="table-wrap">
                         <table>
                             <colgroup>
-                                <col style="width: 14%" />
-                                <col style="width: 18%" />
+                                <col style="width: 13%" />
+                                <col style="width: 13%" />
+                                <col style="width: 9%" />
+                                <col style="width: 13%" />
+                                <col style="width: 8%" />
+                                <col style="width: 6%" />
                                 <col style="width: 10%" />
-                                <col style="width: 14%" />
                                 <col style="width: 9%" />
-                                <col style="width: 7%" />
-                                <col style="width: 10%" />
-                                <col style="width: 9%" />
-                                <col style="width: 9%" />
+                                <col style="width: 8%" />
+                                <col style="width: 11%" />
                             </colgroup>
                             <thead>
                                 <tr>
@@ -2344,18 +2358,26 @@
                                         Missed 24h
                                     </th>
                                     <th
-                                        data-sort="speed"
+                                        data-sort="delay"
                                         style="cursor: pointer"
                                         class="info-btn"
-                                        data-popover="Avg block time when this validator proposes, over last 100 blocks (lower=faster, ~3s expected)"
+                                        data-popover="Median delay of its precommits from each commit's voting-power-weighted median time, over the last 100 blocks; negative is early. Not scored."
                                     >
-                                        Speed
+                                        Vote delay
+                                    </th>
+                                    <th
+                                        data-sort="props"
+                                        style="cursor: pointer"
+                                        class="info-btn"
+                                        data-popover="Proposals it missed in the last 24 h, of those it was expected to make: the rounds it was the proposer of until the block was made. Scored (10 %)."
+                                    >
+                                        Missed props 24h
                                     </th>
                                 </tr>
                             </thead>
                             <tbody id="validators-body">
                                 <tr>
-                                    <td colspan="9">loading...</td>
+                                    <td colspan="10">loading...</td>
                                 </tr>
                             </tbody>
                         </table>
@@ -2971,6 +2993,82 @@
                 return iso.slice(0, 16).replace('T', ' ') + ' UTC'
             }
 
+            // scoreBand classes a scored value by where it lands on the
+            // scoring map: ok where the sub-score is full, warn partial, err
+            // zero.
+            var scoreBand = {
+                uptime: function (pct) {
+                    return pct >= 99.9 ? 'ok' : pct > 95 ? 'warn' : 'err'
+                },
+                outages: function (n) {
+                    return n === 0 ? 'ok' : n < 10 ? 'warn' : 'err'
+                },
+                proposals: function (pct) {
+                    return pct === 0 ? 'ok' : pct < 5 ? 'warn' : 'err'
+                },
+                recovery: function (ms) {
+                    return ms <= 600000 ? 'ok' : ms < 86400000 ? 'warn' : 'err'
+                },
+            }
+
+            // voteDelayText writes a vote delay in seconds, signed: negative
+            // is early; one that rounds to zero has no sign.
+            function voteDelayText(ms) {
+                var s = (Math.abs(ms) / 1000).toFixed(2)
+                if (s === '0.00') return s + ' s'
+                return (ms < 0 ? '−' : '+') + s + ' s'
+            }
+
+            // voteDelayClass colours a vote delay by the vote-delay chart's
+            // ranges: within 1 s ok, to 2.5 s warn, beyond err.
+            function voteDelayClass(ms) {
+                var a = Math.abs(ms)
+                return a <= 1000 ? 'ok' : a <= 2500 ? 'warn' : 'err'
+            }
+
+            // voteDelayNode renders a validator's live vote delay, coloured;
+            // "-" when the window holds none of its precommits.
+            function voteDelayNode(ms) {
+                if (typeof ms !== 'number') return document.createTextNode('-')
+                return mkEl('span', voteDelayText(ms), voteDelayClass(ms))
+            }
+
+            // proposalsNode renders missed / expected proposals, the missed
+            // count coloured by the proposals band when any were expected.
+            function proposalsNode(missed, expected) {
+                missed = missed || 0
+                expected = expected || 0
+                var node = mkEl('span')
+                node.appendChild(
+                    mkEl(
+                        'span',
+                        String(missed),
+                        expected
+                            ? scoreBand.proposals((missed / expected) * 100)
+                            : null
+                    )
+                )
+                node.appendChild(document.createTextNode(' / ' + expected))
+                return node
+            }
+
+            // missedSplitRows splits a validator's misses over the last 100
+            // blocks into absent and other block, with its nil votes, which
+            // count as signed.
+            function missedSplitRows(v) {
+                var other = v.other_block_100 || 0
+                return [
+                    [null, 'missed', String(v.missed_100)],
+                    [null, 'absent', String(v.missed_100 - other)],
+                    [null, 'other block', String(other)],
+                    [
+                        null,
+                        'nil votes',
+                        (v.nil_100 || 0) + ' (counted as signed)',
+                    ],
+                ]
+            }
+
             // midTruncCell builds a peers/validators cell that shows the full text
             // when the column is wide enough and truncates in the middle
             // (start…end) when it isn't. opts: rows (its popover), copy,
@@ -3298,17 +3396,24 @@
                                 typeof b.missed_100 === 'number'
                                     ? b.missed_100
                                     : -1
-                        } else if (valSortKey === 'speed') {
+                        } else if (valSortKey === 'delay') {
                             va =
-                                typeof a.avg_block_ms === 'number' &&
-                                a.avg_block_ms > 0
-                                    ? a.avg_block_ms
-                                    : 99999
+                                typeof a.vote_delay_ms === 'number'
+                                    ? a.vote_delay_ms
+                                    : null
                             vb =
-                                typeof b.avg_block_ms === 'number' &&
-                                b.avg_block_ms > 0
-                                    ? b.avg_block_ms
-                                    : 99999
+                                typeof b.vote_delay_ms === 'number'
+                                    ? b.vote_delay_ms
+                                    : null
+                        } else if (valSortKey === 'props') {
+                            va = a.expected_proposals_24h
+                                ? a.missed_proposals_24h /
+                                  a.expected_proposals_24h
+                                : null
+                            vb = b.expected_proposals_24h
+                                ? b.missed_proposals_24h /
+                                  b.expected_proposals_24h
+                                : null
                         } else if (valSortKey === 'missed24h') {
                             va =
                                 typeof a.missed_24h === 'number'
@@ -3385,6 +3490,9 @@
                             va = (a.name || '').replace(' (us)', '')
                             vb = (b.name || '').replace(' (us)', '')
                         }
+                        // A missing value sorts last, either way.
+                        if (va === null || vb === null)
+                            return va === vb ? 0 : va === null ? 1 : -1
                         if (va < vb) return valSortAsc ? -1 : 1
                         if (va > vb) return valSortAsc ? 1 : -1
                         return 0
@@ -3503,6 +3611,11 @@
                                 : missed100 > 0
                                   ? 'warn'
                                   : 'ok'
+                            popRows(
+                                missed100Td,
+                                'last 100 blocks',
+                                missedSplitRows(v)
+                            )
                         } else {
                             missed100Td.textContent = '-'
                         }
@@ -3536,55 +3649,22 @@
                         }
                         tr.appendChild(missedTd)
 
-                        // Speed (avg block time when proposing) — ranked with emojis
-                        var speedTd = document.createElement('td')
-                        var avgMs = v.avg_block_ms
-                        if (typeof avgMs === 'number' && avgMs > 0) {
-                            var secs = (avgMs / 1000).toFixed(1)
-                            speedTd.textContent = secs + 's'
-                            speedTd.className =
-                                avgMs <= 3600
-                                    ? 'ok'
-                                    : avgMs <= 6000
-                                      ? 'warn'
-                                      : 'err'
-                            speedTd._avgMs = avgMs // store for ranking pass
-                        } else {
-                            speedTd.textContent = '-'
-                        }
-                        tr.appendChild(speedTd)
-                        tr._speedTd = speedTd // reference for ranking
+                        // Vote delay over the live window
+                        var delayTd = document.createElement('td')
+                        delayTd.appendChild(voteDelayNode(v.vote_delay_ms))
+                        tr.appendChild(delayTd)
+
+                        // Missed proposals over the last 24h
+                        var propsTd = document.createElement('td')
+                        propsTd.appendChild(
+                            proposalsNode(
+                                v.missed_proposals_24h,
+                                v.expected_proposals_24h
+                            )
+                        )
+                        tr.appendChild(propsTd)
 
                         tbody.appendChild(tr)
-                    }
-                    // Speed ranking — add emojis
-                    var speedCells = []
-                    for (var r = 0; r < tbody.rows.length; r++) {
-                        var row = tbody.rows[r]
-                        if (row._speedTd && row._speedTd._avgMs)
-                            speedCells.push({
-                                td: row._speedTd,
-                                ms: row._speedTd._avgMs,
-                            })
-                    }
-                    speedCells.sort(function (a, b) {
-                        return a.ms - b.ms
-                    })
-                    var medals = [
-                        '\ud83e\udd47',
-                        '\ud83e\udd48',
-                        '\ud83e\udd49',
-                    ] // gold, silver, bronze
-                    for (var si = 0; si < speedCells.length; si++) {
-                        var emoji =
-                            si < 3
-                                ? medals[si]
-                                : si >= speedCells.length - 1
-                                  ? '\ud83d\udc0c'
-                                  : '' // snail for slowest
-                        if (emoji)
-                            speedCells[si].td.textContent =
-                                speedCells[si].td.textContent + ' ' + emoji
                     }
                 }
 
@@ -3754,7 +3834,8 @@
                         // data: { name, valAddress (a validator's: its name links
                         //         its page), isUs, dotClass, healthText, healthCls,
                         //         address, ip, consensus, missed100, missed100Cls,
-                        //         speed, speedCls, rpcUrl, rpcText, rpcCls }
+                        //         missedSplit, delay, props (nodes), rpcUrl,
+                        //         rpcText, rpcCls }
                         var card = document.createElement('div')
                         card.className =
                             'peer-card ' + (data.rpcUrl ? 'has-rpc' : 'no-rpc')
@@ -3812,28 +3893,15 @@
                                   ['provider', data.provider || '-'],
                                   ['peers', data.peers || '-'],
                               ]
-                            : [
-                                  ['signing', data.address],
+                            : // A validator's: signing on its own row, then
+                              // pairs, the missed counts on the left.
+                              [
+                                  [
+                                      'signing',
+                                      { text: data.address, row: true },
+                                  ],
                                   ['country', data.country || '-'],
                                   ['provider', data.provider || '-'],
-                                  [
-                                      'missed last 100',
-                                      {
-                                          text: data.missed100,
-                                          cls: data.missed100Cls,
-                                      },
-                                  ],
-                                  [
-                                      'missed 24h',
-                                      {
-                                          text: data.missed24h,
-                                          cls: data.missedCls,
-                                      },
-                                  ],
-                                  [
-                                      'speed',
-                                      { text: data.speed, cls: data.speedCls },
-                                  ],
                                   ['vp', data.vp || '-'],
                                   [
                                       'spof',
@@ -3842,6 +3910,23 @@
                                           cls: data.spof ? 'err' : '',
                                       },
                                   ],
+                                  [
+                                      'miss 100',
+                                      {
+                                          text: data.missed100,
+                                          cls: data.missed100Cls,
+                                          split: data.missedSplit,
+                                      },
+                                  ],
+                                  ['delay', { node: data.delay }],
+                                  [
+                                      'miss 24h',
+                                      {
+                                          text: data.missed24h,
+                                          cls: data.missedCls,
+                                      },
+                                  ],
+                                  ['props 24h', { node: data.props }],
                               ]
                         for (var fi = 0; fi < fields.length; fi++) {
                             var fk = document.createElement('span')
@@ -3852,8 +3937,14 @@
                             fv.className = 'peer-card-v'
                             var fval = fields[fi][1]
                             if (typeof fval === 'object' && fval !== null) {
-                                fv.textContent = fval.text || '-'
+                                if (fval.node) fv.appendChild(fval.node)
+                                else fv.textContent = fval.text || '-'
                                 if (fval.cls) fv.className += ' ' + fval.cls
+                                else if (!fval.node)
+                                    fv.style.color = 'var(--fg2)'
+                                if (fval.row) fv.style.gridColumn = '2 / -1'
+                                if (fval.split)
+                                    popRows(fv, 'last 100 blocks', fval.split)
                             } else {
                                 fv.textContent = fval || '-'
                                 fv.style.color = 'var(--fg2)'
@@ -3908,7 +3999,14 @@
                         if (data.rpcUrl) copyLines.push('rpc: ' + data.rpcUrl)
                         var copyText = copyLines.join('\n')
                         card.addEventListener('click', function (e) {
-                            if (e.target.closest('.peer-card-footer')) return // let footer handle its own clicks
+                            // The footer and a value with a popover handle
+                            // their own taps.
+                            if (
+                                e.target.closest(
+                                    '.peer-card-footer, [data-pop-rows]'
+                                )
+                            )
+                                return
                             copyNotify(copyText, e)
                         })
                         return card
@@ -3935,22 +4033,6 @@
                                 typeof v.missed_100 === 'number'
                                     ? v.missed_100
                                     : null
-
-                            var speedText = '-',
-                                speedCls = ''
-                            if (
-                                typeof v.avg_block_ms === 'number' &&
-                                v.avg_block_ms > 0
-                            ) {
-                                speedText =
-                                    (v.avg_block_ms / 1000).toFixed(1) + 's'
-                                speedCls =
-                                    v.avg_block_ms <= 3600
-                                        ? 'ok'
-                                        : v.avg_block_ms <= 6000
-                                          ? 'warn'
-                                          : 'err'
-                            }
 
                             valContainer.appendChild(
                                 makeCard({
@@ -3991,8 +4073,15 @@
                                                   ? 'warn'
                                                   : 'err'
                                             : '',
-                                    speed: speedText,
-                                    speedCls: speedCls,
+                                    missedSplit:
+                                        missed100 !== null
+                                            ? missedSplitRows(v)
+                                            : null,
+                                    delay: voteDelayNode(v.vote_delay_ms),
+                                    props: proposalsNode(
+                                        v.missed_proposals_24h,
+                                        v.expected_proposals_24h
+                                    ),
                                     vp: v.voting_power
                                         ? formatVP(
                                               parseInt(v.voting_power, 10)
@@ -4808,7 +4897,10 @@
                     mapListMode = btn.getAttribute('data-mode')
                     var btns = mapListToggle.querySelectorAll('button')
                     for (var i = 0; i < btns.length; i++)
-                        btns[i].classList.toggle('active', btns[i] === btn)
+                        btns[i].setAttribute(
+                            'aria-pressed',
+                            String(btns[i] === btn)
+                        )
                     // The map clusters by the active mode, so it re-renders along
                     // with the side list.
                     renderMap(lastPeers)
@@ -7569,27 +7661,6 @@
                 var seq = 0 // the read in force: a newer one drops older answers
                 var opener = null // focused before opening, focused again on close
 
-                // band colours a scored value by where it lands on the scoring
-                // map: ok where the sub-score is full, warn partial, err zero.
-                var band = {
-                    uptime: function (pct) {
-                        return pct >= 99.9 ? 'ok' : pct > 95 ? 'warn' : 'err'
-                    },
-                    outages: function (n) {
-                        return n === 0 ? 'ok' : n < 10 ? 'warn' : 'err'
-                    },
-                    proposals: function (pct) {
-                        return pct === 0 ? 'ok' : pct < 5 ? 'warn' : 'err'
-                    },
-                    recovery: function (ms) {
-                        return ms <= 600000
-                            ? 'ok'
-                            : ms < 86400000
-                              ? 'warn'
-                              : 'err'
-                    },
-                }
-
                 // ---- Formats
                 function num(n) {
                     return n.toLocaleString('en-US')
@@ -7615,14 +7686,6 @@
                         ' min'
                     )
                 }
-                // delay writes a vote delay in seconds, signed: negative is
-                // early; one that rounds to zero has no sign.
-                function delay(ms) {
-                    var s = (Math.abs(ms) / 1000).toFixed(2)
-                    if (s === '0.00') return s + ' s'
-                    return (ms < 0 ? '−' : '+') + s + ' s'
-                }
-
                 // ---- Building blocks
                 // info builds an ⓘ whose popover says what a datum is, where it
                 // comes from, and whether the ranking scores it.
@@ -7811,7 +7874,7 @@
                 function uptimeFill(d) {
                     if (!d.c) return EMPTY
                     return BAND_FILL[
-                        band.uptime((d.c.signed / d.c.in_set) * 100)
+                        scoreBand.uptime((d.c.signed / d.c.in_set) * 100)
                     ]
                 }
                 function uptimeRows(d) {
@@ -7857,7 +7920,7 @@
                 function proposalsFill(d) {
                     if (!d.c || !d.c.proposals_expected) return EMPTY
                     return BAND_FILL[
-                        band.proposals(
+                        scoreBand.proposals(
                             (d.c.proposals_missed / d.c.proposals_expected) *
                                 100
                         )
@@ -8063,11 +8126,13 @@
                                     height: bh,
                                     rx: 1,
                                 }),
-                                BAND_FILL[band.recovery(r.duration_ms)]
+                                BAND_FILL[scoreBand.recovery(r.duration_ms)]
                             )
                             popRows(bar, day, [
                                 [
-                                    BAND_FILL[band.recovery(r.duration_ms)],
+                                    BAND_FILL[
+                                        scoreBand.recovery(r.duration_ms)
+                                    ],
                                     'signed again after',
                                     dur(r.duration_ms),
                                 ],
@@ -8158,7 +8223,11 @@
                             g,
                             d.day,
                             [
-                                [null, 'mean', delay(d.c.vote_delay_mean_ms)],
+                                [
+                                    null,
+                                    'mean',
+                                    voteDelayText(d.c.vote_delay_mean_ms),
+                                ],
                             ].concat(rows.reverse())
                         )
                         svg.appendChild(g)
@@ -8516,13 +8585,13 @@
                                             : signed.toFixed(2) + ' %',
                                         signed === null
                                             ? ''
-                                            : band.uptime(signed),
+                                            : scoreBand.uptime(signed),
                                     ],
                                     [
                                         'outages',
                                         num(sm.outages),
                                         sm.in_set
-                                            ? band.outages(sm.outages)
+                                            ? scoreBand.outages(sm.outages)
                                             : '',
                                     ],
                                     ['nil votes', num(sm.nil), ''],
@@ -8561,7 +8630,9 @@
                                               ' %)'
                                             : 'none expected',
                                         pe
-                                            ? band.proposals((pm / pe) * 100)
+                                            ? scoreBand.proposals(
+                                                  (pm / pe) * 100
+                                              )
                                             : '',
                                     ],
                                 ],
@@ -8604,7 +8675,7 @@
                                         'median of its last 3',
                                         rc.samples ? dur(rc.median_ms) : '—',
                                         rc.samples
-                                            ? band.recovery(rc.median_ms)
+                                            ? scoreBand.recovery(rc.median_ms)
                                             : '',
                                     ],
                                     ['restarts', num(rc.samples), ''],
@@ -8640,7 +8711,9 @@
                                 [
                                     [
                                         'median',
-                                        live === null ? '—' : delay(live),
+                                        live === null
+                                            ? '—'
+                                            : voteDelayText(live),
                                         '',
                                     ],
                                 ],
@@ -8651,7 +8724,7 @@
                                     [
                                         'mean',
                                         rep.summary.votes
-                                            ? delay(
+                                            ? voteDelayText(
                                                   rep.summary.vote_delay_mean_ms
                                               )
                                             : '—',
@@ -8677,7 +8750,7 @@
                                 'recovered in ',
                                 [
                                     dur(e.duration_ms),
-                                    band.recovery(e.duration_ms),
+                                    scoreBand.recovery(e.duration_ms),
                                 ],
                             ]
                             p = 'restart at #' + num(e.restart_height)
