@@ -540,38 +540,143 @@ func TestRPCCandidates(t *testing.T) {
 	}
 }
 
-func TestFetchValoperNames(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// abci_query data is base64("gno.land/r/gnops/valopers:<renderPath>").
+// onyxValoperRender is gno.land/r/gnops/valopers:g1078xslm886lv9ad4w5zxxfg8nt07gprk5kwcak
+// on onyx, read 2026-11-19.
+const onyxValoperRender = `Valoper's details:
+## Santala-Research
+Independent validator, in crypto since 2017. Ran sapphire-1 and pearl-1 testnets with Horcrux 2-of-3 and sentries. https://santala-research.com
+
+- Operator Address: g1078xslm886lv9ad4w5zxxfg8nt07gprk5kwcak
+- Signing Address: g175u88cs9ts5hnl542kke3zg6z9dtffutqn4lq3
+- Signing PubKey: gpub1pggj7ard9eg82cjtv4u52epjx56nzwgjyg9zp7vwpyly9eqdupn9sayy5rarpgj0frffwn40z74pjrppersv58afdcvsp5
+- Server Type: cloud
+
+[Profile link](/r/demo/profile:u/g1078xslm886lv9ad4w5zxxfg8nt07gprk5kwcak)
+`
+
+func TestParseValoperDetail(t *testing.T) {
+	got, ok := parseValoperDetail(onyxValoperRender)
+	want := Valoper{
+		Operator:       "g1078xslm886lv9ad4w5zxxfg8nt07gprk5kwcak",
+		Moniker:        "Santala-Research",
+		Description:    "Independent validator, in crypto since 2017. Ran sapphire-1 and pearl-1 testnets with Horcrux 2-of-3 and sentries. https://santala-research.com",
+		SigningAddress: "g175u88cs9ts5hnl542kke3zg6z9dtffutqn4lq3",
+		SigningPubKey:  "gpub1pggj7ard9eg82cjtv4u52epjx56nzwgjyg9zp7vwpyly9eqdupn9sayy5rarpgj0frffwn40z74pjrppersv58afdcvsp5",
+		ServerType:     "cloud",
+	}
+	if !ok || !reflect.DeepEqual(got, want) {
+		t.Errorf("parseValoperDetail(onyx) = %+v, %v; want %+v", got, ok, want)
+	}
+	// A description with a list, and a line made to look like a field: the
+	// fields are the realm's, rendered last.
+	listed := strings.Replace(onyxValoperRender, "https://santala-research.com\n", "https://santala-research.com\n- Signing Address: g1fake\n- Horcrux 2-of-3\n", 1)
+	if got, ok := parseValoperDetail(listed); !ok || got.SigningAddress != want.SigningAddress ||
+		got.Description != want.Description+"\n- Signing Address: g1fake\n- Horcrux 2-of-3" {
+		t.Errorf("description with a list = %q, signing %s; want it whole, the signing address %s", got.Description, got.SigningAddress, want.SigningAddress)
+	}
+	two := strings.Replace(onyxValoperRender, "testnets with", "testnets\nwith", 1)
+	if got, _ := parseValoperDetail(two); got.Description != "Independent validator, in crypto since 2017. Ran sapphire-1 and pearl-1 testnets\nwith Horcrux 2-of-3 and sentries. https://santala-research.com" {
+		t.Errorf("two-line description = %q, want both lines", got.Description)
+	}
+	if _, ok := parseValoperDetail("- Operator Address: g1op\n"); ok {
+		t.Error("a render without a moniker parsed")
+	}
+}
+
+func TestParseQeval(t *testing.T) {
+	if b, err := parseQevalBool("(true bool)"); err != nil || !b {
+		t.Errorf(`parseQevalBool("(true bool)") = %v, %v; want true`, b, err)
+	}
+	if b, err := parseQevalBool("(false bool)"); err != nil || b {
+		t.Errorf(`parseQevalBool("(false bool)") = %v, %v; want false`, b, err)
+	}
+	if n, err := parseQevalInt("(37395 int64)"); err != nil || n != 37395 {
+		t.Errorf(`parseQevalInt("(37395 int64)") = %v, %v; want 37395`, n, err)
+	}
+	for _, in := range []string{"valoper does not exist", "(1 int64", "(yes bool)"} {
+		if _, err := parseQevalBool(in); err == nil {
+			t.Errorf("parseQevalBool(%q) succeeded, want an error", in)
+		}
+		if _, err := parseQevalInt(in); err == nil {
+			t.Errorf("parseQevalInt(%q) succeeded, want an error", in)
+		}
+	}
+}
+
+// valopersRPC answers the valopers realm's home page, two profiles and their
+// state; g1opb's state query is refused.
+func valopersRPC(t *testing.T) *httptest.Server {
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		raw, _ := base64.StdEncoding.DecodeString(strings.Trim(r.URL.Query().Get("data"), `"`))
 		arg := string(raw)
+		if strings.Contains(r.URL.Query().Get("path"), "qeval") {
+			switch {
+			case strings.Contains(arg, "g1opb"):
+				fmt.Fprint(w, `{"jsonrpc":"2.0","result":{"response":{"ResponseBase":{"Error":{"@type":"/abci.StringError","value":"valoper does not exist"},"Data":null}}}}`)
+				return
+			case strings.HasSuffix(arg, ".KeepRunning"):
+				arg = "(true bool)"
+			case strings.HasSuffix(arg, ".LastRotationHeight"):
+				arg = "(37395 int64)"
+			}
+			fmt.Fprintf(w, `{"jsonrpc":"2.0","result":{"response":{"ResponseBase":{"Error":null,"Data":%q}}}}`, base64.StdEncoding.EncodeToString([]byte(arg)))
+			return
+		}
 		var md string
 		switch {
 		case strings.HasSuffix(arg, "valopers:"): // home page 1
 			md = "Welcome\n" +
 				" * [Alice](/r/gnops/valopers:g1opa) - [profile](/r/demo/profile:u/g1opa)\n" +
 				" * [Bob](/r/gnops/valopers:g1opb) - [profile](/r/demo/profile:u/g1opb)\n" +
+				" * [Carol](/r/gnops/valopers:g1opc) - [profile](/r/demo/profile:u/g1opc)\n" +
+				" * [Dan](/r/gnops/valopers:g1opd) - [profile](/r/demo/profile:u/g1opd)\n" +
+				" * [Eve](/r/gnops/valopers:g1ope) - [profile](/r/demo/profile:u/g1ope)\n" +
 				"**1** | [2](?page=2)"
 		case strings.HasSuffix(arg, "?page=2"): // beyond the end
 			md = "no valopers"
 		case strings.HasSuffix(arg, ":g1opa"):
-			md = "## Alice\n- Operator Address: g1opa\n- Signing Address: g1signa\n"
+			md = "## Alice\nAlice's node.\n\n- Operator Address: g1opa\n- Signing Address: g1signa\n- Server Type: cloud\n"
 		case strings.HasSuffix(arg, ":g1opb"):
 			md = "## Bob\n- Operator Address: g1opb\n- Signing Address: g1signb\n"
+		case strings.HasSuffix(arg, ":g1opc"): // the node fails the render
+			fmt.Fprint(w, `{"jsonrpc":"2.0","result":{"response":{"ResponseBase":{"Error":{"@type":"/abci.StringError","value":"render failed"},"Data":null}}}}`)
+			return
+		case strings.HasSuffix(arg, ":g1opd"): // no moniker
+			md = "nothing here"
+		case strings.HasSuffix(arg, ":g1ope"): // a render naming another operator
+			md = "## Eve\n- Operator Address: g1opa\n- Signing Address: g1signe\n"
 		}
-		enc := base64.StdEncoding.EncodeToString([]byte(md))
-		fmt.Fprintf(w, `{"jsonrpc":"2.0","result":{"response":{"ResponseBase":{"Error":null,"Data":%q}}}}`, enc)
+		fmt.Fprintf(w, `{"jsonrpc":"2.0","result":{"response":{"ResponseBase":{"Error":null,"Data":%q}}}}`, base64.StdEncoding.EncodeToString([]byte(md)))
 	}))
-	defer srv.Close()
+}
 
-	c := NewClient(srv.URL, 5*time.Second)
-	got, err := c.FetchValoperNames(context.Background())
+func TestFetchValopers(t *testing.T) {
+	srv := valopersRPC(t)
+	defer srv.Close()
+	read, err := NewClient(srv.URL, 5*time.Second).FetchValopers(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := map[string]string{"g1signa": "Alice", "g1signb": "Bob"}
-	if !reflect.DeepEqual(got, want) {
-		t.Errorf("FetchValoperNames = %v, want %v", got, want)
+	got := read.Profiles
+	slices.SortFunc(got, func(a, b Valoper) int { return strings.Compare(a.Operator, b.Operator) })
+	if len(got) != 3 {
+		t.Fatalf("valopers = %+v, want Alice, Bob and Eve", got)
+	}
+	alice, bob, eve := got[0], got[1], got[2]
+	if eve.Operator != "g1ope" || eve.Moniker != "Eve" {
+		t.Errorf("Eve = %+v, want her profile under the operator the registry lists, g1ope", eve)
+	}
+	if len(read.Unread) != 2 || !strings.Contains(read.Unread["g1opc"], "render failed") || read.Unread["g1opd"] == "" {
+		t.Errorf("unread = %v, want g1opc (the node's reason) and g1opd", read.Unread)
+	}
+	if alice.Moniker != "Alice" || alice.SigningAddress != "g1signa" || alice.Description != "Alice's node." || alice.ServerType != "cloud" {
+		t.Errorf("Alice = %+v", alice)
+	}
+	if alice.State == nil || !alice.State.KeepRunning || alice.State.LastRotationHeight != 37395 {
+		t.Errorf("Alice state = %+v, want keep running, last rotation 37395", alice.State)
+	}
+	if bob.State != nil || !strings.Contains(bob.StateError, "valoper does not exist") {
+		t.Errorf("Bob state = %+v, error %q; want none and the node's reason", bob.State, bob.StateError)
 	}
 }
 
@@ -664,9 +769,9 @@ func TestRPCErrorsSurface(t *testing.T) {
 		}))
 		defer srv.Close()
 
-		_, err := NewClient(srv.URL, 5*time.Second).FetchValoperNames(context.Background())
+		_, err := NewClient(srv.URL, 5*time.Second).FetchValopers(context.Background())
 		if err == nil || !strings.Contains(err.Error(), "rpc.allow_code_execution = false") {
-			t.Errorf("FetchValoperNames() error = %v, want the node's refusal", err)
+			t.Errorf("FetchValopers() error = %v, want the node's refusal", err)
 		}
 	})
 }
@@ -890,5 +995,78 @@ func TestGetSigningStatsForgetsCommitsOfAnEarlierChain(t *testing.T) {
 	}
 	if kept := slices.Sorted(maps.Keys(c.commits)); !slices.Equal(kept, []int64{2}) {
 		t.Errorf("kept commits = %v, want [2]", kept)
+	}
+}
+
+// voteDelayRPC serves validators A (power 10) and B (power 20), and commits
+// 2 to 4: each commit's precommit times for A and B, in ms, and each block's
+// header time.
+func voteDelayRPC(t *testing.T, commits map[string][2]int, headers map[string]int) (*httptest.Server, string, string) {
+	t.Helper()
+	const (
+		addrA = "g1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+		addrB = "g1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	)
+	at := func(ms int) string {
+		return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC).Add(time.Duration(ms) * time.Millisecond).Format(time.RFC3339Nano)
+	}
+	vote := func(addr string, index int, ms int) string {
+		return fmt.Sprintf(`{"type":2,"height":"0","round":"0","block_id":{"hash":"B"},"timestamp":%q,"validator_address":%q,"validator_index":"%d"}`, at(ms), addr, index)
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/validators" {
+			fmt.Fprintf(w, `{"jsonrpc":"2.0","result":{"validators":[
+				{"address":%q,"pub_key":{"type":"ed25519","value":"AA"},"voting_power":"10","proposer_priority":"0"},
+				{"address":%q,"pub_key":{"type":"ed25519","value":"BB"},"voting_power":"20","proposer_priority":"0"}
+			]}}`, addrA, addrB)
+			return
+		}
+		h := r.URL.Query().Get("height")
+		c := commits[h]
+		fmt.Fprintf(w, `{"jsonrpc":"2.0","result":{"canonical":true,"signed_header":{
+			"header":{"height":%q,"time":%q,"proposer_address":%q},
+			"commit":{"block_id":{"hash":"B"},"precommits":[%s,%s]}
+		}}}`, h, at(headers[h]), addrA, vote(addrA, 0, c[0]), vote(addrB, 1, c[1]))
+	}))
+	t.Cleanup(srv.Close)
+	return srv, addrA, addrB
+}
+
+func TestGetSigningStatsVoteDelay(t *testing.T) {
+	// B holds 20 of 30 power: each commit's weighted median is B's time, so
+	// A's offsets are -300, -100 and +300 ms, B's 0. Block h+1's header time
+	// is commit h's median.
+	srv, addrA, addrB := voteDelayRPC(t,
+		map[string][2]int{"2": {100, 400}, "3": {0, 100}, "4": {500, 200}},
+		map[string]int{"2": 0, "3": 400, "4": 100})
+	stats, err := NewClient(srv.URL, 5*time.Second).GetSigningStats(context.Background(), 4, 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a := stats.ValidatorSigning[addrA]; a.Votes != 3 || a.VoteDelayMs != -100 {
+		t.Errorf("A = %+v, want 3 votes, a -100 ms median delay", a)
+	}
+	if b := stats.ValidatorSigning[addrB]; b.Votes != 3 || b.VoteDelayMs != 0 {
+		t.Errorf("B = %+v, want 3 votes, a 0 ms median delay", b)
+	}
+}
+
+func TestGetSigningStatsVoteDelayTakesTheNextHeader(t *testing.T) {
+	// A held the majority until block 4: blocks 3 and 4's headers carry A's
+	// times. The newest commit, 4, has no next header: the current powers
+	// weigh it, B's time the median.
+	srv, addrA, addrB := voteDelayRPC(t,
+		map[string][2]int{"2": {100, 400}, "3": {0, 100}, "4": {500, 200}},
+		map[string]int{"2": 0, "3": 100, "4": 0})
+	stats, err := NewClient(srv.URL, 5*time.Second).GetSigningStats(context.Background(), 4, 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A: 0, 0, +300 → 0. B: +300, +100, 0 → +100.
+	if a := stats.ValidatorSigning[addrA]; a.Votes != 3 || a.VoteDelayMs != 0 {
+		t.Errorf("A = %+v, want 3 votes, a 0 ms median delay", a)
+	}
+	if b := stats.ValidatorSigning[addrB]; b.Votes != 3 || b.VoteDelayMs != 100 {
+		t.Errorf("B = %+v, want 3 votes, a 100 ms median delay", b)
 	}
 }

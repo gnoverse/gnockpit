@@ -20,7 +20,8 @@ import (
 // keeps its addresses as text), and keeps no index beside the tables' keys: an
 // absence is a few bytes, not an address and two index entries. It drops
 // signing_blocks and signing_misses where a database has them: blocks_absences
-// holds the same per-block misses, back to genesis.
+// holds the same per-block misses, back to genesis; and blocks_missed_days,
+// whose counts blocks_days holds by kind.
 const schema = `
 CREATE TABLE IF NOT EXISTS blocks_validators (
 	id      INTEGER PRIMARY KEY,
@@ -75,12 +76,17 @@ CREATE TABLE IF NOT EXISTS blocks_events (
 	applied       INTEGER NOT NULL,
 	PRIMARY KEY (height, idx)
 );
-CREATE TABLE IF NOT EXISTS blocks_missed_days (
-	day       INTEGER NOT NULL,
-	validator INTEGER NOT NULL,
-	missed    INTEGER NOT NULL, -- absent or other-block precommits in the day's stored blocks
+CREATE TABLE IF NOT EXISTS blocks_days (
+	day                INTEGER NOT NULL,
+	validator          INTEGER NOT NULL,
+	absent             INTEGER NOT NULL DEFAULT 0, -- no precommit in the commit
+	nil_votes          INTEGER NOT NULL DEFAULT 0, -- a precommit for nil (signed)
+	other_block        INTEGER NOT NULL DEFAULT 0, -- a precommit for another block
+	proposals_expected INTEGER NOT NULL DEFAULT 0,
+	proposals_missed   INTEGER NOT NULL DEFAULT 0,
 	PRIMARY KEY (day, validator)
 ) WITHOUT ROWID;
+DROP TABLE IF EXISTS blocks_missed_days;
 CREATE TABLE IF NOT EXISTS blocks_vote_delays (
 	day       INTEGER NOT NULL,
 	validator INTEGER NOT NULL,
@@ -92,6 +98,15 @@ CREATE TABLE IF NOT EXISTS blocks_vote_delays (
 ) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS blocks_event_gaps (
 	height INTEGER PRIMARY KEY -- a validator set change whose events are not read yet
+);
+CREATE TABLE IF NOT EXISTS blocks_absence_runs (
+	validator INTEGER NOT NULL,
+	first     INTEGER NOT NULL, -- consecutive heights absent or voting for another block
+	last      INTEGER NOT NULL,
+	PRIMARY KEY (validator, first)
+) WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS blocks_gaps (
+	height INTEGER PRIMARY KEY -- block height+1 came more than RestartGap after this block
 );
 CREATE TABLE IF NOT EXISTS blocks_valset_changes (
 	height INTEGER PRIMARY KEY -- the block's validator set differs from the block below's
@@ -105,11 +120,19 @@ DROP TABLE IF EXISTS signing_blocks;
 `
 
 const (
-	metaChainID       = "chain_id"
-	metaFloor         = "floor"
-	metaChangesFilled = "valset_changes_filled" // blocks_valset_changes covers every stored block
-	metaValsetToldTo  = "valset_told_to"        // the validator set changes up to this height were told
+	metaChainID         = "chain_id"
+	metaFloor           = "floor"
+	metaChangesFilled   = "valset_changes_filled" // blocks_valset_changes covers every stored block
+	metaValsetToldTo    = "valset_told_to"        // the validator set changes up to this height were told
+	metaDaysFilled      = "days_filled"           // blocks_days counts the absences of every stored block
+	metaProposalsFilled = "proposals_filled"      // blocks_days counts the proposals of every stored block
+	metaGapsFilled      = "gaps_filled"           // blocks_gaps covers every stored block
+	metaRunsFilled      = "runs_filled"           // blocks_absence_runs covers every stored block
 )
+
+// filledKeys are the meta keys of the one-time fills: an empty history (a
+// Reset) has nothing to fill.
+var filledKeys = []string{metaChangesFilled, metaDaysFilled, metaProposalsFilled, metaGapsFilled, metaRunsFilled}
 
 // Store persists the block history. Times are kept to the millisecond.
 type Store struct {
@@ -124,6 +147,18 @@ func NewStore(ctx context.Context, db *sql.DB) (*Store, error) {
 	}
 	s := &Store{db: db}
 	if err := s.fillValsetChanges(ctx); err != nil {
+		return nil, err
+	}
+	if err := s.fillDays(ctx); err != nil {
+		return nil, err
+	}
+	if err := s.fillProposals(ctx); err != nil {
+		return nil, err
+	}
+	if err := s.fillGaps(ctx); err != nil {
+		return nil, err
+	}
+	if err := s.fillRuns(ctx); err != nil {
 		return nil, err
 	}
 	return s, nil
@@ -152,6 +187,9 @@ func (s *Store) Write(ctx context.Context, recs []Record) error {
 		heights = append(heights, r.Height)
 	}
 	if err := markValsetChanges(ctx, tx, heights); err != nil {
+		return err
+	}
+	if err := markGaps(ctx, tx, heights); err != nil {
 		return err
 	}
 	if err := tx.Commit(); err != nil {
@@ -215,20 +253,22 @@ func writeRecord(ctx context.Context, tx *sql.Tx, ids *validatorIDs, r Record) e
 			return fmt.Errorf("insert flag %d: %w", r.Height, err)
 		}
 	}
+	if err := countProposals(ctx, tx, ids, r); err != nil {
+		return err
+	}
 	day := dayOf(r.Time)
 	for _, a := range r.Absences {
-		if a.Kind != Absent && a.Kind != OtherBlock {
-			continue
-		}
 		vid, err := ids.id(ctx, a.Address)
 		if err != nil {
 			return err
 		}
-		if _, err := tx.ExecContext(ctx,
-			`INSERT INTO blocks_missed_days(day, validator, missed) VALUES(?, ?, 1)
-			 ON CONFLICT(day, validator) DO UPDATE SET missed = missed + 1`, day, vid,
-		); err != nil {
-			return fmt.Errorf("count miss %d/%s: %w", r.Height, a.Address, err)
+		if err := countAbsence(ctx, tx, day, vid, a.Kind); err != nil {
+			return fmt.Errorf("count absence %d/%s: %w", r.Height, a.Address, err)
+		}
+		if a.Kind == Absent || a.Kind == OtherBlock {
+			if err := extendRun(ctx, tx, vid, r.Height); err != nil {
+				return err
+			}
 		}
 	}
 	for _, d := range r.Delays {
@@ -493,17 +533,20 @@ func (s *Store) Reset(ctx context.Context, chainID string) error {
 	defer tx.Rollback()
 	for _, table := range []string{
 		"blocks", "blocks_validators", "blocks_valsets", "blocks_valset_members", "blocks_absences",
-		"blocks_rounds", "blocks_flags", "blocks_events", "blocks_event_gaps", "blocks_missed_days", "blocks_vote_delays",
+		"blocks_rounds", "blocks_flags", "blocks_events", "blocks_event_gaps", "blocks_days", "blocks_vote_delays", "blocks_gaps", "blocks_absence_runs",
 		"blocks_valset_changes", "blocks_meta",
 	} {
 		if _, err := tx.ExecContext(ctx, "DELETE FROM "+table); err != nil {
 			return fmt.Errorf("reset %s: %w", table, err)
 		}
 	}
-	if _, err := tx.ExecContext(ctx,
-		`INSERT INTO blocks_meta(key, value) VALUES(?, ?), (?, ?)`, metaChainID, chainID, metaChangesFilled, "1",
-	); err != nil {
+	if _, err := tx.ExecContext(ctx, `INSERT INTO blocks_meta(key, value) VALUES(?, ?)`, metaChainID, chainID); err != nil {
 		return fmt.Errorf("reset chain id: %w", err)
+	}
+	for _, key := range filledKeys {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO blocks_meta(key, value) VALUES(?, '1')`, key); err != nil {
+			return fmt.Errorf("reset %s: %w", key, err)
+		}
 	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit reset: %w", err)

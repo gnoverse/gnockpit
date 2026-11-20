@@ -2,7 +2,6 @@ package blocks
 
 import (
 	"fmt"
-	"slices"
 	"time"
 
 	"github.com/gnoverse/gnockpit/node"
@@ -59,8 +58,7 @@ func newRecord(c node.Commit, set []Member) (Record, error) {
 		return Record{}, fmt.Errorf("height %d: %d precommits for a set of %d", c.Height, len(c.Precommits), len(set))
 	}
 	r := Record{Height: c.Height, Time: c.Time, Proposer: c.Proposer, Txs: c.NumTxs, ValsetHash: c.ValidatorsHash}
-	var votes []weightedTime
-	var total int64
+	var votes []node.WeightedTime
 	for i, pc := range c.Precommits {
 		member := set[i]
 		if pc == nil {
@@ -78,35 +76,13 @@ func newRecord(c node.Commit, set []Member) (Record, error) {
 		default:
 			r.Absences = append(r.Absences, Absence{Address: member.Address, Kind: OtherBlock})
 		}
-		votes = append(votes, weightedTime{address: member.Address, at: pc.Time, weight: member.Power})
-		total += member.Power
+		votes = append(votes, node.WeightedTime{Address: member.Address, At: pc.Time, Power: member.Power})
 	}
 	if len(votes) > 0 {
-		median := weightedMedian(votes, total)
+		median := node.MedianTime(votes)
 		for _, v := range votes {
-			r.Delays = append(r.Delays, Delay{Address: v.address, Ms: v.at.Sub(median).Milliseconds()})
+			r.Delays = append(r.Delays, Delay{Address: v.Address, Ms: v.At.Sub(median).Milliseconds()})
 		}
 	}
 	return r, nil
-}
-
-type weightedTime struct {
-	address string
-	at      time.Time
-	weight  int64
-}
-
-// weightedMedian is tm2's MedianTime over a commit: with the votes sorted by
-// time, the time at which their cumulative power reaches half the total.
-func weightedMedian(votes []weightedTime, total int64) time.Time {
-	sorted := slices.Clone(votes)
-	slices.SortStableFunc(sorted, func(a, b weightedTime) int { return a.at.Compare(b.at) })
-	median := total / 2
-	for _, v := range sorted {
-		if median <= v.weight {
-			return v.at
-		}
-		median -= v.weight
-	}
-	return sorted[len(sorted)-1].at
 }

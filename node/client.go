@@ -198,8 +198,6 @@ func (c *Client) GetNetInfo(ctx context.Context) ([]Peer, error) {
 			NodeInfo struct {
 				Moniker    string `json:"moniker"`
 				ID         string `json:"id"`
-				Version    string `json:"version"`
-				Software   string `json:"software"`
 				NetAddress string `json:"net_address"`
 			} `json:"node_info"`
 			RemoteIP string `json:"remote_ip"`
@@ -220,7 +218,6 @@ func (c *Client) GetNetInfo(ctx context.Context) ([]Peer, error) {
 			Moniker:         p.NodeInfo.Moniker,
 			RemoteIP:        p.RemoteIP,
 			NodeID:          nodeID,
-			Version:         p.NodeInfo.Version,
 			ExternalAddress: hostFromNetAddress(p.NodeInfo.NetAddress),
 		}
 	}
@@ -409,18 +406,29 @@ func (c *Client) GetSigningStats(ctx context.Context, currentHeight int, window 
 	// fails (nil), a validator down for the whole window looks never-eligible and
 	// won't be flagged that cycle — it recovers once the lookup succeeds.
 	var atStart map[string]bool
+	// powerOf weighs the newest commit's precommits for its median time (the
+	// others' is the next block's header time): the current set's power, or
+	// the start set's for a validator that left since.
+	powerOf := map[string]int64{}
 	if set, err := c.ValidatorSet(ctx, int64(startHeight)); err == nil {
 		atStart = make(map[string]bool, len(set))
 		for _, m := range set {
 			atStart[m.Address] = true
+			powerOf[m.Address] = m.Power
+		}
+	}
+	for _, v := range vals {
+		if p, err := strconv.ParseInt(v.VotingPower, 10, 64); err == nil {
+			powerOf[v.Address] = p
 		}
 	}
 
-	// Pass 1: fetch each commit, collecting the ordered per-block signer sets
+	// Pass 1: fetch each commit, collecting the ordered per-block votes
 	// (oldest first) and block metadata.
-	var signers []map[string]bool
-	var proposers []string
+	var blocks []windowBlock
 	var times []time.Time
+	var heights []int64
+	var votesOf [][]WeightedTime
 	for h := startHeight; h <= currentHeight; h++ {
 		commit, err := c.commit(ctx, int64(h))
 		if err != nil {
@@ -433,11 +441,21 @@ func (c *Client) GetSigningStats(ctx context.Context, currentHeight int, window 
 		}
 		// A precommit for the block or for nil signs it; an empty slot or a
 		// precommit for another block misses it, as in the block history.
-		signed := map[string]bool{}
+		wb := windowBlock{signed: map[string]bool{}, nilVotes: map[string]bool{}, otherBlock: map[string]bool{}, delays: map[string]int64{}}
+		var votes []WeightedTime
 		for _, pc := range commit.Precommits {
-			if pc != nil && (pc.BlockHash == "" || pc.BlockHash == commit.BlockHash) {
-				signed[pc.Address] = true
+			if pc == nil {
+				continue
 			}
+			switch pc.BlockHash {
+			case "":
+				wb.signed[pc.Address], wb.nilVotes[pc.Address] = true, true
+			case commit.BlockHash:
+				wb.signed[pc.Address] = true
+			default:
+				wb.otherBlock[pc.Address] = true
+			}
+			votes = append(votes, WeightedTime{Address: pc.Address, At: pc.Time, Power: powerOf[pc.Address]})
 		}
 		proposerName := commit.Proposer
 		if c.Names != nil {
@@ -449,23 +467,37 @@ func (c *Client) GetSigningStats(ctx context.Context, currentHeight int, window 
 			Height:   strconv.FormatInt(commit.Height, 10),
 			Time:     commit.Time.Format(time.RFC3339Nano),
 			Total:    blockTotal,
-			Signers:  len(signed),
+			Signers:  len(wb.signed),
 			Proposer: proposerName,
 			AppHash:  commit.AppHash,
 			NumTxs:   commit.NumTxs,
 		})
-		signers = append(signers, signed)
-		proposers = append(proposers, commit.Proposer)
+		blocks = append(blocks, wb)
 		times = append(times, commit.Time)
+		heights = append(heights, commit.Height)
+		votesOf = append(votesOf, votes)
+	}
+	// Each precommit's delay from its commit's median time: block h+1's header
+	// time, which tm2 sets to it, else the weighted median.
+	for i, votes := range votesOf {
+		var median time.Time
+		if i+1 < len(heights) && heights[i+1] == heights[i]+1 {
+			median = times[i+1]
+		} else {
+			median = MedianTime(votes)
+		}
+		for _, v := range votes {
+			blocks[i].delays[v.Address] = v.At.Sub(median).Milliseconds()
+		}
 	}
 
-	stats.ValidatorSigning = computeSigning(signers, atStart, valAddrs)
+	stats.ValidatorSigning = computeSigning(blocks, atStart, valAddrs)
 
 	// Pass 2: per-block missing set — count a validator only for blocks where it
 	// was in the set (From <= block index).
 	for i := range stats.RecentBlocks {
 		for addr := range valAddrs {
-			if stats.ValidatorSigning[addr].From <= i && !signers[i][addr] {
+			if stats.ValidatorSigning[addr].From <= i && !blocks[i].signed[addr] {
 				mv := MissingValidator{Address: addr}
 				if c.Names != nil {
 					if n := c.Names.Name(addr); n != addr {
@@ -477,8 +509,7 @@ func (c *Client) GetSigningStats(ctx context.Context, currentHeight int, window 
 		}
 	}
 
-	// Compute block times and per-proposer perf
-	stats.ValidatorPerf = make(map[string]*ValidatorPerf)
+	// Block times and their average across the window.
 	var totalBlockMs int64
 	var blockCount int
 	for i := 1; i < len(stats.RecentBlocks); i++ {
@@ -489,22 +520,9 @@ func (c *Client) GetSigningStats(ctx context.Context, currentHeight int, window 
 		stats.RecentBlocks[i].BlockMs = ms
 		totalBlockMs += int64(ms)
 		blockCount++
-		pAddr := proposers[i] // proposer_address from the block header
-		if _, ok := stats.ValidatorPerf[pAddr]; !ok {
-			stats.ValidatorPerf[pAddr] = &ValidatorPerf{}
-		}
-		stats.ValidatorPerf[pAddr].Proposed++
-		stats.ValidatorPerf[pAddr].AvgBlockMs += ms
 	}
-	// Finalize averages
 	if blockCount > 0 {
 		stats.AvgBlockMs = int(totalBlockMs / int64(blockCount))
-	}
-	for addr, perf := range stats.ValidatorPerf {
-		if perf.Proposed > 0 {
-			perf.AvgBlockMs = perf.AvgBlockMs / perf.Proposed
-		}
-		perf.Signed = stats.ValidatorSigning[addr].Signed
 	}
 
 	// ActiveCount / Margin / CanAddOne depend on the hysteretic up/down state and

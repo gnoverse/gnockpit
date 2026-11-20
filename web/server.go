@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"maps"
 	"net/http"
 	"slices"
 	"sort"
@@ -68,10 +69,16 @@ type Server struct {
 	Addr     string
 	Interval time.Duration
 
-	mu          sync.RWMutex
-	snapshot    *node.Snapshot
-	missed24h   map[string]int // val address -> blocks missed in last 24h (guarded by mu)
-	missedSince time.Time      // time of the oldest stored block; how far back missed counts reach (guarded by mu)
+	mu        sync.RWMutex
+	snapshot  *node.Snapshot
+	missed24h map[string]int // val address -> blocks missed in last 24h (guarded by mu)
+	// proposals24h is each validator's proposals in the last 24h, expected
+	// and missed (guarded by mu).
+	proposals24h map[string][2]int
+	missedSince  time.Time // time of the oldest stored block; how far back missed counts reach (guarded by mu)
+	// valopers is each operator's valopers profile, by operator address, as
+	// the last registry refresh read it (guarded by mu).
+	valopers map[string]node.Valoper
 
 	etaBlockTimes blockTimeCache // times of reached blocks asked for on /api/eta
 
@@ -227,27 +234,32 @@ func (s *Server) buildVotesReport(snap *node.Snapshot) *node.VotesReport {
 		report.Validators[i].VotingPower = vpByAddr[addr]
 		report.Validators[i].PubKey = pkByAddr[addr]
 	}
-	// Enrich with missed-block count + proposer speed from signing stats, and the
-	// down/inactive flag from the alert detector's hysteretic state.
+	// Enrich with the live window's signing (missed, its split, vote delay), and
+	// the down/inactive flag from the alert detector's hysteretic state.
 	if snap.Signing != nil {
 		for i := range report.Validators {
 			addr := report.Validators[i].Address
-			report.Validators[i].Missed100 = snap.Signing.ValidatorSigning[addr].Missed
-			report.Validators[i].Inactive = snap.Signing.Inactive[addr]
-			if perf, ok := snap.Signing.ValidatorPerf[addr]; ok {
-				report.Validators[i].AvgBlockMs = perf.AvgBlockMs
+			sig := snap.Signing.ValidatorSigning[addr]
+			report.Validators[i].Missed100 = sig.Missed
+			report.Validators[i].Nil100 = sig.Nil
+			report.Validators[i].OtherBlock100 = sig.OtherBlock
+			if sig.Votes > 0 {
+				report.Validators[i].VoteDelayMs = &sig.VoteDelayMs
 			}
+			report.Validators[i].Inactive = snap.Signing.Inactive[addr]
 		}
 	}
 	// Attach missed-24h counts and the recording-since timestamp from history.
 	s.mu.RLock()
 	missed := s.missed24h
+	proposals := s.proposals24h
 	since := s.missedSince
 	s.mu.RUnlock()
-	if missed != nil {
-		for i := range report.Validators {
-			report.Validators[i].Missed24h = missed[report.Validators[i].Address]
-		}
+	for i := range report.Validators {
+		addr := report.Validators[i].Address
+		report.Validators[i].Missed24h = missed[addr]
+		report.Validators[i].ExpectedProposals24h = proposals[addr][0]
+		report.Validators[i].MissedProposals24h = proposals[addr][1]
 	}
 	if !since.IsZero() {
 		report.MissedSince = since.UTC().Format(time.RFC3339)
@@ -718,8 +730,8 @@ func (s *Server) ensureValidatorNames(snap *node.Snapshot) {
 
 // --- Publish Loop ---
 
-// refreshMissed refreshes the cached missed-24h counts, and how far back they
-// reach, from the block history. Errors are logged and swallowed: the live
+// refreshMissed refreshes the cached missed-24h counts and proposals, and how
+// far back they reach, from the block history. Errors are logged and swallowed: the live
 // dashboard must keep working even if the history read fails.
 func (s *Server) refreshMissed(ctx context.Context) {
 	if s.Blocks == nil {
@@ -739,8 +751,13 @@ func (s *Server) refreshMissed(ctx context.Context) {
 	for addr, n := range rep.Missed {
 		missed[addr] = n[0]
 	}
+	proposals := make(map[string][2]int, len(rep.ProposalsExpected))
+	for addr, n := range rep.ProposalsExpected {
+		proposals[addr] = [2]int{n[0], rep.ProposalsMissed[addr][0]}
+	}
 	s.mu.Lock()
 	s.missed24h = missed
+	s.proposals24h = proposals
 	s.missedSince = earliest
 	s.mu.Unlock()
 }
@@ -784,20 +801,12 @@ func (s *Server) publishLoop(ctx context.Context) {
 	}
 }
 
-// valoperRefreshLoop refreshes validator names from the on-chain
+// valoperRefreshLoop refreshes the valopers profiles from the on-chain
 // r/gnops/valopers registry: once at startup, then on a slow timer. The
-// registry enumeration is one RPC per valoper, so it must never run in the
-// snapshot loop. Names land in the registry (non-overwriting / upgrading
-// unknown-val-N) and the next snapshot's ensureValidatorNames picks them up.
+// registry enumeration is a few RPCs per valoper, so it must never run in the
+// snapshot loop.
 func (s *Server) valoperRefreshLoop(ctx context.Context) {
-	refresh := func() {
-		names, err := s.Client.FetchValoperNames(ctx)
-		if err != nil {
-			log.Printf("valoper name refresh failed: %v", err)
-			return
-		}
-		s.Client.Names.SeedFromValopers(names)
-	}
+	refresh := func() { s.refreshValopers(ctx) }
 	refresh()
 
 	ticker := time.NewTicker(valoperRefreshInterval)
@@ -810,6 +819,57 @@ func (s *Server) valoperRefreshLoop(ctx context.Context) {
 			refresh()
 		}
 	}
+}
+
+// refreshValopers reads every valopers profile: it keeps them for the
+// validator page and seeds validator names from them (non-overwriting /
+// upgrading unknown-val-N; the next snapshot's ensureValidatorNames picks
+// them up). A profile whose state vm/qeval did not answer is kept without
+// it, and one the read missed keeps its last read; each logged once per
+// refresh.
+func (s *Server) refreshValopers(ctx context.Context) {
+	read, err := s.Client.FetchValopers(ctx)
+	if err != nil {
+		log.Printf("valoper refresh failed: %v", err)
+		return
+	}
+	vals := read.Profiles
+	byOperator := make(map[string]node.Valoper, len(vals)+len(read.Unread))
+	if len(read.Unread) > 0 {
+		s.mu.RLock()
+		last := s.valopers
+		s.mu.RUnlock()
+		unread := slices.Sorted(maps.Keys(read.Unread))
+		for _, op := range unread {
+			if p, ok := last[op]; ok {
+				byOperator[op] = p
+			}
+		}
+		log.Printf("valoper profile unread for %d of %d, the last read kept: %s",
+			len(unread), len(vals)+len(unread), read.Unread[unread[0]])
+	}
+	names := map[string]string{}
+	var noState int
+	var firstErr string
+	for _, v := range vals {
+		byOperator[v.Operator] = v
+		if v.SigningAddress != "" {
+			names[v.SigningAddress] = v.Moniker
+		}
+		if v.State == nil {
+			if noState == 0 {
+				firstErr = v.StateError
+			}
+			noState++
+		}
+	}
+	if noState > 0 {
+		log.Printf("valoper state unavailable for %d of %d: %s", noState, len(vals), firstErr)
+	}
+	s.mu.Lock()
+	s.valopers = byOperator
+	s.mu.Unlock()
+	s.Client.Names.SeedFromValopers(names)
 }
 
 // geoIPRefreshLoop keeps the IP-geolocation database current: it checks daily
@@ -1107,6 +1167,7 @@ func (s *Server) Run(ctx context.Context) error {
 	mux.HandleFunc("/api/stats", s.handleStats)
 	mux.HandleFunc("/api/eta", s.handleETA)
 	mux.HandleFunc("/api/history", s.handleHistory)
+	mux.HandleFunc("/api/validator", s.handleValidator)
 	mux.HandleFunc("/badge.svg", s.handleBadge)
 
 	srv := &http.Server{

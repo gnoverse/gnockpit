@@ -247,3 +247,47 @@ func TestHandleStatusAndBadge(t *testing.T) {
 		t.Error("badge should be green for operational")
 	}
 }
+
+func TestStatusValidatorFields(t *testing.T) {
+	s := &Server{Client: node.NewClient("http://localhost:1", time.Second), proposals24h: map[string][2]int{"g1a": {14, 1}}}
+	s.Client.Names = node.NewNameRegistryWithPersist(filepath.Join(t.TempDir(), "names.json"))
+	now := time.Date(2026, 7, 3, 12, 0, 0, 0, time.UTC)
+	snap := &node.Snapshot{
+		Status: &node.Status{SyncInfo: node.SyncInfo{LatestBlockHeight: "100", LatestBlockTime: now.Format(time.RFC3339Nano)}},
+		Consensus: &node.ConsensusState{Height: "100", Round: "0", Step: "1",
+			Votes: []node.VoteInfo{{Address: "g1a"}, {Address: "g1b"}}},
+		Validators: []node.Validator{{Address: "g1a", VotingPower: "1"}, {Address: "g1b", VotingPower: "1"}},
+		Signing: &node.SigningStats{WindowSize: 100, AvgBlockMs: 3500, ValidatorSigning: map[string]node.ValSigning{
+			"g1a": {Eligible: 100, Signed: 98, Missed: 2, Nil: 1, OtherBlock: 1, Votes: 99, VoteDelayMs: 210},
+			"g1b": {Eligible: 100},
+		}},
+	}
+	body, err := json.Marshal(s.buildStatusReport(snap, now))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var payload struct {
+		Validators []map[string]any `json:"validators"`
+	}
+	if err := json.Unmarshal(body, &payload); err != nil {
+		t.Fatal(err)
+	}
+	rows := map[string]map[string]any{}
+	for _, r := range payload.Validators {
+		rows[r["address"].(string)] = r
+	}
+	a, b := rows["g1a"], rows["g1b"]
+	for k, want := range map[string]any{"vote_delay_ms": 210.0, "nil_100": 1.0, "other_block_100": 1.0, "missed_100": 2.0, "missed_proposals_24h": 1.0, "expected_proposals_24h": 14.0} {
+		if a[k] != want {
+			t.Errorf("g1a %s = %v, want %v", k, a[k], want)
+		}
+	}
+	if v, ok := b["vote_delay_ms"]; !ok || v != nil {
+		t.Errorf("g1b vote_delay_ms = %v (present %v), want null: no precommit in the window", v, ok)
+	}
+	for _, r := range rows {
+		if _, ok := r["avg_block_ms"]; ok {
+			t.Errorf("%v has avg_block_ms, want it gone", r["address"])
+		}
+	}
+}

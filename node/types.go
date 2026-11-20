@@ -21,7 +21,6 @@ type NodeInfo struct {
 	Moniker    string `json:"moniker"`
 	Network    string `json:"network"`
 	ID         string `json:"id"`
-	Version    string `json:"version"`
 	NetAddress string `json:"net_address"`
 }
 
@@ -105,7 +104,6 @@ type Peer struct {
 	Moniker    string `json:"moniker"`
 	RemoteIP   string `json:"remote_ip"`
 	NodeID     string `json:"node_id"`
-	Version    string `json:"version,omitempty"`     // software version from net_info
 	P2PAddress string `json:"p2p_address,omitempty"` // nodeID@ip:port
 	// From net_info node_info (advertised identity).
 	ExternalAddress string `json:"external_address,omitempty"` // advertised host from node_info.net_address
@@ -196,8 +194,13 @@ type VoteInfo struct {
 	Precommit   bool   `json:"precommit"`
 	Missed100   int    `json:"missed_100"`         // blocks missed in the last 100 (only while in the set)
 	Inactive    bool   `json:"inactive,omitempty"` // missing-blocks alert firing (missed the streak threshold)
-	AvgBlockMs  int    `json:"avg_block_ms"`       // avg block time when proposing (ms)
 	Missed24h   int    `json:"missed_24h"`         // blocks missed in the last 24h (0 until history accrues)
+	Nil100      int    `json:"nil_100"`            // nil votes in the last 100 (signed)
+	// OtherBlock100 is votes for another block in the last 100, counted in Missed100.
+	OtherBlock100        int  `json:"other_block_100"`
+	VoteDelayMs          *int `json:"vote_delay_ms"`          // median delay of its precommits in the last 100; nil without one
+	MissedProposals24h   int  `json:"missed_proposals_24h"`   // proposals it missed in the last 24h
+	ExpectedProposals24h int  `json:"expected_proposals_24h"` // proposals it was expected to make in the last 24h
 }
 
 // PeerState from dump_consensus_state peer_state (base64-encoded).
@@ -231,26 +234,18 @@ type BlockInfo struct {
 	NumTxs   int                `json:"num_txs"` // transactions in this block
 }
 
-// ValidatorPerf tracks per-validator performance metrics.
-type ValidatorPerf struct {
-	AvgBlockMs int `json:"avg_block_ms"` // average block time when proposing
-	Proposed   int `json:"proposed"`     // blocks proposed in window
-	Signed     int `json:"signed"`       // blocks signed in window
-}
-
 // SigningStats summarizes validator signing activity over recent blocks.
 type SigningStats struct {
-	WindowSize       int                       `json:"window_size"`
-	ActiveCount      int                       `json:"active_count"`        // validators currently signing (not in the missed-in-a-row state)
-	TotalCount       int                       `json:"total_count"`         // validators in set
-	MaxMissedInARow  int                       `json:"max_missed_in_a_row"` // consecutive missed/signed blocks that flip a validator down/up
-	BFTThreshold     int                       `json:"bft_threshold"`       // minimum needed for consensus
-	Margin           int                       `json:"margin"`              // active - threshold (how many can go down)
-	CanAddOne        bool                      `json:"can_add_one"`         // safe to add a validator?
-	AvgBlockMs       int                       `json:"avg_block_ms"`        // average block time across window
-	RecentBlocks     []BlockInfo               `json:"recent_blocks"`
-	ValidatorSigning map[string]ValSigning     `json:"validator_signing"` // addr -> signing detail over the window
-	ValidatorPerf    map[string]*ValidatorPerf `json:"validator_perf"`    // addr -> perf stats
+	WindowSize       int                   `json:"window_size"`
+	ActiveCount      int                   `json:"active_count"`        // validators currently signing (not in the missed-in-a-row state)
+	TotalCount       int                   `json:"total_count"`         // validators in set
+	MaxMissedInARow  int                   `json:"max_missed_in_a_row"` // consecutive missed/signed blocks that flip a validator down/up
+	BFTThreshold     int                   `json:"bft_threshold"`       // minimum needed for consensus
+	Margin           int                   `json:"margin"`              // active - threshold (how many can go down)
+	CanAddOne        bool                  `json:"can_add_one"`         // safe to add a validator?
+	AvgBlockMs       int                   `json:"avg_block_ms"`        // average block time across window
+	RecentBlocks     []BlockInfo           `json:"recent_blocks"`
+	ValidatorSigning map[string]ValSigning `json:"validator_signing"` // addr -> signing detail over the window
 	// Inactive is the set of validator addresses currently flagged down (missed
 	// the streak). Derived from the alert detector and stored on the snapshot so
 	// consumers read it without touching the detector's single-goroutine state.

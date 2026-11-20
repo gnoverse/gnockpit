@@ -102,7 +102,15 @@ type StatusValidator struct {
 	Inactive    bool   `json:"inactive,omitempty"`
 	Missed100   int    `json:"missed_100"`
 	Missed24h   int    `json:"missed_24h"`
-	AvgBlockMs  int    `json:"avg_block_ms"`
+	// Nil100 and OtherBlock100 split the last 100: nil votes (signed) and votes
+	// for another block (counted in Missed100).
+	Nil100        int `json:"nil_100"`
+	OtherBlock100 int `json:"other_block_100"`
+	// VoteDelayMs is the median delay of its precommits in the last 100 from
+	// each commit's weighted median time; null without one.
+	VoteDelayMs          *int `json:"vote_delay_ms"`
+	MissedProposals24h   int  `json:"missed_proposals_24h"`
+	ExpectedProposals24h int  `json:"expected_proposals_24h"`
 }
 
 // StatusReport is the public /api/status payload: the retrocompat health summary
@@ -178,14 +186,18 @@ func (s *Server) buildStatusReport(snap *node.Snapshot, now time.Time) StatusRep
 		rep.Validators = make([]StatusValidator, 0, len(votes.Validators))
 		for _, vi := range votes.Validators {
 			sv := StatusValidator{
-				Name:        vi.Name,
-				Address:     vi.Address,
-				VotingPower: vi.VotingPower,
-				Inactive:    vi.Inactive,
-				Missed100:   vi.Missed100,
-				Missed24h:   vi.Missed24h,
-				AvgBlockMs:  vi.AvgBlockMs,
-				SPOF:        isSPOF(vpByAddr[vi.Address], totalVP),
+				Name:                 vi.Name,
+				Address:              vi.Address,
+				VotingPower:          vi.VotingPower,
+				Inactive:             vi.Inactive,
+				Missed100:            vi.Missed100,
+				Missed24h:            vi.Missed24h,
+				Nil100:               vi.Nil100,
+				OtherBlock100:        vi.OtherBlock100,
+				VoteDelayMs:          vi.VoteDelayMs,
+				MissedProposals24h:   vi.MissedProposals24h,
+				ExpectedProposals24h: vi.ExpectedProposals24h,
+				SPOF:                 isSPOF(vpByAddr[vi.Address], totalVP),
 			}
 			if p, ok := byAddr[vi.Address]; ok {
 				sv.nodeLocation = locationOf(p)

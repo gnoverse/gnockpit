@@ -272,9 +272,6 @@ func MergePeers(perSource [][]Peer, sourceNodeIDs map[string]bool) []Peer {
 			if m.Moniker == "" {
 				m.Moniker = p.Moniker
 			}
-			if m.Version == "" {
-				m.Version = p.Version
-			}
 			// Public-only, like RemoteIP: a private advertised host would leak
 			// internal topology and is useless for geo/provider or RPC probing.
 			if m.ExternalAddress == "" && IsPublicIP(p.ExternalAddress) {

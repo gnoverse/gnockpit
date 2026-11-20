@@ -90,6 +90,10 @@ func TestRefreshMissed(t *testing.T) {
 	if srv.missed24h[histValA] != 2 || srv.missed24h[histValB] != 0 {
 		t.Errorf("missed 24h = %v, want A 2, B 0", srv.missed24h)
 	}
+	// A proposed the 3 blocks, each at round 0.
+	if got := srv.proposals24h[histValA]; got != [2]int{3, 0} {
+		t.Errorf("A proposals 24h = %v, want 3 expected, 0 missed", got)
+	}
 	if srv.missedSince.IsZero() {
 		t.Error("missed since unset")
 	}
@@ -361,5 +365,23 @@ func TestHistoryRejectsABadChangesQuery(t *testing.T) {
 		if code, body := getHistory(t, srv, q); code != http.StatusBadRequest || body["error"] == nil {
 			t.Errorf("%s: got %d %v, want 400 with an error", q, code, body)
 		}
+	}
+}
+
+func TestRefreshMissedCountsMissedProposals(t *testing.T) {
+	// B was round 0's proposer; A proposed the block at round 1.
+	s := newBlocksStore(t)
+	late := histBlock(1, time.Now().Add(-time.Hour))
+	late.Round, late.Rounds = 1, []string{histValB, histValA}
+	if err := s.Write(context.Background(), []blocks.Record{late}); err != nil {
+		t.Fatal(err)
+	}
+	srv := &Server{Blocks: s}
+	srv.refreshMissed(context.Background())
+	if got := srv.proposals24h[histValB]; got != [2]int{1, 1} {
+		t.Errorf("B proposals 24h = %v, want 1 expected, 1 missed", got)
+	}
+	if got := srv.proposals24h[histValA]; got != [2]int{1, 0} {
+		t.Errorf("A proposals 24h = %v, want 1 expected, none missed", got)
 	}
 }

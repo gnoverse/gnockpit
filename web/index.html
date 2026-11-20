@@ -282,11 +282,47 @@
                 max-width: 350px;
                 white-space: pre-wrap;
                 overflow-wrap: anywhere;
-                z-index: 100;
+                z-index: 2000; /* above the modals, below the copy toast */
                 box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
             }
             .popover.visible {
                 display: block;
+            }
+            /* The rows form: a title, then label / value rows as wide as they
+               need, within the screen. */
+            .popover.rows {
+                white-space: normal;
+                max-width: calc(100vw - 16px);
+            }
+            .popover .t {
+                margin-bottom: 4px;
+            }
+            .popover table {
+                border-collapse: collapse;
+            }
+            .popover td {
+                padding: 1px 0;
+                vertical-align: middle;
+                white-space: nowrap;
+            }
+            .popover td.l {
+                color: var(--fg2);
+                padding-right: 14px;
+            }
+            .popover td.v {
+                text-align: right;
+                font-variant-numeric: tabular-nums;
+                white-space: normal;
+                overflow-wrap: anywhere;
+            }
+            .popover .sw,
+            .val-cap .sw {
+                display: inline-block;
+                width: 10px;
+                height: 10px;
+                border-radius: 2px;
+                margin-right: 6px;
+                vertical-align: -1px;
             }
             .info-btn {
                 color: var(--fg2);
@@ -546,6 +582,26 @@
                 color: var(--fg);
                 background: var(--bg);
             }
+            /* The Live / Timeline toggle sits centred in the validators
+               card's header on a wide screen. */
+            @media (min-width: 641px) {
+                #validators-card > .card-header-row {
+                    display: grid;
+                    grid-template-columns: 1fr auto 1fr;
+                }
+                #validators-card > .card-header-row > h2 {
+                    justify-self: start;
+                }
+                #validators-card
+                    > .card-header-row
+                    > #validators-compact-label {
+                    justify-self: end;
+                }
+            }
+            /* A validator's phone card: label beside value, two even columns. */
+            #validators-cards .peer-card-kv {
+                grid-template-columns: auto minmax(0, 1fr) auto minmax(0, 1fr);
+            }
             #validators-timeline {
                 display: none;
                 font-size: 13px;
@@ -763,25 +819,14 @@
                 flex-direction: column;
                 gap: 4px;
             }
+            /* The map's Country / Provider toggle: the validators card's
+               toggle, as wide as the list below it. */
             .map-list-toggle {
                 flex: 0 0 auto;
                 display: flex;
-                gap: 4px;
             }
             .map-list-toggle button {
                 flex: 1 1 0;
-                background: var(--bg);
-                border: 1px solid var(--border);
-                color: var(--fg2);
-                font-size: 11px;
-                padding: 3px 4px;
-                border-radius: 4px;
-                cursor: pointer;
-            }
-            .map-list-toggle button.active {
-                background: var(--bg2);
-                color: var(--fg);
-                border-color: var(--blue);
             }
             .map-country-list {
                 flex: 1 1 auto;
@@ -1481,13 +1526,230 @@
                 font-size: 1rem;
                 font-weight: 600;
             }
-            .eta-modal-head button {
+            .eta-modal-head button:not(.hdr-btn) {
                 background: none;
                 border: none;
                 cursor: pointer;
                 font-size: 1.4em;
                 line-height: 1;
                 color: inherit;
+            }
+            /* ---- Validator page: the ETA planner's modal, wider, full
+               screen on a phone. Every section has the same 12 px left inset,
+               so the charts' day axes line up. */
+            #val-page {
+                width: min(1100px, 94vw);
+                max-height: 90vh;
+            }
+            @media (max-width: 640px) {
+                #val-page {
+                    width: 100vw;
+                    height: 100%;
+                    max-height: none;
+                    border: 0;
+                    border-radius: 0;
+                    padding: 16px;
+                }
+            }
+            #val-page .eta-modal-head {
+                align-items: flex-start;
+                gap: 10px;
+                margin-bottom: 6px;
+            }
+            .val-acts {
+                display: flex;
+                align-items: center;
+                gap: 8px;
+                flex-shrink: 0;
+            }
+            .val-link {
+                color: inherit;
+                text-decoration: none;
+            }
+            .val-link:hover {
+                text-decoration: underline;
+            }
+            .val-msg {
+                color: var(--fg2);
+            }
+            .val-status {
+                color: var(--fg2);
+                display: flex;
+                flex-wrap: wrap;
+                gap: 4px 14px;
+            }
+            .val-status .dot {
+                margin-right: 4px;
+            }
+            .val-status .dot.out {
+                background: var(--fg2);
+            }
+            .val-sec {
+                margin-top: 16px;
+                padding-left: 12px;
+            }
+            .val-sec h3 {
+                color: var(--blue);
+                font-size: 14px;
+                margin: 0 0 8px;
+                text-transform: uppercase;
+                letter-spacing: 1px;
+                display: flex;
+                align-items: center;
+                gap: 2px;
+            }
+            .val-sec h3 .info-btn,
+            .val-glabel .info-btn {
+                text-transform: none;
+                letter-spacing: 0;
+                font-weight: normal;
+            }
+            /* The scored group: one label and one continuous blue line down
+               its left side, around the sections the ranking scores. */
+            .val-scored {
+                margin-top: 16px;
+                padding: 2px 0 2px 12px;
+                box-shadow: inset 3px 0 0 var(--blue);
+            }
+            .val-glabel {
+                font-size: 11px;
+                text-transform: uppercase;
+                letter-spacing: 0.5px;
+                color: var(--blue);
+            }
+            .val-scored .val-sec {
+                padding-left: 0;
+            }
+            .val-glabel + .val-sec {
+                margin-top: 8px;
+            }
+            .kv .v.val-text {
+                word-break: normal;
+                overflow-wrap: break-word;
+            }
+            /* A profile's markdown: paragraphs, headings and lists spaced as
+               blocks, in the page's own sizes. */
+            .val-text p,
+            .val-text ul,
+            .val-text ol {
+                margin: 0 0 6px;
+            }
+            .val-text ul,
+            .val-text ol {
+                padding-left: 18px;
+            }
+            .val-text .val-md-h {
+                font-weight: 600;
+                margin: 10px 0 4px;
+            }
+            .val-text a {
+                color: var(--blue);
+                text-decoration: none;
+            }
+            .val-text a:hover {
+                text-decoration: underline;
+            }
+            .val-text code {
+                font: inherit;
+                background: var(--bg);
+                padding: 0 3px;
+                border-radius: 3px;
+            }
+            /* Stats lines: per window, its name small, then label / bold
+               value pairs; a divider between windows. */
+            .val-stats {
+                display: flex;
+                flex-wrap: wrap;
+                gap: 6px 0;
+                margin-bottom: 8px;
+                align-items: baseline;
+            }
+            .val-win {
+                display: inline-flex;
+                flex-wrap: wrap;
+                align-items: baseline;
+                gap: 4px 22px;
+                padding: 0 20px;
+                border-left: 1px solid var(--border);
+            }
+            .val-win:first-child {
+                padding-left: 0;
+                border-left: 0;
+            }
+            .val-win > .w {
+                color: var(--fg2);
+                font-size: 11px;
+                text-transform: uppercase;
+                letter-spacing: 0.5px;
+                margin-right: -8px;
+            }
+            .val-stats .l {
+                color: var(--fg2);
+                margin-right: 6px;
+            }
+            .val-stats b {
+                color: var(--fg);
+                font-variant-numeric: tabular-nums;
+            }
+            .val-stats b.ok {
+                color: var(--green);
+            }
+            .val-stats b.warn {
+                color: var(--yellow);
+            }
+            .val-stats b.err {
+                color: var(--red);
+            }
+            /* Charts: day axes scroll sideways, calendars on a phone; each
+               legend says what one bar is, then its swatches as one block. */
+            .val-axis,
+            .val-cal-scroll {
+                overflow-x: auto;
+            }
+            .val-axis svg,
+            .val-cal svg {
+                display: block;
+            }
+            .val-cal {
+                display: flex;
+            }
+            .val-cal > svg {
+                flex-shrink: 0;
+            }
+            .val-cap {
+                color: var(--fg2);
+                font-size: 11px;
+                margin-top: 6px;
+                display: flex;
+                flex-wrap: wrap;
+                gap: 4px 18px;
+                align-items: center;
+            }
+            .val-cap .unit {
+                color: var(--fg);
+            }
+            .val-cap .keys {
+                display: inline-flex;
+                flex-wrap: wrap;
+                gap: 4px 14px;
+            }
+            .val-cap .sw.round {
+                width: 6px;
+                height: 6px;
+                border-radius: 50%;
+                margin: 0 6px 1px 2px;
+            }
+            .val-cap .sw.line {
+                width: 14px;
+                height: 2px;
+                border-radius: 0;
+                vertical-align: 3px;
+            }
+            .vt-out {
+                color: var(--red);
+            }
+            .vt-rec {
+                color: var(--green);
             }
             .eta-field {
                 margin-bottom: 12px;
@@ -1620,7 +1882,7 @@
                 <button
                     id="eta-btn"
                     class="hdr-btn"
-                    title="When will a block be produced, or which block at a given time"
+                    data-popover="When will a block be produced, or which block at a given time"
                     aria-label="Block ETA"
                     onclick="openEtaModal()"
                 >
@@ -1750,7 +2012,7 @@
                         <span class="eta-remind-wrap" hidden>
                             <button
                                 class="eta-remind"
-                                title="Notify this device before this height"
+                                data-popover="Notify this device before this height"
                                 aria-haspopup="dialog"
                                 aria-expanded="false"
                             >
@@ -1817,14 +2079,14 @@
                         </span>
                         <button
                             class="eta-copy"
-                            title="Copy the link to this countdown"
+                            data-popover="Copy the link to this countdown"
                             aria-label="Copy the link to this countdown"
                         >
                             ⧉ link
                         </button>
                         <button
                             class="eta-close"
-                            title="Remove this countdown"
+                            data-popover="Remove this countdown"
                             aria-label="Remove this countdown"
                         >
                             ✕
@@ -1957,17 +2219,21 @@
                         <div class="map-list-col">
                             <div class="map-list-inner">
                                 <div
-                                    class="map-list-toggle"
+                                    class="view-seg map-list-toggle"
                                     id="map-list-toggle"
                                 >
                                     <button
                                         type="button"
                                         data-mode="country"
-                                        class="active"
+                                        aria-pressed="true"
                                     >
                                         Country
                                     </button>
-                                    <button type="button" data-mode="provider">
+                                    <button
+                                        type="button"
+                                        data-mode="provider"
+                                        aria-pressed="false"
+                                    >
                                         Provider
                                     </button>
                                 </div>
@@ -2046,15 +2312,16 @@
                     <div class="table-wrap">
                         <table>
                             <colgroup>
-                                <col style="width: 14%" />
-                                <col style="width: 18%" />
+                                <col style="width: 13%" />
+                                <col style="width: 13%" />
+                                <col style="width: 9%" />
+                                <col style="width: 13%" />
+                                <col style="width: 8%" />
+                                <col style="width: 6%" />
                                 <col style="width: 10%" />
-                                <col style="width: 14%" />
                                 <col style="width: 9%" />
-                                <col style="width: 7%" />
-                                <col style="width: 10%" />
-                                <col style="width: 9%" />
-                                <col style="width: 9%" />
+                                <col style="width: 8%" />
+                                <col style="width: 11%" />
                             </colgroup>
                             <thead>
                                 <tr>
@@ -2119,18 +2386,26 @@
                                         Missed 24h
                                     </th>
                                     <th
-                                        data-sort="speed"
+                                        data-sort="delay"
                                         style="cursor: pointer"
                                         class="info-btn"
-                                        data-popover="Avg block time when this validator proposes, over last 100 blocks (lower=faster, ~3s expected)"
+                                        data-popover="Median delay of its precommits from each commit's voting-power-weighted median time, over the last 100 blocks; negative is early. Not scored."
                                     >
-                                        Speed
+                                        Vote delay
+                                    </th>
+                                    <th
+                                        data-sort="props"
+                                        style="cursor: pointer"
+                                        class="info-btn"
+                                        data-popover="Proposals it missed in the last 24 h, of those it was expected to make: the rounds it was the proposer of until the block was made. Not scored: the ranking scores missed proposals over 30 days (10 %)."
+                                    >
+                                        Missed props 24h
                                     </th>
                                 </tr>
                             </thead>
                             <tbody id="validators-body">
                                 <tr>
-                                    <td colspan="9">loading...</td>
+                                    <td colspan="10">loading...</td>
                                 </tr>
                             </tbody>
                         </table>
@@ -2290,7 +2565,7 @@
             var _copyToast = null
             var _copyToastTimer = 0
             function copyNotify(text, e) {
-                if (!text || text === '-') return
+                if (!text || text === '-' || text === '—') return
                 navigator.clipboard.writeText(text)
                 if (!_copyToast) {
                     _copyToast = document.createElement('div')
@@ -2376,7 +2651,7 @@
                 if (!b64val || b64val === '-') {
                     el.textContent = '-'
                     el.className = 'v'
-                    el.title = ''
+                    el.removeAttribute('data-pop-rows')
                     el.removeAttribute('data-copy')
                     return
                 }
@@ -2392,7 +2667,10 @@
                 el.appendChild(num)
                 el.setAttribute('data-copy', hex)
                 el.className = 'v hash ok'
-                el.title = 'base64: ' + b64val
+                popRows(el, '', [
+                    [null, 'hex', hex],
+                    [null, 'base64', b64val],
+                ])
             }
 
             function mkEl(tag, text, cls, attrs) {
@@ -2449,17 +2727,10 @@
                                 )
                             )
                     }
-                    if (cellDef.popover) {
-                        if (cellDef.popoverSelf) {
-                            // Popover on the cell itself (no trailing icon), so a
-                            // full-width value can ellipsis cleanly while staying
-                            // hoverable for the full text.
-                            td.setAttribute('data-popover', cellDef.popover)
-                        } else {
-                            var btn = mkEl('span', ' \u24d8', 'info-btn')
-                            btn.setAttribute('data-popover', cellDef.popover)
-                            td.appendChild(btn)
-                        }
+                    if (cellDef.rows) {
+                        var btn = mkEl('span', ' \u24d8', 'info-btn')
+                        popRows(btn, '', cellDef.rows)
+                        td.appendChild(btn)
                     }
                 } else {
                     td.textContent = cellDef
@@ -2479,7 +2750,8 @@
                 }
                 td.setAttribute('data-cc', code)
                 td.setAttribute('data-copy', countryName(code))
-                td.title = countryName(code)
+                td.setAttribute('data-popover', countryName(code))
+                td.classList.add('tap-popover')
                 var inner = mkEl('span', null, 'cc-inner')
                 inner.appendChild(mkEl('span', countryFlag(code), 'cc-flag'))
                 inner.appendChild(mkEl('span', countryName(code), 'cc-name'))
@@ -2497,7 +2769,7 @@
             }
 
             // providerCell builds a cell showing the guessed cloud provider with
-            // an info icon whose tooltip reveals the IP it was guessed from.
+            // an info icon whose popover reveals the IP it was guessed from.
             function providerCell(provider, ip) {
                 if (!provider && !ip) {
                     var empty = document.createElement('td')
@@ -2507,7 +2779,7 @@
                 var td = createCell({
                     text: provider || 'unknown',
                     style: 'font-size:11px;color:var(--fg2)',
-                    popover: ip ? 'Guessed from IP: ' + ip : undefined,
+                    rows: ip ? [[null, 'guessed from IP', ip]] : undefined,
                     copy: provider || ip,
                 })
                 if (provider) td.setAttribute('data-prov', provider)
@@ -2521,21 +2793,95 @@
                 return tr
             }
 
-            /* Popover: hover on desktop, click/touch on mobile */
+            /* Popover: hover on desktop, click/touch on mobile. One popover,
+               two forms: text (data-popover) and rows (data-pop-rows, set by
+               popRows). */
             var hasHover = window.matchMedia('(hover: hover)').matches
+            var POP_TARGETS = '.info-btn, [data-popover], [data-pop-rows]'
+            var TAP_TARGETS = '.info-btn, .tap-popover, [data-pop-rows]'
 
-            function showPopover(btn) {
+            // keepFocusIn keeps Tab and Shift+Tab inside a dialog: the focus
+            // wraps from its last control to its first and back, and comes
+            // back to it from wherever it went.
+            function keepFocusIn(dialog, e) {
+                var f = Array.from(
+                    dialog.querySelectorAll(
+                        'a[href], button:not(:disabled), input'
+                    )
+                )
+                if (!f.length) return
+                var first = f[0]
+                var last = f[f.length - 1]
+                var at = document.activeElement
+                if (!dialog.contains(at)) {
+                    ;(e.shiftKey ? last : first).focus()
+                    e.preventDefault()
+                } else if (e.shiftKey && at === first) {
+                    last.focus()
+                    e.preventDefault()
+                } else if (!e.shiftKey && at === last) {
+                    first.focus()
+                    e.preventDefault()
+                }
+            }
+
+            // popRows gives el the rows form: an optional title, then rows of
+            // [swatch colour or null, label, value].
+            function popRows(el, title, rows) {
+                el.removeAttribute('data-popover')
+                el.setAttribute(
+                    'data-pop-rows',
+                    JSON.stringify({ t: title || '', r: rows })
+                )
+            }
+
+            // fillPopover renders el's popover into pop as DOM text nodes.
+            function fillPopover(pop, el) {
+                clearChildren(pop)
+                var rows = el.getAttribute('data-pop-rows')
+                pop.classList.toggle('rows', !!rows)
+                if (!rows) {
+                    pop.textContent = el.getAttribute('data-popover')
+                    return
+                }
+                var d = JSON.parse(rows)
+                if (d.t) pop.appendChild(mkEl('div', d.t, 't'))
+                var table = document.createElement('table')
+                d.r.forEach(function (r) {
+                    var tr = document.createElement('tr')
+                    var label = mkEl('td', null, 'l')
+                    if (r[0]) {
+                        var sw = mkEl('span', null, 'sw')
+                        sw.style.background = r[0]
+                        label.appendChild(sw)
+                    }
+                    label.appendChild(document.createTextNode(r[1]))
+                    tr.appendChild(label)
+                    tr.appendChild(mkEl('td', r[2], 'v'))
+                    table.appendChild(tr)
+                })
+                pop.appendChild(table)
+            }
+
+            // showPopover opens el's popover below it, or above it when there
+            // is no room below, kept within the screen's width.
+            function showPopover(el) {
                 var pop = $('popover')
-                pop.textContent = btn.getAttribute('data-popover')
-                var rect = btn.getBoundingClientRect()
-                pop.style.top = rect.bottom + window.scrollY + 4 + 'px'
-                pop.style.left =
-                    Math.min(
-                        rect.left + window.scrollX,
-                        window.innerWidth - 370
-                    ) + 'px'
+                fillPopover(pop, el)
+                // Measured from the page's corner, not where the last one sat.
+                pop.style.top = pop.style.left = '0px'
                 pop.classList.add('visible')
-                activePopover = btn
+                var rect = el.getBoundingClientRect()
+                var top = rect.bottom + 4
+                if (top + pop.offsetHeight > window.innerHeight)
+                    top = Math.max(4, rect.top - 4 - pop.offsetHeight)
+                var left = Math.max(
+                    4,
+                    Math.min(rect.left, window.innerWidth - pop.offsetWidth - 8)
+                )
+                pop.style.top = top + window.scrollY + 'px'
+                pop.style.left = left + window.scrollX + 'px'
+                activePopover = el
             }
             function hidePopover() {
                 $('popover').classList.remove('visible')
@@ -2546,23 +2892,30 @@
                 'mouseenter',
                 function (e) {
                     if (!hasHover || !(e.target instanceof Element)) return
-                    var btn = e.target.closest('.info-btn, [data-popover]')
+                    var btn = e.target.closest(POP_TARGETS)
                     if (btn) showPopover(btn)
                 },
                 true
             )
+            // Moving between a target's own children keeps its popover open.
             document.addEventListener(
                 'mouseleave',
                 function (e) {
                     if (!hasHover || !(e.target instanceof Element)) return
-                    var btn = e.target.closest('.info-btn, [data-popover]')
-                    if (btn) hidePopover()
+                    var btn = e.target.closest(POP_TARGETS)
+                    if (!btn) return
+                    if (
+                        e.relatedTarget instanceof Node &&
+                        btn.contains(e.relatedTarget)
+                    )
+                        return
+                    hidePopover()
                 },
                 true
             )
             document.addEventListener('click', function (e) {
                 if (!(e.target instanceof Element)) return
-                var btn = e.target.closest('.info-btn')
+                var btn = e.target.closest(TAP_TARGETS)
                 if (btn) {
                     if (hasHover) return
                     if (activePopover === btn) {
@@ -2668,9 +3021,113 @@
                 )
             }
 
+            // valLink links the page of the validator with address (a plain
+            // click opens it in a modal: see the validator page section).
+            // content is its name, as text or a node.
+            function valLink(address, content) {
+                var a = document.createElement('a')
+                a.className = 'val-link'
+                a.href = '?val=' + encodeURIComponent(address)
+                if (typeof content === 'string') a.textContent = content
+                else a.appendChild(content)
+                return a
+            }
+
+            // timeAgo writes how long ago an RFC 3339 time was, roughly.
+            function timeAgo(iso) {
+                var m = Math.round((Date.now() - Date.parse(iso)) / 60000)
+                if (m < 1) return 'just now'
+                if (m < 60) return m + ' min ago'
+                var h = Math.round(m / 60)
+                if (h < 48) return h + ' h ago'
+                return Math.round(h / 24) + ' d ago'
+            }
+
+            // utcMinute writes an RFC 3339 UTC time to the minute.
+            function utcMinute(iso) {
+                return iso.slice(0, 16).replace('T', ' ') + ' UTC'
+            }
+
+            // scoreBand classes a scored value by where it lands on the
+            // scoring map: ok where the sub-score is full, warn partial, err
+            // zero.
+            var scoreBand = {
+                uptime: function (pct) {
+                    return pct >= 99.9 ? 'ok' : pct > 95 ? 'warn' : 'err'
+                },
+                outages: function (n) {
+                    return n === 0 ? 'ok' : n < 10 ? 'warn' : 'err'
+                },
+                proposals: function (pct) {
+                    return pct === 0 ? 'ok' : pct < 5 ? 'warn' : 'err'
+                },
+                recovery: function (ms) {
+                    return ms <= 600000 ? 'ok' : ms < 86400000 ? 'warn' : 'err'
+                },
+            }
+
+            // voteDelayText writes a vote delay in seconds, signed: negative
+            // is early; one that rounds to zero has no sign.
+            function voteDelayText(ms) {
+                var s = (Math.abs(ms) / 1000).toFixed(2)
+                if (s === '0.00') return s + ' s'
+                return (ms < 0 ? '−' : '+') + s + ' s'
+            }
+
+            // voteDelayClass colours a vote delay by the vote-delay chart's
+            // ranges: within 1 s ok, to 2.5 s warn, beyond err.
+            function voteDelayClass(ms) {
+                var a = Math.abs(ms)
+                return a <= 1000 ? 'ok' : a <= 2500 ? 'warn' : 'err'
+            }
+
+            // voteDelayNode renders a validator's live vote delay, coloured;
+            // "-" when the window holds none of its precommits.
+            function voteDelayNode(ms) {
+                if (typeof ms !== 'number') return document.createTextNode('-')
+                return mkEl('span', voteDelayText(ms), voteDelayClass(ms))
+            }
+
+            // proposalsNode renders missed / expected proposals, the missed
+            // count coloured by the proposals band when any were expected.
+            function proposalsNode(missed, expected) {
+                missed = missed || 0
+                expected = expected || 0
+                var node = mkEl('span')
+                node.appendChild(
+                    mkEl(
+                        'span',
+                        String(missed),
+                        expected
+                            ? scoreBand.proposals((missed / expected) * 100)
+                            : null
+                    )
+                )
+                node.appendChild(document.createTextNode(' / ' + expected))
+                return node
+            }
+
+            // missedSplitRows splits a validator's misses over the last 100
+            // blocks into absent and other block, with its nil votes, which
+            // count as signed.
+            function missedSplitRows(v) {
+                var other = v.other_block_100 || 0
+                return [
+                    [null, 'missed', String(v.missed_100)],
+                    [null, 'absent', String(v.missed_100 - other)],
+                    [null, 'other block', String(other)],
+                    [
+                        null,
+                        'nil votes',
+                        (v.nil_100 || 0) + ' (counted as signed)',
+                    ],
+                ]
+            }
+
             // midTruncCell builds a peers/validators cell that shows the full text
             // when the column is wide enough and truncates in the middle
-            // (start…end) when it isn't. opts: popover, copy, highlight.
+            // (start…end) when it isn't. opts: rows (its popover), copy,
+            // highlight.
             function midTruncCell(text, opts) {
                 opts = opts || {}
                 text = text || ''
@@ -2687,7 +3144,7 @@
                     wrap.appendChild(mkEl('span', text, 'mt-start'))
                 }
                 td.appendChild(wrap)
-                if (opts.popover) td.setAttribute('data-popover', opts.popover)
+                if (opts.rows) popRows(td, '', opts.rows)
                 if (opts.copy) td.setAttribute('data-copy', opts.copy)
                 if (opts.highlight)
                     td.setAttribute('data-highlight', opts.highlight)
@@ -2764,16 +3221,17 @@
                     td.className = 'full-role'
                     return td
                 }
-                var details = [
-                    'peers: ' + (p.n_peers || 0),
-                    'height: ' +
+                var rows = [
+                    [null, 'peers', String(p.n_peers || 0)],
+                    [
+                        null,
+                        'height',
                         (p.height || '?') +
-                        (p.catching_up ? ' (syncing)' : ' (synced)'),
-                    p.version ? 'version: ' + p.version : '',
-                ].filter(Boolean)
-                var info = p.rpc_url + '\n' + details.join(' · ')
+                            (p.catching_up ? ' (syncing)' : ' (synced)'),
+                    ],
+                ]
                 var ok = mkEl('span', '✓', 'ok info-btn')
-                ok.setAttribute('data-popover', info)
+                popRows(ok, p.rpc_url, rows)
                 ok.setAttribute('data-open-url', p.rpc_url)
                 ok.style.cursor = 'pointer'
                 td.appendChild(ok)
@@ -2867,7 +3325,10 @@
                             : propName
                     var propSpan = mkEl('span', propDisplay, 'node-ref')
                     propSpan.setAttribute('data-highlight', propName)
-                    if (propDisplay !== propName) propSpan.title = propName
+                    if (propDisplay !== propName) {
+                        propSpan.setAttribute('data-popover', propName)
+                        propSpan.classList.add('tap-popover')
+                    }
                     propEl.appendChild(propSpan)
                     propEl.className = 'v'
 
@@ -2989,17 +3450,24 @@
                                 typeof b.missed_100 === 'number'
                                     ? b.missed_100
                                     : -1
-                        } else if (valSortKey === 'speed') {
+                        } else if (valSortKey === 'delay') {
                             va =
-                                typeof a.avg_block_ms === 'number' &&
-                                a.avg_block_ms > 0
-                                    ? a.avg_block_ms
-                                    : 99999
+                                typeof a.vote_delay_ms === 'number'
+                                    ? a.vote_delay_ms
+                                    : null
                             vb =
-                                typeof b.avg_block_ms === 'number' &&
-                                b.avg_block_ms > 0
-                                    ? b.avg_block_ms
-                                    : 99999
+                                typeof b.vote_delay_ms === 'number'
+                                    ? b.vote_delay_ms
+                                    : null
+                        } else if (valSortKey === 'props') {
+                            va = a.expected_proposals_24h
+                                ? a.missed_proposals_24h /
+                                  a.expected_proposals_24h
+                                : null
+                            vb = b.expected_proposals_24h
+                                ? b.missed_proposals_24h /
+                                  b.expected_proposals_24h
+                                : null
                         } else if (valSortKey === 'missed24h') {
                             va =
                                 typeof a.missed_24h === 'number'
@@ -3076,6 +3544,9 @@
                             va = (a.name || '').replace(' (us)', '')
                             vb = (b.name || '').replace(' (us)', '')
                         }
+                        // A missing value sorts last, either way.
+                        if (va === null || vb === null)
+                            return va === vb ? 0 : va === null ? 1 : -1
                         if (va < vb) return valSortAsc ? -1 : 1
                         if (va > vb) return valSortAsc ? 1 : -1
                         return 0
@@ -3109,8 +3580,11 @@
                             cleanName.length > 20
                                 ? shortAddr(cleanName)
                                 : cleanName
-                        nameTd.appendChild(document.createTextNode(displayName))
-                        if (displayName !== cleanName) nameTd.title = cleanName
+                        nameTd.appendChild(valLink(v.address, displayName))
+                        if (displayName !== cleanName) {
+                            nameTd.setAttribute('data-popover', cleanName)
+                            nameTd.classList.add('tap-popover')
+                        }
                         if (isUs)
                             nameTd.appendChild(
                                 mkEl('span', ' (source)', 'source-tag')
@@ -3123,10 +3597,11 @@
                             : v.address
                         tr.appendChild(
                             midTruncCell(v.address, {
-                                popover:
-                                    'address: ' +
-                                    v.address +
-                                    (v.pub_key ? '\npubkey: ' + v.pub_key : ''),
+                                rows: [[null, 'address', v.address]].concat(
+                                    v.pub_key
+                                        ? [[null, 'pubkey', v.pub_key]]
+                                        : []
+                                ),
                                 copy: addrCopy,
                                 highlight: cleanName,
                             })
@@ -3190,6 +3665,11 @@
                                 : missed100 > 0
                                   ? 'warn'
                                   : 'ok'
+                            popRows(
+                                missed100Td,
+                                'last 100 blocks',
+                                missedSplitRows(v)
+                            )
                         } else {
                             missed100Td.textContent = '-'
                         }
@@ -3213,61 +3693,32 @@
                         } else {
                             missedTd.textContent = '-'
                         }
-                        if (votesMissedSince)
-                            missedTd.title =
+                        if (votesMissedSince) {
+                            missedTd.setAttribute(
+                                'data-popover',
                                 'missed in last 24h · history since ' +
-                                votesMissedSince
+                                    votesMissedSince
+                            )
+                            missedTd.classList.add('tap-popover')
+                        }
                         tr.appendChild(missedTd)
 
-                        // Speed (avg block time when proposing) — ranked with emojis
-                        var speedTd = document.createElement('td')
-                        var avgMs = v.avg_block_ms
-                        if (typeof avgMs === 'number' && avgMs > 0) {
-                            var secs = (avgMs / 1000).toFixed(1)
-                            speedTd.textContent = secs + 's'
-                            speedTd.className =
-                                avgMs <= 3600
-                                    ? 'ok'
-                                    : avgMs <= 6000
-                                      ? 'warn'
-                                      : 'err'
-                            speedTd._avgMs = avgMs // store for ranking pass
-                        } else {
-                            speedTd.textContent = '-'
-                        }
-                        tr.appendChild(speedTd)
-                        tr._speedTd = speedTd // reference for ranking
+                        // Vote delay over the live window
+                        var delayTd = document.createElement('td')
+                        delayTd.appendChild(voteDelayNode(v.vote_delay_ms))
+                        tr.appendChild(delayTd)
+
+                        // Missed proposals over the last 24h
+                        var propsTd = document.createElement('td')
+                        propsTd.appendChild(
+                            proposalsNode(
+                                v.missed_proposals_24h,
+                                v.expected_proposals_24h
+                            )
+                        )
+                        tr.appendChild(propsTd)
 
                         tbody.appendChild(tr)
-                    }
-                    // Speed ranking — add emojis
-                    var speedCells = []
-                    for (var r = 0; r < tbody.rows.length; r++) {
-                        var row = tbody.rows[r]
-                        if (row._speedTd && row._speedTd._avgMs)
-                            speedCells.push({
-                                td: row._speedTd,
-                                ms: row._speedTd._avgMs,
-                            })
-                    }
-                    speedCells.sort(function (a, b) {
-                        return a.ms - b.ms
-                    })
-                    var medals = [
-                        '\ud83e\udd47',
-                        '\ud83e\udd48',
-                        '\ud83e\udd49',
-                    ] // gold, silver, bronze
-                    for (var si = 0; si < speedCells.length; si++) {
-                        var emoji =
-                            si < 3
-                                ? medals[si]
-                                : si >= speedCells.length - 1
-                                  ? '\ud83d\udc0c'
-                                  : '' // snail for slowest
-                        if (emoji)
-                            speedCells[si].td.textContent =
-                                speedCells[si].td.textContent + ' ' + emoji
                     }
                 }
 
@@ -3352,14 +3803,11 @@
                         var pIP = p.external_address || p.remote_ip || ''
                         var pIPPop = p.remote_ip || pIP
                         var pNodeID = p.node_id || ''
-                        var nodeIdParts = []
+                        var pNodeIDRows = []
                         if (p.val_address)
-                            nodeIdParts.push('address: ' + p.val_address)
+                            pNodeIDRows.push([null, 'address', p.val_address])
                         if (p.val_pubkey)
-                            nodeIdParts.push('pubkey: ' + p.val_pubkey)
-                        var pNodeIDPop = nodeIdParts.length
-                            ? nodeIdParts.join('\n')
-                            : undefined
+                            pNodeIDRows.push([null, 'pubkey', p.val_pubkey])
 
                         var tr2 = document.createElement('tr')
                         var pNameCell = createCell({
@@ -3375,7 +3823,9 @@
                         tr2.appendChild(
                             pNodeID
                                 ? midTruncCell(pNodeID, {
-                                      popover: pNodeIDPop,
+                                      rows: pNodeIDRows.length
+                                          ? pNodeIDRows
+                                          : undefined,
                                       copy: pNodeID,
                                       highlight: hlKey,
                                   })
@@ -3435,9 +3885,11 @@
                     clearChildren(peerContainer)
 
                     function makeCard(data) {
-                        // data: { name, isUs, dotClass, healthText, healthCls, address, ip,
-                        //         consensus, missed100, missed100Cls, speed, speedCls,
-                        //         rpcUrl, rpcText, rpcCls }
+                        // data: { name, valAddress (a validator's: its name links
+                        //         its page), isUs, dotClass, healthText, healthCls,
+                        //         address, ip, consensus, missed100, missed100Cls,
+                        //         missedSplit, delay, props (nodes), rpcUrl,
+                        //         rpcText, rpcCls }
                         var card = document.createElement('div')
                         card.className =
                             'peer-card ' + (data.rpcUrl ? 'has-rpc' : 'no-rpc')
@@ -3459,7 +3911,11 @@
                                       : 'var(--yellow)'
                             nameSpan.appendChild(dot)
                         }
-                        nameSpan.appendChild(document.createTextNode(data.name))
+                        nameSpan.appendChild(
+                            data.valAddress
+                                ? valLink(data.valAddress, data.name)
+                                : document.createTextNode(data.name)
+                        )
                         if (data.isUs || data.source)
                             nameSpan.appendChild(
                                 mkEl('span', ' (source)', 'source-tag')
@@ -3491,28 +3947,15 @@
                                   ['provider', data.provider || '-'],
                                   ['peers', data.peers || '-'],
                               ]
-                            : [
-                                  ['signing', data.address],
+                            : // A validator's: signing on its own row, then
+                              // pairs, the missed counts on the left.
+                              [
+                                  [
+                                      'signing',
+                                      { text: data.address, row: true },
+                                  ],
                                   ['country', data.country || '-'],
                                   ['provider', data.provider || '-'],
-                                  [
-                                      'missed last 100',
-                                      {
-                                          text: data.missed100,
-                                          cls: data.missed100Cls,
-                                      },
-                                  ],
-                                  [
-                                      'missed 24h',
-                                      {
-                                          text: data.missed24h,
-                                          cls: data.missedCls,
-                                      },
-                                  ],
-                                  [
-                                      'speed',
-                                      { text: data.speed, cls: data.speedCls },
-                                  ],
                                   ['vp', data.vp || '-'],
                                   [
                                       'spof',
@@ -3521,6 +3964,23 @@
                                           cls: data.spof ? 'err' : '',
                                       },
                                   ],
+                                  [
+                                      'miss 100',
+                                      {
+                                          text: data.missed100,
+                                          cls: data.missed100Cls,
+                                          split: data.missedSplit,
+                                      },
+                                  ],
+                                  ['delay', { node: data.delay }],
+                                  [
+                                      'miss 24h',
+                                      {
+                                          text: data.missed24h,
+                                          cls: data.missedCls,
+                                      },
+                                  ],
+                                  ['props 24h', { node: data.props }],
                               ]
                         for (var fi = 0; fi < fields.length; fi++) {
                             var fk = document.createElement('span')
@@ -3531,8 +3991,14 @@
                             fv.className = 'peer-card-v'
                             var fval = fields[fi][1]
                             if (typeof fval === 'object' && fval !== null) {
-                                fv.textContent = fval.text || '-'
+                                if (fval.node) fv.appendChild(fval.node)
+                                else fv.textContent = fval.text || '-'
                                 if (fval.cls) fv.className += ' ' + fval.cls
+                                else if (!fval.node)
+                                    fv.style.color = 'var(--fg2)'
+                                if (fval.row) fv.style.gridColumn = '2 / -1'
+                                if (fval.split)
+                                    popRows(fv, 'last 100 blocks', fval.split)
                             } else {
                                 fv.textContent = fval || '-'
                                 fv.style.color = 'var(--fg2)'
@@ -3587,7 +4053,14 @@
                         if (data.rpcUrl) copyLines.push('rpc: ' + data.rpcUrl)
                         var copyText = copyLines.join('\n')
                         card.addEventListener('click', function (e) {
-                            if (e.target.closest('.peer-card-footer')) return // let footer handle its own clicks
+                            // The footer and a value with a popover handle
+                            // their own taps.
+                            if (
+                                e.target.closest(
+                                    '.peer-card-footer, [data-pop-rows]'
+                                )
+                            )
+                                return
                             copyNotify(copyText, e)
                         })
                         return card
@@ -3615,25 +4088,10 @@
                                     ? v.missed_100
                                     : null
 
-                            var speedText = '-',
-                                speedCls = ''
-                            if (
-                                typeof v.avg_block_ms === 'number' &&
-                                v.avg_block_ms > 0
-                            ) {
-                                speedText =
-                                    (v.avg_block_ms / 1000).toFixed(1) + 's'
-                                speedCls =
-                                    v.avg_block_ms <= 3600
-                                        ? 'ok'
-                                        : v.avg_block_ms <= 6000
-                                          ? 'warn'
-                                          : 'err'
-                            }
-
                             valContainer.appendChild(
                                 makeCard({
                                     name: cleanName || shortAddr(v.address),
+                                    valAddress: v.address,
                                     isUs: isUs,
                                     address: shortAddr(v.address),
                                     fullAddress: v.address,
@@ -3669,8 +4127,15 @@
                                                   ? 'warn'
                                                   : 'err'
                                             : '',
-                                    speed: speedText,
-                                    speedCls: speedCls,
+                                    missedSplit:
+                                        missed100 !== null
+                                            ? missedSplitRows(v)
+                                            : null,
+                                    delay: voteDelayNode(v.vote_delay_ms),
+                                    props: proposalsNode(
+                                        v.missed_proposals_24h,
+                                        v.expected_proposals_24h
+                                    ),
                                     vp: v.voting_power
                                         ? formatVP(
                                               parseInt(v.voting_power, 10)
@@ -3852,6 +4317,8 @@
                             })
                         })(box, bg, border)
                     }
+                    // The popover shows the block as rows; a click copies the
+                    // same as text, with the full app hash.
                     var tip =
                         '#' +
                         b.height +
@@ -3860,13 +4327,13 @@
                         '/' +
                         b.total +
                         ' signed'
+                    var rows = [[null, 'signed', b.signers + '/' + b.total]]
                     if (b.time) {
                         var dt = new Date(b.time)
                         var pad = function (n) {
                             return n < 10 ? '0' + n : '' + n
                         }
-                        tip +=
-                            '\nTime: ' +
+                        var when =
                             dt.getUTCFullYear() +
                             '-' +
                             pad(dt.getUTCMonth() + 1) +
@@ -3879,19 +4346,26 @@
                             ':' +
                             pad(dt.getUTCSeconds()) +
                             ' UTC'
+                        tip += '\nTime: ' + when
+                        rows.push([null, 'time', when])
                     }
-                    if (b.block_ms !== 0)
+                    if (b.block_ms !== 0) {
                         tip += '\nBlock time: ' + b.block_ms + 'ms'
-                    if (typeof b.num_txs === 'number')
+                        rows.push([null, 'block time', b.block_ms + ' ms'])
+                    }
+                    if (typeof b.num_txs === 'number') {
                         tip += '\nTxs: ' + b.num_txs
+                        rows.push([null, 'txs', String(b.num_txs)])
+                    }
                     var fullAppHash = ''
                     if (b.app_hash) {
                         fullAppHash = b64toHex(b.app_hash)
-                        tip +=
-                            '\nAppHash: ' +
+                        var shortHash =
                             fullAppHash.substring(0, 8) +
                             '\u2026' +
                             fullAppHash.substring(fullAppHash.length - 8)
+                        tip += '\nAppHash: ' + shortHash
+                        rows.push([null, 'app hash', shortHash])
                     }
                     if (b.missing && b.missing.length > 0) {
                         var sorted = b.missing.slice().sort(function (a, b) {
@@ -3907,16 +4381,23 @@
                                 (m.name
                                     ? m.name + ' (' + m.address + ')'
                                     : m.address)
+                            rows.push([
+                                null,
+                                j ? '' : 'missing',
+                                m.name || m.address,
+                            ])
                         }
                     }
-                    box.setAttribute('data-popover', tip)
-                    if (fullAppHash) {
-                        var copyTip = tip.replace(
-                            /\nAppHash: .*/,
-                            '\nAppHash: ' + fullAppHash
-                        )
-                        box.setAttribute('data-copy', copyTip)
-                    }
+                    popRows(box, '#' + b.height, rows)
+                    box.setAttribute(
+                        'data-copy',
+                        fullAppHash
+                            ? tip.replace(
+                                  /\nAppHash: .*/,
+                                  '\nAppHash: ' + fullAppHash
+                              )
+                            : tip
+                    )
                     body.appendChild(box)
                 }
                 lastRecentBlockHeight = newestHeight
@@ -4159,56 +4640,50 @@
                     }
                 })
                 // "N val(s) · M peer(s)", omitting a zero side — shared by the
-                // root line and the tree branches for consistency.
+                // popover's title and its branch rows for consistency.
                 function counts(v, p) {
                     var parts = []
                     if (v) parts.push(v + ' val' + (v === 1 ? '' : 's'))
                     if (p) parts.push(p + ' peer' + (p === 1 ? '' : 's'))
                     return parts.join(' · ')
                 }
-                // Tree branches under a tooltip root, most nodes first (└─ marks
-                // the last branch). label(key) renders each branch's prefix.
-                function treeLines(m, label) {
-                    if (!m) return ''
-                    var keys = Object.keys(m).sort(function (a, b) {
-                        var ta = m[a].v + m[a].p,
-                            tb = m[b].v + m[b].p
-                        return tb - ta || (a < b ? -1 : a > b ? 1 : 0)
-                    })
-                    return keys
-                        .map(function (k, i) {
-                            var branch = i === keys.length - 1 ? '└─ ' : '├─ '
-                            return (
-                                '\n' +
-                                branch +
-                                label(k) +
-                                ' · ' +
-                                counts(m[k].v, m[k].p)
-                            )
+                // Branch rows under a popover's title, most nodes first.
+                // label(key) renders each branch's label.
+                function branchRows(m, label) {
+                    if (!m) return []
+                    return Object.keys(m)
+                        .sort(function (a, b) {
+                            var ta = m[a].v + m[a].p,
+                                tb = m[b].v + m[b].p
+                            return tb - ta || (a < b ? -1 : a > b ? 1 : 0)
                         })
-                        .join('')
+                        .map(function (k) {
+                            return [null, label(k), counts(m[k].v, m[k].p)]
+                        })
                 }
-                // Country root: flag + name + totals, providers as branches.
-                function countryTip(cc) {
-                    return (
+                // Country popover: flag + name + totals, providers as rows.
+                function countryPop(el, cc) {
+                    popRows(
+                        el,
                         countryFlag(cc) +
-                        ' ' +
-                        countryName(cc) +
-                        ' · ' +
-                        counts(ccVal[cc] || 0, ccPeer[cc] || 0) +
-                        treeLines(ccProv[cc], function (pr) {
+                            ' ' +
+                            countryName(cc) +
+                            ' · ' +
+                            counts(ccVal[cc] || 0, ccPeer[cc] || 0),
+                        branchRows(ccProv[cc], function (pr) {
                             return '☁️ ' + pr
                         })
                     )
                 }
-                // Provider root: cloud + name + totals, countries as branches.
-                function providerTip(prov) {
-                    return (
+                // Provider popover: cloud + name + totals, countries as rows.
+                function providerPop(el, prov) {
+                    popRows(
+                        el,
                         '☁️ ' +
-                        prov +
-                        ' · ' +
-                        counts(prVal[prov] || 0, prPeer[prov] || 0) +
-                        treeLines(prCC[prov], function (cc) {
+                            prov +
+                            ' · ' +
+                            counts(prVal[prov] || 0, prPeer[prov] || 0),
+                        branchRows(prCC[prov], function (cc) {
                             return countryFlag(cc) + ' ' + countryName(cc)
                         })
                     )
@@ -4357,8 +4832,9 @@
                 })
 
                 // Clusters: blue validators / green peers, labelled with the count.
-                // The popover is a tree rooted on the active grouping: country ->
-                // providers in Country mode, provider -> countries in Provider mode.
+                // The popover is titled with the active grouping and lists its
+                // branches: a country's providers in Country mode, a provider's
+                // countries in Provider mode.
                 pts.forEach(function (p) {
                     var c = document.createElementNS(SVG_NS, 'circle')
                     c.setAttribute('cx', p.x.toFixed(2))
@@ -4369,10 +4845,8 @@
                         p.type === 'val' ? 'map-dot is-val' : 'map-dot'
                     )
                     tagGroup(c, p)
-                    c.setAttribute(
-                        'data-popover',
-                        provMode ? providerTip(p.grp) : countryTip(p.grp)
-                    )
+                    if (provMode) providerPop(c, p.grp)
+                    else countryPop(c, p.grp)
                     g.appendChild(c)
                     if (p.count > 1) {
                         var t = document.createElementNS(SVG_NS, 'text')
@@ -4477,7 +4951,10 @@
                     mapListMode = btn.getAttribute('data-mode')
                     var btns = mapListToggle.querySelectorAll('button')
                     for (var i = 0; i < btns.length; i++)
-                        btns[i].classList.toggle('active', btns[i] === btn)
+                        btns[i].setAttribute(
+                            'aria-pressed',
+                            String(btns[i] === btn)
+                        )
                     // The map clusters by the active mode, so it re-renders along
                     // with the side list.
                     renderMap(lastPeers)
@@ -4664,7 +5141,7 @@
                     var a = mkLinkBtn(l)
                     var dot = mkEl('span', '', 'dot')
                     dot.style.background = headerLinkDotColor(l.state)
-                    dot.title = l.state
+                    dot.setAttribute('data-popover', l.state)
                     a.appendChild(dot)
                     a.appendChild(document.createTextNode(l.title))
                     box.appendChild(a)
@@ -4836,7 +5313,8 @@
 
             // ---- Click-to-copy handlers (delegated)
 
-            // KV values in the Network State and Block ETA cards
+            // KV values: the Network State and Block ETA cards, a validator's
+            // profile
             document.addEventListener('click', function (e) {
                 var v = e.target.closest('.kv .v')
                 if (!v) return
@@ -4854,13 +5332,11 @@
                 copyNotify(td.getAttribute('data-copy'), e)
             })
 
-            // Block boxes — copy tooltip content (prefer data-copy for full apphash)
+            // Block boxes — a click copies the block as text
             document.addEventListener('click', function (e) {
                 var block = e.target.closest('#recent-blocks-body .info-btn')
                 if (!block) return
-                var tip =
-                    block.getAttribute('data-copy') ||
-                    block.getAttribute('data-popover')
+                var tip = block.getAttribute('data-copy')
                 if (tip) copyNotify(tip, e)
             })
 
@@ -5015,8 +5491,8 @@
                 const chainStuckHTML = `<div style="display:flex; align-items:center; gap:10px; padding:10px 0; border-bottom:1px solid var(--border,#333);">
         <input type="checkbox" id="chk-chain_stuck" data-type="chain_stuck" data-entity="" onchange="onAlertCheck(this)">
         <label for="chk-chain_stuck" style="flex:1; cursor:pointer;">Chain stuck<span style="${hintStyle}">for ${chainStuckSecs}s</span></label>
-        <input type="checkbox" id="rec-chain_stuck" data-rec-type="chain_stuck" data-rec-entity="" onchange="onRecoveryCheck(this)" title="Also notify on recovery">
-        <label for="rec-chain_stuck" style="${recStyle}" title="Also notify on recovery">recovery</label>
+        <input type="checkbox" id="rec-chain_stuck" data-rec-type="chain_stuck" data-rec-entity="" onchange="onRecoveryCheck(this)" data-popover="Also notify on recovery">
+        <label for="rec-chain_stuck" style="${recStyle}" data-popover="Also notify on recovery">recovery</label>
     </div>`
 
                 // ---- chain rows: one-off events, no recovery ----
@@ -5071,9 +5547,9 @@
                         const safeID = `validator_missing_blocks__${eid.replace(/[^a-zA-Z0-9_-]/g, '_')}`
                         return `<div style="display:flex; align-items:center; gap:10px; padding:6px 0 6px 16px; font-size:0.88em;">
             <input type="checkbox" id="chk-${safeID}" data-type="validator_missing_blocks" data-entity="${escHTML(eid)}" onchange="onAlertCheck(this)">
-            <label for="chk-${safeID}" style="flex:1; cursor:pointer; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="${escHTML(label)}">${escHTML(label)}</label>
-            <input type="checkbox" id="rec-${safeID}" data-rec-type="validator_missing_blocks" data-rec-entity="${escHTML(eid)}" onchange="onRecoveryCheck(this)" title="Also notify on recovery">
-            <label for="rec-${safeID}" style="${recStyle}" title="Also notify on recovery">recovery</label>
+            <label for="chk-${safeID}" style="flex:1; cursor:pointer; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" data-popover="${escHTML(label)}">${escHTML(label)}</label>
+            <input type="checkbox" id="rec-${safeID}" data-rec-type="validator_missing_blocks" data-rec-entity="${escHTML(eid)}" onchange="onRecoveryCheck(this)" data-popover="Also notify on recovery">
+            <label for="rec-${safeID}" style="${recStyle}" data-popover="Also notify on recovery">recovery</label>
         </div>`
                     })
                     .join('')
@@ -5522,6 +5998,28 @@
                 <div class="eta-halt-row" id="eta-halt-row"></div>
             </div>
         </div>
+        <div id="val-modal" class="eta-modal">
+            <div
+                id="val-page"
+                class="eta-modal-inner"
+                role="dialog"
+                aria-modal="true"
+                aria-labelledby="val-title"
+            >
+                <div class="eta-modal-head">
+                    <h2 id="val-title"></h2>
+                    <div class="val-acts">
+                        <button class="hdr-btn" id="val-link-btn">
+                            ⧉ link
+                        </button>
+                        <button id="val-close" aria-label="Close">
+                            &times;
+                        </button>
+                    </div>
+                </div>
+                <div id="val-body"></div>
+            </div>
+        </div>
         <script>
             // ---- Block ETA
             // Countdown cards and the planner. The cards poll /api/eta; between
@@ -5951,13 +6449,13 @@
                             (rep.original
                                 ? '<div class="orig" style="left:' +
                                   x(orig) +
-                                  '" title="original ETA ' +
+                                  '" data-popover="original ETA ' +
                                   hms(orig) +
                                   ' UTC"></div>'
                                 : '') +
                             '<div class="now" style="left:' +
                             x(eta) +
-                            '" title="ETA ' +
+                            '" data-popover="ETA ' +
                             hms(eta) +
                             ' UTC"></div>' +
                             lbl(r95[0], hm(r95[0]), true) +
@@ -6206,7 +6704,7 @@
                         if (!rep || rep.error) return
                         // The compact line carries the stale mark too.
                         var mark = stale
-                            ? ' <span class="warn" title="' +
+                            ? ' <span class="warn tap-popover" data-popover="' +
                               esc(stale) +
                               '; showing the last answer">⚠</span>'
                             : ''
@@ -6612,20 +7110,7 @@
                 document.addEventListener('keydown', function (e) {
                     if (!modal.classList.contains('open')) return
                     if (e.key === 'Escape') closeEtaModal()
-                    if (e.key !== 'Tab') return
-                    // Keep focus inside the dialog.
-                    var f = Array.from(
-                        modal.querySelectorAll('button:not(:disabled), input')
-                    )
-                    var first = f[0]
-                    var last = f[f.length - 1]
-                    if (e.shiftKey && document.activeElement === first) {
-                        last.focus()
-                        e.preventDefault()
-                    } else if (!e.shiftKey && document.activeElement === last) {
-                        first.focus()
-                        e.preventDefault()
-                    }
+                    if (e.key === 'Tab') keepFocusIn(modal, e)
                 })
                 modal.querySelectorAll('.eta-seg button').forEach(function (b) {
                     b.addEventListener('click', function () {
@@ -6872,15 +7357,23 @@
                             timeLeft((f.from - lowest) / f.rate) +
                             '</b> left'
                     el.querySelector('.text').innerHTML = text
-                    el.title =
-                        'Block history filled from #' +
-                        f.from.toLocaleString('en-US') +
-                        ' (' +
-                        day(f.from_time) +
-                        ') to #' +
-                        f.to.toLocaleString('en-US') +
-                        ', filling back to #' +
-                        lowest.toLocaleString('en-US')
+                    popRows(el, 'Block history', [
+                        [
+                            null,
+                            'filled from',
+                            '#' +
+                                f.from.toLocaleString('en-US') +
+                                ' (' +
+                                day(f.from_time) +
+                                ')',
+                        ],
+                        [null, 'to', '#' + f.to.toLocaleString('en-US')],
+                        [
+                            null,
+                            'filling back to',
+                            '#' + lowest.toLocaleString('en-US'),
+                        ],
+                    ])
                 }
                 ;(async function poll() {
                     try {
@@ -6921,24 +7414,11 @@
                     if (text != null) e.textContent = text
                     return e
                 }
-                function short(a) {
-                    return a.length > 16 ? a.slice(0, 8) + '…' + a.slice(-4) : a
-                }
                 function who(m) {
-                    return m.moniker || short(m.address)
+                    return m.moniker || shortAddr(m.address)
                 }
-                function ago(iso) {
-                    var m = Math.round((Date.now() - Date.parse(iso)) / 60000)
-                    if (m < 1) return 'just now'
-                    if (m < 60) return m + ' min ago'
-                    var h = Math.round(m / 60)
-                    if (h < 48) return h + ' h ago'
-                    return Math.round(h / 24) + ' d ago'
-                }
-                function utc(iso) {
-                    return iso.slice(0, 16).replace('T', ' ') + ' UTC'
-                }
-                // names lists members, their names in bold: [text, bold] pairs.
+                // names lists members, their names in bold and linked to their
+                // pages: [text, bold, address] segments.
                 function names(ms) {
                     var out = []
                     ms.forEach(function (m, i) {
@@ -6947,7 +7427,7 @@
                                 i === ms.length - 1 ? ' and ' : ', ',
                                 false,
                             ])
-                        out.push([who(m), true])
+                        out.push([who(m), true, m.address])
                     })
                     return out
                 }
@@ -7002,7 +7482,7 @@
                             k: '↕',
                             cls: 'vt-pow',
                             what: [
-                                [who(m), true],
+                                [who(m), true, m.address],
                                 [' power ' + m.before + ' → ' + m.after, false],
                             ],
                             p: '',
@@ -7013,13 +7493,17 @@
                             k: '⇄',
                             cls: 'vt-rot',
                             what: [
-                                [r.moniker || short(r.new_address), true],
+                                [
+                                    r.moniker || shortAddr(r.new_address),
+                                    true,
+                                    r.new_address,
+                                ],
                                 [' rotated its key', false],
                             ],
                             p:
-                                short(r.old_address) +
+                                shortAddr(r.old_address) +
                                 ' → ' +
-                                short(r.new_address),
+                                shortAddr(r.new_address),
                         })
                     })
                     return out
@@ -7040,18 +7524,24 @@
                                 : '#' +
                                       c.height.toLocaleString('en-US') +
                                       ' · ' +
-                                      ago(c.time)
+                                      timeAgo(c.time)
                         )
-                        h.title = utc(c.time)
+                        h.setAttribute('data-popover', utcMinute(c.time))
+                        h.classList.add('tap-popover')
                         r.appendChild(h)
                         r.appendChild(el('span', 'k ' + part.cls, part.k))
                         var w = el('span', 'w')
                         part.what.forEach(function (seg) {
-                            w.appendChild(
-                                seg[1]
-                                    ? el('b', null, seg[0])
-                                    : document.createTextNode(seg[0])
-                            )
+                            if (seg[2])
+                                w.appendChild(
+                                    valLink(seg[2], el('b', null, seg[0]))
+                                )
+                            else
+                                w.appendChild(
+                                    seg[1]
+                                        ? el('b', null, seg[0])
+                                        : document.createTextNode(seg[0])
+                                )
                         })
                         if (part.p) {
                             w.appendChild(document.createTextNode(' '))
@@ -7193,6 +7683,1459 @@
                     saved = localStorage.getItem(VIEW_KEY) || 'live'
                 } catch (e) {}
                 setView(saved === 'timeline' ? 'timeline' : 'live')
+            })()
+        </script>
+        <script>
+            // ---- Validator page
+            // A validator's page opens in a modal over the dashboard, from a
+            // click on its name (validators table, phone card, Timeline view)
+            // or from ?val= in the URL, and reads /api/validator. Opening
+            // pushes ?val=, so Back closes it; closing restores the URL.
+            ;(function () {
+                var modal = $('val-modal')
+                var body = $('val-body')
+                var title = $('val-title')
+                var shown = null // the ?val= the page shows; null while closed
+                var pushed = false // the URL's ?val= is an entry this page pushed
+                var seq = 0 // the read in force: a newer one drops older answers
+                var opener = null // focused before opening, focused again on close
+
+                // ---- Formats
+                function num(n) {
+                    return n.toLocaleString('en-US')
+                }
+                // dur writes a duration: seconds kept under an hour, days from
+                // 48 h.
+                function dur(ms) {
+                    var s = Math.round(ms / 1000)
+                    if (s < 60) return s + ' s'
+                    if (s < 3600)
+                        return (
+                            Math.floor(s / 60) +
+                            ' min ' +
+                            String(s % 60).padStart(2, '0') +
+                            ' s'
+                        )
+                    var h = Math.floor(s / 3600)
+                    if (h >= 48) return Math.round(h / 24) + ' d'
+                    return (
+                        h +
+                        ' h ' +
+                        String(Math.floor((s % 3600) / 60)).padStart(2, '0') +
+                        ' min'
+                    )
+                }
+                // ---- Building blocks
+                // info builds an ⓘ whose popover says what a datum is, where it
+                // comes from, and whether the ranking scores it.
+                function info(what, source, scored) {
+                    var i = mkEl('span', 'ⓘ', 'info-btn')
+                    i.setAttribute(
+                        'data-popover',
+                        'What: ' +
+                            what +
+                            '\nSource: ' +
+                            source +
+                            '\nScored: ' +
+                            (scored
+                                ? 'yes, ' + scored
+                                : 'no, shown for monitoring')
+                    )
+                    return i
+                }
+                function section(key, name, i) {
+                    var sec = mkEl('div', null, 'val-sec', {
+                        'data-section': key,
+                    })
+                    var h = mkEl('h3', name)
+                    h.appendChild(i)
+                    sec.appendChild(h)
+                    return sec
+                }
+                // statsLine builds a section's stats: [window, [[label, value,
+                // band class or '']…]] per window.
+                function statsLine(windows) {
+                    var line = mkEl('div', null, 'val-stats')
+                    windows.forEach(function (w) {
+                        var win = mkEl('span', null, 'val-win')
+                        win.appendChild(mkEl('span', w[0], 'w'))
+                        w[1].forEach(function (st) {
+                            var item = mkEl('span')
+                            item.appendChild(mkEl('span', st[0], 'l'))
+                            item.appendChild(mkEl('b', st[1], st[2]))
+                            win.appendChild(item)
+                        })
+                        line.appendChild(win)
+                    })
+                    return line
+                }
+                function chart(key) {
+                    return mkEl('div', null, 'val-chart', { 'data-chart': key })
+                }
+
+                // ---- Charts
+                // One day axis for every chart on a wide screen: a day is
+                // max(DAY_PX, width ÷ days) wide, month ticks under it; the
+                // axes scroll together and open on the newest day. On a phone,
+                // Uptime and Proposals are calendars.
+                var DAY_PX = 8
+                var DAY_MS = 86400000
+                var NO_HISTORY = 'nothing in the block history yet'
+                var EMPTY = 'var(--border)'
+                var BAND_FILL = {
+                    ok: 'var(--green)',
+                    warn: 'var(--yellow)',
+                    err: 'var(--red)',
+                }
+                var DELAY_FILLS = [
+                    '#484f58',
+                    '#6e7681',
+                    '#2ea043',
+                    '#7ee787',
+                    '#d29922',
+                    '#f0883e',
+                    '#f85149',
+                ]
+                var chartRep = null // the report the charts draw; null while closed
+                var chartWidth = 0 // the window width they were drawn at
+
+                function svgEl(tag, attrs) {
+                    var e = document.createElementNS(SVG_NS, tag)
+                    for (var k in attrs) e.setAttribute(k, attrs[k])
+                    return e
+                }
+                function svgRoot(w, h) {
+                    return svgEl('svg', {
+                        width: w,
+                        height: h,
+                        viewBox: '0 0 ' + w + ' ' + h,
+                    })
+                }
+                function filled(e, colour) {
+                    e.style.fill = colour
+                    return e
+                }
+                function axisText(x, y, s) {
+                    var t = filled(
+                        svgEl('text', { x: x, y: y, 'font-size': 10 }),
+                        'var(--fg2)'
+                    )
+                    t.textContent = s
+                    return t
+                }
+                function dayStart(ms) {
+                    return Math.floor(ms / DAY_MS) * DAY_MS
+                }
+                function month(day) {
+                    return new Date(day + 'T00:00:00Z')
+                        .toUTCString()
+                        .slice(8, 11)
+                }
+                // DAY_LABEL_PX is the day width from which each day gets its
+                // own date under the axis: a short range has no month start.
+                var DAY_LABEL_PX = 40
+                // monthAxis draws the day axis at y under days drawn px wide: a
+                // tick and a label at each month's first day, the first
+                // month's name at the left when no month starts near it, and
+                // each day's date when days are DAY_LABEL_PX wide or more.
+                function monthAxis(svg, days, px, y) {
+                    var line = svgEl('line', {
+                        x1: 0,
+                        x2: days.length * px,
+                        y1: y,
+                        y2: y,
+                    })
+                    line.style.stroke = 'var(--border)'
+                    svg.appendChild(line)
+                    var firstStart = -1
+                    days.forEach(function (d, i) {
+                        if (d.day.slice(8) !== '01') return
+                        if (firstStart < 0) firstStart = i
+                        var tick = svgEl('line', {
+                            x1: i * px,
+                            x2: i * px,
+                            y1: y,
+                            y2: y + 4,
+                        })
+                        tick.style.stroke = 'var(--fg2)'
+                        svg.appendChild(tick)
+                    })
+                    if (px >= DAY_LABEL_PX) {
+                        days.forEach(function (d, i) {
+                            var date = String(Number(d.day.slice(8)))
+                            if (i === 0 || d.day.slice(8) === '01')
+                                date += ' ' + month(d.day)
+                            svg.appendChild(axisText(i * px + 2, y + 14, date))
+                        })
+                        return
+                    }
+                    days.forEach(function (d, i) {
+                        if (d.day.slice(8) === '01')
+                            svg.appendChild(
+                                axisText(i * px + 2, y + 14, month(d.day))
+                            )
+                    })
+                    if (firstStart < 0 || firstStart * px > DAY_LABEL_PX)
+                        svg.appendChild(axisText(2, y + 14, month(days[0].day)))
+                }
+
+                // chartDays lists the UTC days from the report's first to its
+                // today, the day after the scoring window's last: each with
+                // its counters (null without blocks in the set) and the
+                // outages that cover it.
+                function chartDays(rep) {
+                    if (!rep.days.length) return []
+                    var byDay = {}
+                    rep.days.forEach(function (c) {
+                        byDay[c.day] = c
+                    })
+                    var outages = {}
+                    rep.timeline.forEach(function (e) {
+                        if (e.kind !== 'outage') return
+                        // Its last absence is before block to+1's time.
+                        var last = dayStart(Date.parse(e.end_time) - 1)
+                        for (
+                            var t = dayStart(Date.parse(e.time));
+                            t <= last;
+                            t += DAY_MS
+                        ) {
+                            var day = new Date(t).toISOString().slice(0, 10)
+                            ;(outages[day] = outages[day] || []).push(e)
+                        }
+                    })
+                    var today =
+                        Date.parse(rep.summary.last_day + 'T00:00:00Z') + DAY_MS
+                    var out = []
+                    for (
+                        var t = Date.parse(rep.days[0].day + 'T00:00:00Z');
+                        t <= today;
+                        t += DAY_MS
+                    ) {
+                        var day = new Date(t).toISOString().slice(0, 10)
+                        out.push({
+                            day: day,
+                            t: t,
+                            c:
+                                byDay[day] && byDay[day].in_set
+                                    ? byDay[day]
+                                    : null,
+                            outages: outages[day] || [],
+                        })
+                    }
+                    return out
+                }
+
+                function uptimeFill(d) {
+                    if (!d.c) return EMPTY
+                    return BAND_FILL[
+                        scoreBand.uptime((d.c.signed / d.c.in_set) * 100)
+                    ]
+                }
+                function uptimeRows(d) {
+                    if (!d.c) return [[EMPTY, 'not in the set', '']]
+                    var c = d.c
+                    var rows = [
+                        [
+                            uptimeFill(d),
+                            'signed',
+                            num(c.signed) + ' of ' + num(c.in_set),
+                        ],
+                        [
+                            null,
+                            '',
+                            ((c.signed / c.in_set) * 100).toFixed(2) + ' %',
+                        ],
+                        [null, 'absent', num(c.absent)],
+                        [null, 'other block', num(c.other_block)],
+                        [null, 'nil votes', num(c.nil) + ' (signed)'],
+                    ]
+                    d.outages.forEach(function (o) {
+                        rows.push([
+                            null,
+                            '● outage',
+                            num(o.blocks) +
+                                ' blocks, ' +
+                                dur(
+                                    Date.parse(o.end_time) - Date.parse(o.time)
+                                ) +
+                                (o.ongoing ? ', ongoing' : ''),
+                        ])
+                        // A day the outage continues into dates its start.
+                        var start = o.time.slice(11, 16)
+                        if (o.time.slice(0, 10) !== d.day)
+                            start = o.time.slice(0, 10) + ' ' + start
+                        rows.push([
+                            null,
+                            '',
+                            'from ' + start + ' UTC, #' + num(o.height),
+                        ])
+                    })
+                    return rows
+                }
+                function proposalsFill(d) {
+                    if (!d.c || !d.c.proposals_expected) return EMPTY
+                    return BAND_FILL[
+                        scoreBand.proposals(
+                            (d.c.proposals_missed / d.c.proposals_expected) *
+                                100
+                        )
+                    ]
+                }
+                function proposalsRows(d) {
+                    if (!d.c || !d.c.proposals_expected)
+                        return [[EMPTY, 'expected', 'none']]
+                    var c = d.c
+                    return [
+                        [
+                            proposalsFill(d),
+                            'missed',
+                            num(c.proposals_missed) +
+                                ' of ' +
+                                num(c.proposals_expected),
+                        ],
+                        [
+                            null,
+                            '',
+                            (
+                                (c.proposals_missed / c.proposals_expected) *
+                                100
+                            ).toFixed(1) + ' %',
+                        ],
+                    ]
+                }
+
+                // A day series: each day's fill and popover rows, and whether a
+                // day with an outage gets a dot.
+                var UPTIME = { fill: uptimeFill, rows: uptimeRows, dots: true }
+                var PROPOSALS = {
+                    fill: proposalsFill,
+                    rows: proposalsRows,
+                    dots: false,
+                }
+
+                // dayCell draws day d's rect (attrs) coloured and explained by
+                // series, with an outage dot at (cx, cy) when the series dots.
+                function dayCell(svg, d, series, attrs, cx, cy) {
+                    var r = filled(svgEl('rect', attrs), series.fill(d))
+                    popRows(r, d.day, series.rows(d))
+                    svg.appendChild(r)
+                    if (series.dots && d.outages.length)
+                        svg.appendChild(
+                            filled(
+                                svgEl('circle', {
+                                    cx: cx,
+                                    cy: cy,
+                                    r: 2.5,
+                                    'pointer-events': 'none',
+                                }),
+                                'var(--fg)'
+                            )
+                        )
+                }
+
+                // dayBars draws one bar per day of series; geo gives the
+                // chart's height, the bars' top (y) and height (h), and the
+                // axis's y.
+                function dayBars(days, px, series, geo) {
+                    var svg = svgRoot(days.length * px, geo.height)
+                    days.forEach(function (d, i) {
+                        dayCell(
+                            svg,
+                            d,
+                            series,
+                            {
+                                x: i * px + 1,
+                                y: geo.y,
+                                width: px - 2,
+                                height: geo.h,
+                                rx: 1,
+                            },
+                            i * px + px / 2,
+                            4
+                        )
+                    })
+                    monthAxis(svg, days, px, geo.axisY)
+                    return svg
+                }
+
+                // calendar draws one cell per day, weeks as columns from
+                // Monday, opened on the newest week by drawCharts.
+                function calendar(days, series) {
+                    var s = 13
+                    var step = s + 3
+                    var first = (new Date(days[0].t).getUTCDay() + 6) % 7
+                    var weeks = Math.ceil((days.length + first) / 7)
+                    var height = 16 + 7 * step
+                    var wrap = mkEl('div', null, 'val-cal')
+                    var labels = svgRoot(30, height)
+                    ;['Mon', 'Wed', 'Fri'].forEach(function (l, i) {
+                        labels.appendChild(
+                            axisText(0, 16 + i * 2 * step + s - 3, l)
+                        )
+                    })
+                    wrap.appendChild(labels)
+                    var svg = svgRoot(weeks * step, height)
+                    // The first week's month is named unless a month starts
+                    // in the first two weeks, whose label would collide.
+                    var startCol = -1
+                    days.forEach(function (d, i) {
+                        if (startCol < 0 && d.day.slice(8) === '01')
+                            startCol = Math.floor((i + first) / 7)
+                    })
+                    if (startCol < 0 || startCol >= 2)
+                        svg.appendChild(axisText(0, 10, month(days[0].day)))
+                    days.forEach(function (d, i) {
+                        var col = Math.floor((i + first) / 7)
+                        var row = (i + first) % 7
+                        if (d.day.slice(8) === '01')
+                            svg.appendChild(
+                                axisText(col * step, 10, month(d.day))
+                            )
+                        dayCell(
+                            svg,
+                            d,
+                            series,
+                            {
+                                x: col * step,
+                                y: 16 + row * step,
+                                width: s,
+                                height: s,
+                                rx: 2,
+                            },
+                            col * step + s / 2,
+                            16 + row * step + s / 2
+                        )
+                    })
+                    var scroll = mkEl('div', null, 'val-cal-scroll')
+                    scroll.appendChild(svg)
+                    wrap.appendChild(scroll)
+                    return wrap
+                }
+
+                // recoveryChart draws one bar per sample on its restart's day,
+                // its height on a log scale up to 24 h; a blue line over the
+                // ones the scoring takes, as the report marks them.
+                function recoveryChart(days, px, rep) {
+                    var base = 94
+                    var svg = svgRoot(days.length * px, 120)
+                    var index = {}
+                    days.forEach(function (d, i) {
+                        index[d.day] = i
+                    })
+                    var byDay = {}
+                    rep.recoveries.forEach(function (r) {
+                        if (r.pending) return
+                        var day = r.restart_time.slice(0, 10)
+                        if (index[day] === undefined) return
+                        ;(byDay[day] = byDay[day] || []).push(r)
+                    })
+                    var lineFrom = null
+                    var lineTo = null
+                    Object.keys(byDay).forEach(function (day) {
+                        var rs = byDay[day]
+                        var span = Math.max(px - 2, 6)
+                        var bw = span / rs.length
+                        var x0 = index[day] * px + px / 2 - span / 2
+                        rs.forEach(function (r, j) {
+                            var s = Math.min(r.duration_ms / 1000, 86400)
+                            var bh = Math.max(
+                                (Math.log(1 + s / 60) / Math.log(1 + 1440)) *
+                                    (base - 24),
+                                8
+                            )
+                            var x = x0 + j * bw
+                            var fill =
+                                BAND_FILL[scoreBand.recovery(r.duration_ms)]
+                            var bar = filled(
+                                svgEl('rect', {
+                                    x: x,
+                                    y: base - bh,
+                                    width: bw,
+                                    height: bh,
+                                    rx: 1,
+                                }),
+                                fill
+                            )
+                            popRows(bar, day, [
+                                [
+                                    fill,
+                                    'signed again after',
+                                    dur(r.duration_ms),
+                                ],
+                                [null, 'restart', '#' + num(r.restart_height)],
+                                [
+                                    null,
+                                    'scored',
+                                    r.scored ? 'yes (its last 3)' : 'no',
+                                ],
+                            ])
+                            svg.appendChild(bar)
+                            if (r.scored) {
+                                if (lineFrom === null || x < lineFrom)
+                                    lineFrom = x
+                                if (lineTo === null || x + bw > lineTo)
+                                    lineTo = x + bw
+                            }
+                        })
+                    })
+                    if (lineFrom !== null) {
+                        var line = svgEl('line', {
+                            class: 'val-scored-line',
+                            x1: lineFrom,
+                            x2: lineTo,
+                            y1: 16,
+                            y2: 16,
+                            'stroke-width': 2,
+                        })
+                        line.style.stroke = 'var(--blue)'
+                        svg.appendChild(line)
+                    }
+                    monthAxis(svg, days, px, base + 2)
+                    return svg
+                }
+
+                // delayLabels names the vote-delay ranges the edges bound.
+                function delayLabels(edges) {
+                    function s(ms) {
+                        return (ms < 0 ? '−' : '') + Math.abs(ms) / 1000
+                    }
+                    var out = ['< ' + s(edges[0]) + ' s']
+                    for (var i = 1; i < edges.length; i++)
+                        out.push(
+                            edges[i - 1] === -edges[i]
+                                ? '±' + s(edges[i]) + ' s'
+                                : s(edges[i - 1]) + ' to ' + s(edges[i]) + ' s'
+                        )
+                    out.push('> ' + s(edges[edges.length - 1]) + ' s')
+                    return out
+                }
+                function share(n, of) {
+                    var p = (n / of) * 100
+                    if (!n) return '0 %'
+                    return p < 1 ? '< 1 %' : Math.round(p) + ' %'
+                }
+
+                // delayChart draws one bar per day, 100 % stacked by the delay
+                // ranges, early at the bottom.
+                function delayChart(days, px, rep) {
+                    var base = 104
+                    var top = 4
+                    var svg = svgRoot(days.length * px, 128)
+                    var labels = delayLabels(rep.vote_delay_edges_ms)
+                    days.forEach(function (d, i) {
+                        if (!d.c || !d.c.votes) return
+                        var g = svgEl('g')
+                        var y = base
+                        d.c.vote_delay_buckets.forEach(function (n, j) {
+                            var h = (n / d.c.votes) * (base - top)
+                            y -= h
+                            if (h > 0)
+                                g.appendChild(
+                                    filled(
+                                        svgEl('rect', {
+                                            x: i * px + 1,
+                                            y: y,
+                                            width: px - 2,
+                                            height: h,
+                                        }),
+                                        DELAY_FILLS[j]
+                                    )
+                                )
+                        })
+                        var rows = labels.map(function (l, j) {
+                            return [
+                                DELAY_FILLS[j],
+                                l,
+                                share(d.c.vote_delay_buckets[j], d.c.votes),
+                            ]
+                        })
+                        popRows(
+                            g,
+                            d.day,
+                            [
+                                [
+                                    null,
+                                    'mean',
+                                    voteDelayText(d.c.vote_delay_mean_ms),
+                                ],
+                            ].concat(rows.reverse())
+                        )
+                        svg.appendChild(g)
+                    })
+                    monthAxis(svg, days, px, base + 2)
+                    return svg
+                }
+
+                // legend says what one bar (or cell) is, then the swatch keys,
+                // which wrap as one block.
+                function legend(unit, keys) {
+                    var cap = mkEl('div', null, 'val-cap')
+                    cap.appendChild(mkEl('span', unit, 'unit'))
+                    var block = mkEl('span', null, 'keys')
+                    keys.forEach(function (k) {
+                        var item = mkEl('span')
+                        var sw = mkEl(
+                            'span',
+                            null,
+                            'sw' + (k[2] ? ' ' + k[2] : '')
+                        )
+                        sw.style.background = k[0]
+                        item.appendChild(sw)
+                        item.appendChild(document.createTextNode(k[1]))
+                        block.appendChild(item)
+                    })
+                    cap.appendChild(block)
+                    return cap
+                }
+
+                var charts = {
+                    uptime: function (days, px, rep, cal) {
+                        return {
+                            chart: cal
+                                ? calendar(days, UPTIME)
+                                : dayBars(days, px, UPTIME, {
+                                      height: 59,
+                                      y: 9,
+                                      h: 28,
+                                      axisY: 41,
+                                  }),
+                            legend: legend(
+                                cal
+                                    ? 'one cell per UTC day'
+                                    : 'one bar per UTC day',
+                                [
+                                    [BAND_FILL.ok, '≥ 99.9 % signed'],
+                                    [BAND_FILL.warn, '95 to 99.9 %'],
+                                    [BAND_FILL.err, '≤ 95 %'],
+                                    [EMPTY, 'not in the set'],
+                                    [
+                                        'var(--fg)',
+                                        'an outage that day',
+                                        'round',
+                                    ],
+                                ]
+                            ),
+                        }
+                    },
+                    proposals: function (days, px, rep, cal) {
+                        return {
+                            chart: cal
+                                ? calendar(days, PROPOSALS)
+                                : dayBars(days, px, PROPOSALS, {
+                                      height: 50,
+                                      y: 0,
+                                      h: 28,
+                                      axisY: 32,
+                                  }),
+                            legend: legend(
+                                cal
+                                    ? 'one cell per UTC day'
+                                    : 'one bar per UTC day',
+                                [
+                                    [BAND_FILL.ok, 'none missed'],
+                                    [BAND_FILL.warn, 'under 5 % missed'],
+                                    [BAND_FILL.err, '5 % or more'],
+                                    [EMPTY, 'none expected'],
+                                ]
+                            ),
+                        }
+                    },
+                    recovery: function (days, px, rep) {
+                        return {
+                            chart: recoveryChart(days, px, rep),
+                            legend: legend('one bar per restart, on its day', [
+                                [BAND_FILL.ok, '≤ 10 min'],
+                                [BAND_FILL.warn, '10 min to 24 h'],
+                                [BAND_FILL.err, '≥ 24 h'],
+                                [
+                                    'var(--blue)',
+                                    'its last 3, the ones scored',
+                                    'line',
+                                ],
+                            ]),
+                        }
+                    },
+                    delay: function (days, px, rep) {
+                        return {
+                            chart: delayChart(days, px, rep),
+                            legend: legend(
+                                'one bar per UTC day, its precommits by delay from the commit time',
+                                delayLabels(rep.vote_delay_edges_ms).map(
+                                    function (l, j) {
+                                        return [DELAY_FILLS[j], l]
+                                    }
+                                )
+                            ),
+                        }
+                    },
+                }
+
+                // drawCharts fills the page's chart containers from chartRep.
+                function drawCharts() {
+                    var rep = chartRep
+                    if (!rep) return
+                    chartWidth = window.innerWidth
+                    var days = chartDays(rep)
+                    var boxes = body.querySelectorAll('[data-chart]')
+                    if (!days.length) {
+                        boxes.forEach(function (box) {
+                            clearChildren(box)
+                            box.appendChild(mkEl('div', NO_HISTORY, 'val-msg'))
+                        })
+                        return
+                    }
+                    var phone = window.innerWidth <= 640
+                    var px = Math.max(
+                        DAY_PX,
+                        boxes[0].clientWidth / days.length
+                    )
+                    boxes.forEach(function (box) {
+                        var key = box.getAttribute('data-chart')
+                        var cal =
+                            phone && (key === 'uptime' || key === 'proposals')
+                        var c = charts[key](days, px, rep, cal)
+                        clearChildren(box)
+                        if (cal) box.appendChild(c.chart)
+                        else {
+                            var axis = mkEl('div', null, 'val-axis')
+                            axis.appendChild(c.chart)
+                            box.appendChild(axis)
+                        }
+                        box.appendChild(c.legend)
+                    })
+                    body.querySelectorAll('.val-axis, .val-cal-scroll').forEach(
+                        function (s) {
+                            s.scrollLeft = s.scrollWidth
+                        }
+                    )
+                    // A scroll moves the other axes to it once: their own scroll
+                    // events, which come later, find them at that position.
+                    var axes = body.querySelectorAll('.val-axis')
+                    var synced = null
+                    axes.forEach(function (a) {
+                        a.addEventListener('scroll', function () {
+                            if (a.scrollLeft === synced) return
+                            synced = a.scrollLeft
+                            axes.forEach(function (o) {
+                                if (o !== a) o.scrollLeft = synced
+                            })
+                        })
+                    })
+                }
+                // A width change redraws the charts: the day's width follows
+                // it, and a phone's calendars come and go at 640 px.
+                var redrawTimer = 0
+                window.addEventListener('resize', function () {
+                    clearTimeout(redrawTimer)
+                    redrawTimer = setTimeout(function () {
+                        if (chartRep && window.innerWidth !== chartWidth)
+                            drawCharts()
+                    }, 150)
+                })
+
+                // ---- Profile markdown
+                // markdownNodes renders a profile's markdown as DOM nodes, never
+                // as HTML: paragraphs (a single newline is a space), #
+                // headings, - and 1. lists, and inline **bold**, *italic* or
+                // _italic_, `code`, [text](url) and bare URLs. Only http(s)
+                // URLs become links; any other keeps its text.
+                var MD_HEADING = /^\s*#{1,6}\s+/
+                var MD_BULLET = /^\s*[-*+]\s+/
+                var MD_NUMBERED = /^\s*\d+[.)]\s+/
+                var MD_INLINE =
+                    /`([^`]+)`|\[([^\]]+)\]\(([^)\s]+)\)|\*\*([^*]+)\*\*|\*([^*\s][^*]*?)\*|(?<!\w)_([^_\s][^_]*?)_(?!\w)|(https?:\/\/[^\s<>]*[^\s<>.,;:!?'")\]])/g
+                function markdownNodes(md) {
+                    var out = document.createDocumentFragment()
+                    var lines = md.replace(/\r\n?/g, '\n').split('\n')
+                    var block = function (l) {
+                        return (
+                            MD_HEADING.test(l) ||
+                            MD_BULLET.test(l) ||
+                            MD_NUMBERED.test(l)
+                        )
+                    }
+                    for (var i = 0; i < lines.length; ) {
+                        var line = lines[i]
+                        if (!line.trim()) {
+                            i++
+                        } else if (MD_HEADING.test(line)) {
+                            var text = line
+                                .replace(MD_HEADING, '')
+                                .replace(/\s+#+\s*$/, '')
+                            out.appendChild(
+                                mdInline(mkEl('div', null, 'val-md-h'), text)
+                            )
+                            i++
+                        } else if (
+                            MD_BULLET.test(line) ||
+                            MD_NUMBERED.test(line)
+                        ) {
+                            var item = MD_BULLET.test(line)
+                                ? MD_BULLET
+                                : MD_NUMBERED
+                            var list = document.createElement(
+                                item === MD_BULLET ? 'ul' : 'ol'
+                            )
+                            for (; i < lines.length && item.test(lines[i]); i++)
+                                list.appendChild(
+                                    mdInline(
+                                        document.createElement('li'),
+                                        lines[i].replace(item, '')
+                                    )
+                                )
+                            out.appendChild(list)
+                        } else {
+                            var para = []
+                            for (
+                                ;
+                                i < lines.length &&
+                                lines[i].trim() &&
+                                !block(lines[i]);
+                                i++
+                            )
+                                para.push(lines[i].trim())
+                            out.appendChild(
+                                mdInline(
+                                    document.createElement('p'),
+                                    para.join(' ')
+                                )
+                            )
+                        }
+                    }
+                    return out
+                }
+                // mdInline appends text's inline markdown to el, as text nodes
+                // and elements.
+                function mdInline(el, text) {
+                    var at = 0
+                    var m
+                    MD_INLINE.lastIndex = 0
+                    var spans = []
+                    while ((m = MD_INLINE.exec(text))) spans.push(m)
+                    spans.forEach(function (m) {
+                        if (m.index > at)
+                            el.appendChild(
+                                document.createTextNode(text.slice(at, m.index))
+                            )
+                        at = m.index + m[0].length
+                        if (m[1] !== undefined)
+                            el.appendChild(mkEl('code', m[1]))
+                        else if (m[2] !== undefined)
+                            el.appendChild(
+                                /^https?:\/\//i.test(m[3])
+                                    ? mkLink(m[2], m[3])
+                                    : document.createTextNode(m[2])
+                            )
+                        else if (m[4] !== undefined)
+                            el.appendChild(mdInline(mkEl('strong'), m[4]))
+                        else if (m[5] !== undefined || m[6] !== undefined)
+                            el.appendChild(
+                                mdInline(
+                                    mkEl('em'),
+                                    m[5] !== undefined ? m[5] : m[6]
+                                )
+                            )
+                        else el.appendChild(mkLink(m[7], m[7]))
+                    })
+                    if (at < text.length)
+                        el.appendChild(document.createTextNode(text.slice(at)))
+                    return el
+                }
+
+                // ---- Content
+                function statusLine(rep) {
+                    var line = mkEl('div', null, 'val-status')
+                    var st = rep.status
+                    if (st) {
+                        var text = st.in_set ? 'in the set' : 'not in the set'
+                        if (st.since_time) {
+                            var days = Math.floor(
+                                (Date.now() - Date.parse(st.since_time)) /
+                                    86400000
+                            )
+                            // A bound when its join is older than the history.
+                            var before = st.since_before ? 'before ' : ''
+                            text +=
+                                ' since ' +
+                                before +
+                                st.since_time.slice(0, 10) +
+                                ' (' +
+                                (st.since_before ? 'over ' : '') +
+                                days +
+                                ' d)'
+                        }
+                        if (st.in_set)
+                            text +=
+                                ' · power ' +
+                                st.power +
+                                ' (' +
+                                (st.share * 100).toFixed(1) +
+                                ' %)'
+                        var s = mkEl('span')
+                        s.appendChild(
+                            mkEl(
+                                'span',
+                                null,
+                                'dot ' + (st.in_set ? 'green' : 'out')
+                            )
+                        )
+                        s.appendChild(document.createTextNode(text))
+                        s.appendChild(
+                            info(
+                                'whether it is in the validator set, since when without a break (key rotations included), its voting power and share of the set',
+                                "the node's current validator set; the block history's set changes for since, a bound (since before) when its join is older than the history",
+                                ''
+                            )
+                        )
+                        line.appendChild(s)
+                    }
+                    var loc = rep.location
+                    if (loc && (loc.country || loc.provider)) {
+                        var flag = countryFlag(loc.country)
+                        var where = mkEl(
+                            'span',
+                            (flag ? flag + ' ' : '') +
+                                (loc.country ? countryName(loc.country) : '—') +
+                                ' · ' +
+                                (loc.provider || '—')
+                        )
+                        where.appendChild(
+                            info(
+                                'where its node is hosted',
+                                "its matched peer's IP, through the GeoIP and ASN databases",
+                                ''
+                            )
+                        )
+                        line.appendChild(where)
+                    }
+                    return line
+                }
+
+                function profileSection(rep) {
+                    var sec = section(
+                        'profile',
+                        'Profile',
+                        info(
+                            "what the operator wrote in its valopers profile, and the realm's state for it",
+                            'the valopers realm (gno.land/r/gnops/valopers), read every 15 min',
+                            ''
+                        )
+                    )
+                    var kv = mkEl('div', null, 'kv')
+                    // row adds a key and its value: text, or a node.
+                    function row(k, v, cls) {
+                        kv.appendChild(mkEl('span', k, 'k'))
+                        var cell = mkEl(
+                            typeof v === 'string' ? 'span' : 'div',
+                            typeof v === 'string' ? v : null,
+                            'v' + (cls ? ' ' + cls : '')
+                        )
+                        if (typeof v !== 'string') cell.appendChild(v)
+                        kv.appendChild(cell)
+                    }
+                    var p = rep.profile
+                    if (p) {
+                        row(
+                            'description',
+                            p.description ? markdownNodes(p.description) : '—',
+                            'val-text'
+                        )
+                        row('server type', p.server_type || '—')
+                        row('operator', p.operator)
+                        row('signing address', p.signing_address)
+                        row('signing key', p.signing_pubkey)
+                        if ('keep_running' in p)
+                            row('keep running', p.keep_running ? 'yes' : 'no')
+                        if ('last_rotation_height' in p)
+                            row(
+                                'last rotation',
+                                '#' + num(p.last_rotation_height)
+                            )
+                    } else {
+                        var keys = rep.keys || []
+                        row('operator', rep.operator || '—')
+                        row(
+                            'signing address',
+                            keys.length
+                                ? keys[keys.length - 1].address
+                                : rep.address
+                        )
+                        row('profile', 'none in the valopers realm')
+                    }
+                    sec.appendChild(kv)
+                    return sec
+                }
+
+                function scoredGroup(rep) {
+                    var sm = rep.summary
+                    var live = rep.live
+                    var group = mkEl('div', null, 'val-scored')
+                    var label = mkEl(
+                        'div',
+                        'scored by the ranking',
+                        'val-glabel'
+                    )
+                    label.appendChild(
+                        info(
+                            'the sections the validator ranking scores; its score combines uptime (50 %), outages (20 %), recovery (20 %) and proposals (10 %)',
+                            'the block history',
+                            'all three, with the weights above'
+                        )
+                    )
+                    group.appendChild(label)
+
+                    var up = section(
+                        'uptime',
+                        'Uptime',
+                        info(
+                            'per UTC day, of the blocks it was in the set for: signed (a nil vote counts as signed), absent from the commit, or voted for another block',
+                            "the block history: every block's commit",
+                            'signed ÷ blocks in the set (50 %), and outages, runs of 10 or more absences (20 %), over the 30 complete UTC days before today; outages leave recovery runs out, as the ranking does; signed counts every height, where the ranking leaves recovery runs out'
+                        )
+                    )
+                    var signed = sm.in_set
+                        ? (sm.signed / sm.in_set) * 100
+                        : null
+                    up.appendChild(
+                        statsLine([
+                            [
+                                'last 30 days',
+                                [
+                                    [
+                                        'signed',
+                                        signed === null
+                                            ? '—'
+                                            : signed.toFixed(2) + ' %',
+                                        signed === null
+                                            ? ''
+                                            : scoreBand.uptime(signed),
+                                    ],
+                                    [
+                                        'outages',
+                                        num(sm.outages),
+                                        sm.in_set
+                                            ? scoreBand.outages(sm.outages)
+                                            : '',
+                                    ],
+                                    ['nil votes', num(sm.nil), ''],
+                                    ['other block', num(sm.other_block), ''],
+                                ],
+                            ],
+                        ])
+                    )
+                    up.appendChild(chart('uptime'))
+                    group.appendChild(up)
+
+                    var pr = section(
+                        'proposals',
+                        'Proposals',
+                        info(
+                            'per UTC day: the rounds it was the expected proposer of until the block was made, and those it missed',
+                            "the block history: block headers and each round's expected proposer",
+                            'missed ÷ expected (10 %) over the 30 complete UTC days before today; the ranking counts only heights it signed and leaves restart heights out, the figures here count every height'
+                        )
+                    )
+                    var pm = sm.proposals_missed
+                    var pe = sm.proposals_expected
+                    pr.appendChild(
+                        statsLine([
+                            [
+                                'last 30 days',
+                                [
+                                    [
+                                        'missed',
+                                        pe
+                                            ? num(pm) +
+                                              ' of ' +
+                                              num(pe) +
+                                              ' (' +
+                                              ((pm / pe) * 100).toFixed(1) +
+                                              ' %)'
+                                            : 'none expected',
+                                        pe
+                                            ? scoreBand.proposals(
+                                                  (pm / pe) * 100
+                                              )
+                                            : '',
+                                    ],
+                                ],
+                            ],
+                            [
+                                'last 24 h',
+                                [
+                                    [
+                                        'missed',
+                                        live.expected_proposals_24h
+                                            ? num(live.missed_proposals_24h) +
+                                              ' of ' +
+                                              num(live.expected_proposals_24h)
+                                            : 'none expected',
+                                        '',
+                                    ],
+                                ],
+                            ],
+                        ])
+                    )
+                    pr.appendChild(chart('proposals'))
+                    group.appendChild(pr)
+
+                    var rc = sm.recovery
+                    var re = section(
+                        'recovery',
+                        'Recovery',
+                        info(
+                            'after a restart (two blocks more than 2 min apart), how long it took to sign again; it gets a sample only if it was signing before the restart',
+                            'the block history: restart gaps and absences',
+                            'the median of its last 3 samples within the 180 complete UTC days before today (20 %)'
+                        )
+                    )
+                    re.appendChild(
+                        statsLine([
+                            [
+                                'last 180 days',
+                                [
+                                    [
+                                        'median of its last 3',
+                                        rc.samples ? dur(rc.median_ms) : '—',
+                                        rc.samples
+                                            ? scoreBand.recovery(rc.median_ms)
+                                            : '',
+                                    ],
+                                    ['restarts', num(rc.samples), ''],
+                                    [
+                                        'slowest',
+                                        rc.samples ? dur(rc.slowest_ms) : '—',
+                                        '',
+                                    ],
+                                ],
+                            ],
+                        ])
+                    )
+                    re.appendChild(chart('recovery'))
+                    group.appendChild(re)
+                    return group
+                }
+
+                function delaySection(rep) {
+                    var sec = section(
+                        'delay',
+                        'Vote delay',
+                        info(
+                            "how far its precommits' times are from the commit's voting-power-weighted median time; negative is early",
+                            'the block history: daily vote-delay histograms; the live window for the last 100 blocks',
+                            ''
+                        )
+                    )
+                    var live = rep.live.vote_delay_ms
+                    sec.appendChild(
+                        statsLine([
+                            [
+                                'last 100 blocks',
+                                [
+                                    [
+                                        'median',
+                                        live === null
+                                            ? '—'
+                                            : voteDelayText(live),
+                                        '',
+                                    ],
+                                ],
+                            ],
+                            [
+                                'last 30 days',
+                                [
+                                    [
+                                        'mean',
+                                        rep.summary.votes
+                                            ? voteDelayText(
+                                                  rep.summary.vote_delay_mean_ms
+                                              )
+                                            : '—',
+                                        '',
+                                    ],
+                                ],
+                            ],
+                        ])
+                    )
+                    sec.appendChild(chart('delay'))
+                    return sec
+                }
+
+                // timelineRow builds a Timeline entry in the Timeline view's
+                // row style.
+                function timelineRow(e) {
+                    var k, cls, what, p
+                    switch (e.kind) {
+                        case 'recovering':
+                            k = '↻'
+                            cls = 'vt-out'
+                            what = ['not signed since the restart']
+                            p = 'restart at #' + num(e.restart_height)
+                            break
+                        case 'recovered':
+                            k = '↻'
+                            cls = 'vt-rec'
+                            what = [
+                                'recovered in ',
+                                [
+                                    dur(e.duration_ms),
+                                    scoreBand.recovery(e.duration_ms),
+                                ],
+                            ]
+                            p = 'restart at #' + num(e.restart_height)
+                            break
+                        case 'outage':
+                            k = '■'
+                            cls = 'vt-out'
+                            what = ['outage of ' + num(e.blocks) + ' blocks']
+                            p =
+                                dur(
+                                    Date.parse(e.end_time) - Date.parse(e.time)
+                                ) + (e.ongoing ? ', ongoing' : '')
+                            break
+                        case 'power':
+                            k = '↕'
+                            cls = 'vt-pow'
+                            what = ['power ' + e.before + ' → ' + e.after]
+                            p = ''
+                            break
+                        case 'rotated':
+                            k = '⇄'
+                            cls = 'vt-rot'
+                            what = ['rotated its key']
+                            p =
+                                shortAddr(e.old_address) +
+                                ' → ' +
+                                shortAddr(e.new_address)
+                            break
+                        case 'joined':
+                        case 'left':
+                        case 'genesis':
+                            k = { joined: '+', left: '−', genesis: '◆' }[e.kind]
+                            cls = {
+                                joined: 'vt-add',
+                                left: 'vt-rm',
+                                genesis: 'vt-gen',
+                            }[e.kind]
+                            what = [
+                                e.kind === 'genesis'
+                                    ? 'in the genesis set'
+                                    : e.kind,
+                            ]
+                            p = 'power ' + e.power
+                            break
+                        default:
+                            return null
+                    }
+                    var r = mkEl('div', null, 'vt-row')
+                    var h = mkEl(
+                        'span',
+                        '#' + num(e.height) + ' · ' + timeAgo(e.time),
+                        'h tap-popover',
+                        { 'data-popover': utcMinute(e.time) }
+                    )
+                    r.appendChild(h)
+                    r.appendChild(mkEl('span', k, 'k ' + cls))
+                    var w = mkEl('span', null, 'w')
+                    what.forEach(function (seg) {
+                        w.appendChild(
+                            typeof seg === 'string'
+                                ? document.createTextNode(seg)
+                                : mkEl('b', seg[0], seg[1])
+                        )
+                    })
+                    if (p) {
+                        w.appendChild(document.createTextNode(' '))
+                        w.appendChild(mkEl('span', p, 'p'))
+                    }
+                    r.appendChild(w)
+                    r.appendChild(mkEl('span', '', 'n'))
+                    return r
+                }
+
+                function timelineSection(rep) {
+                    var sec = section(
+                        'timeline',
+                        'Timeline',
+                        info(
+                            'its changes: joins, leaves, power, key rotations, outages, recoveries after a restart',
+                            'the block history: validator sets, set-change events, absences, restart gaps',
+                            'its outages and recoveries (see Uptime and Recovery); the rest is not'
+                        )
+                    )
+                    var rows = rep.timeline.map(timelineRow).filter(Boolean)
+                    if (!rows.length)
+                        sec.appendChild(mkEl('div', NO_HISTORY, 'val-msg'))
+                    rows.forEach(function (r) {
+                        sec.appendChild(r)
+                    })
+                    return sec
+                }
+
+                function render(rep) {
+                    title.textContent = rep.moniker || shortAddr(rep.address)
+                    clearChildren(body)
+                    body.appendChild(statusLine(rep))
+                    body.appendChild(profileSection(rep))
+                    body.appendChild(scoredGroup(rep))
+                    body.appendChild(delaySection(rep))
+                    body.appendChild(timelineSection(rep))
+                    chartRep = rep
+                    drawCharts()
+                }
+                function message(text) {
+                    clearChildren(body)
+                    body.appendChild(mkEl('div', text, 'val-msg'))
+                }
+
+                // ---- Opening and closing
+                function urlWith(val) {
+                    var p = new URLSearchParams(location.search)
+                    if (val) p.set('val', val)
+                    else p.delete('val')
+                    var s = p.toString()
+                    return (
+                        location.pathname + (s ? '?' + s : '') + location.hash
+                    )
+                }
+                // show opens the modal on val and reads its report; the URL
+                // follows to the report's operator when it names one.
+                function show(val) {
+                    shown = val
+                    chartRep = null
+                    if (!modal.classList.contains('open')) {
+                        opener = document.activeElement
+                        modal.classList.add('open')
+                    }
+                    title.textContent = shortAddr(val)
+                    message('loading…')
+                    $('val-close').focus()
+                    var s = ++seq
+                    fetch('/api/validator?val=' + encodeURIComponent(val))
+                        .then(function (res) {
+                            return res.json().then(function (d) {
+                                return { ok: res.ok, d: d }
+                            })
+                        })
+                        .then(
+                            function (r) {
+                                if (s !== seq) return
+                                if (!r.ok) {
+                                    message(r.d.error || 'could not load')
+                                    return
+                                }
+                                try {
+                                    render(r.d)
+                                } catch (e) {
+                                    // The page's fault, not the read's: said
+                                    // so, and thrown on for the console.
+                                    chartRep = null
+                                    message('could not show it: ' + e.message)
+                                    setTimeout(function () {
+                                        throw e
+                                    })
+                                    return
+                                }
+                                if (r.d.operator && r.d.operator !== val) {
+                                    shown = r.d.operator
+                                    history.replaceState(
+                                        history.state ? { val: shown } : null,
+                                        '',
+                                        urlWith(shown)
+                                    )
+                                }
+                            },
+                            function (e) {
+                                if (s === seq)
+                                    message('could not load: ' + e.message)
+                            }
+                        )
+                }
+                function hide() {
+                    shown = null
+                    chartRep = null
+                    seq++
+                    modal.classList.remove('open')
+                    hidePopover()
+                    if (opener && opener.focus) opener.focus()
+                    opener = null
+                }
+                window.openValidator = function (val) {
+                    if (
+                        new URLSearchParams(location.search).get('val') !== val
+                    ) {
+                        history.pushState({ val: val }, '', urlWith(val))
+                        pushed = true
+                    }
+                    show(val)
+                }
+                window.closeValidator = function () {
+                    if (!shown) return
+                    hide()
+                    if (pushed) {
+                        pushed = false
+                        history.back()
+                    } else history.replaceState(null, '', urlWith(null))
+                }
+                window.addEventListener('popstate', function () {
+                    var val = new URLSearchParams(location.search).get('val')
+                    if (val) {
+                        pushed = !!(history.state && history.state.val)
+                        if (val !== shown) show(val)
+                    } else if (shown) {
+                        pushed = false
+                        hide()
+                    }
+                })
+                $('val-close').addEventListener('click', closeValidator)
+                modal.addEventListener('click', function (e) {
+                    if (e.target === modal) closeValidator()
+                })
+                document.addEventListener('keydown', function (e) {
+                    if (!shown) return
+                    if (e.key === 'Escape') closeValidator()
+                    if (e.key === 'Tab') keepFocusIn(modal, e)
+                })
+                // The link names the validator alone, without the page's
+                // other parameters (an ETA card's).
+                $('val-link-btn').addEventListener('click', function (e) {
+                    copyNotify(
+                        location.origin +
+                            location.pathname +
+                            '?val=' +
+                            encodeURIComponent(shown),
+                        e
+                    )
+                })
+                // A plain click on a validator's name opens its page, and no
+                // other handler sees it (the row's or the card's copy); a
+                // modified click follows the link.
+                document.addEventListener(
+                    'click',
+                    function (e) {
+                        if (!(e.target instanceof Element)) return
+                        var a = e.target.closest('a.val-link')
+                        if (!a) return
+                        if (
+                            e.button !== 0 ||
+                            e.metaKey ||
+                            e.ctrlKey ||
+                            e.shiftKey ||
+                            e.altKey
+                        )
+                            return
+                        e.preventDefault()
+                        e.stopPropagation()
+                        openValidator(new URL(a.href).searchParams.get('val'))
+                    },
+                    true
+                )
+                // A reload keeps the entry an open pushed, so closing goes back.
+                var initial = new URLSearchParams(location.search).get('val')
+                if (initial) {
+                    pushed = !!(history.state && history.state.val)
+                    show(initial)
+                }
             })()
         </script>
     </body>

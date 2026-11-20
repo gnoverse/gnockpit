@@ -2,7 +2,6 @@ package web
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
@@ -145,28 +144,14 @@ type historyDelayCounts struct {
 	Buckets []int64 `json:"buckets"`
 }
 
-type historyErrorBody struct {
-	Error string `json:"error"`
-}
-
 // handleHistory serves the block history as JSON, CORS-open.
 func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("Access-Control-Allow-Origin", "*")
-	w.Header().Set("Cache-Control", "no-cache")
 	rep, status, err := s.historyReport(r.Context(), r.URL.Query())
-	var payload any = rep
 	if err != nil {
-		payload = historyErrorBody{Error: err.Error()}
-	}
-	body, err := json.MarshalIndent(payload, "", "  ")
-	if err != nil {
-		log.Printf("history: encode: %v", err)
-		http.Error(w, "internal error", http.StatusInternalServerError)
+		serveJSON(w, "history", status, errorBody{Error: err.Error()})
 		return
 	}
-	w.WriteHeader(status)
-	w.Write(body)
+	serveJSON(w, "history", status, rep)
 }
 
 func (s *Server) historyReport(ctx context.Context, q url.Values) (historyReport, int, error) {
