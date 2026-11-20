@@ -1620,7 +1620,7 @@
             .val-scored .val-sec {
                 padding-left: 0;
             }
-            .val-scored .val-sec:first-of-type {
+            .val-glabel + .val-sec {
                 margin-top: 8px;
             }
             .kv .v.val-text {
@@ -1854,7 +1854,7 @@
                 <button
                     id="eta-btn"
                     class="hdr-btn"
-                    title="When will a block be produced, or which block at a given time"
+                    data-popover="When will a block be produced, or which block at a given time"
                     aria-label="Block ETA"
                     onclick="openEtaModal()"
                 >
@@ -1984,7 +1984,7 @@
                         <span class="eta-remind-wrap" hidden>
                             <button
                                 class="eta-remind"
-                                title="Notify this device before this height"
+                                data-popover="Notify this device before this height"
                                 aria-haspopup="dialog"
                                 aria-expanded="false"
                             >
@@ -2051,14 +2051,14 @@
                         </span>
                         <button
                             class="eta-copy"
-                            title="Copy the link to this countdown"
+                            data-popover="Copy the link to this countdown"
                             aria-label="Copy the link to this countdown"
                         >
                             ⧉ link
                         </button>
                         <button
                             class="eta-close"
-                            title="Remove this countdown"
+                            data-popover="Remove this countdown"
                             aria-label="Remove this countdown"
                         >
                             ✕
@@ -2369,7 +2369,7 @@
                                         data-sort="props"
                                         style="cursor: pointer"
                                         class="info-btn"
-                                        data-popover="Proposals it missed in the last 24 h, of those it was expected to make: the rounds it was the proposer of until the block was made. Scored (10 %)."
+                                        data-popover="Proposals it missed in the last 24 h, of those it was expected to make: the rounds it was the proposer of until the block was made. Not scored: the ranking scores missed proposals over 30 days (10 %)."
                                     >
                                         Missed props 24h
                                     </th>
@@ -2537,7 +2537,7 @@
             var _copyToast = null
             var _copyToastTimer = 0
             function copyNotify(text, e) {
-                if (!text || text === '-') return
+                if (!text || text === '-' || text === '—') return
                 navigator.clipboard.writeText(text)
                 if (!_copyToast) {
                     _copyToast = document.createElement('div')
@@ -2772,6 +2772,31 @@
             var POP_TARGETS = '.info-btn, [data-popover], [data-pop-rows]'
             var TAP_TARGETS = '.info-btn, .tap-popover, [data-pop-rows]'
 
+            // keepFocusIn keeps Tab and Shift+Tab inside a dialog: the focus
+            // wraps from its last control to its first and back, and comes
+            // back to it from wherever it went.
+            function keepFocusIn(dialog, e) {
+                var f = Array.from(
+                    dialog.querySelectorAll(
+                        'a[href], button:not(:disabled), input'
+                    )
+                )
+                if (!f.length) return
+                var first = f[0]
+                var last = f[f.length - 1]
+                var at = document.activeElement
+                if (!dialog.contains(at)) {
+                    ;(e.shiftKey ? last : first).focus()
+                    e.preventDefault()
+                } else if (e.shiftKey && at === first) {
+                    last.focus()
+                    e.preventDefault()
+                } else if (!e.shiftKey && at === last) {
+                    first.focus()
+                    e.preventDefault()
+                }
+            }
+
             // popRows gives el the rows form: an optional title, then rows of
             // [swatch colour or null, label, value].
             function popRows(el, title, rows) {
@@ -2815,6 +2840,8 @@
             function showPopover(el) {
                 var pop = $('popover')
                 fillPopover(pop, el)
+                // Measured from the page's corner, not where the last one sat.
+                pop.style.top = pop.style.left = '0px'
                 pop.classList.add('visible')
                 var rect = el.getBoundingClientRect()
                 var top = rect.bottom + 4
@@ -5259,7 +5286,8 @@
 
             // ---- Click-to-copy handlers (delegated)
 
-            // KV values in the Network State and Block ETA cards
+            // KV values: the Network State and Block ETA cards, a validator's
+            // profile
             document.addEventListener('click', function (e) {
                 var v = e.target.closest('.kv .v')
                 if (!v) return
@@ -5436,8 +5464,8 @@
                 const chainStuckHTML = `<div style="display:flex; align-items:center; gap:10px; padding:10px 0; border-bottom:1px solid var(--border,#333);">
         <input type="checkbox" id="chk-chain_stuck" data-type="chain_stuck" data-entity="" onchange="onAlertCheck(this)">
         <label for="chk-chain_stuck" style="flex:1; cursor:pointer;">Chain stuck<span style="${hintStyle}">for ${chainStuckSecs}s</span></label>
-        <input type="checkbox" id="rec-chain_stuck" data-rec-type="chain_stuck" data-rec-entity="" onchange="onRecoveryCheck(this)" title="Also notify on recovery">
-        <label for="rec-chain_stuck" style="${recStyle}" title="Also notify on recovery">recovery</label>
+        <input type="checkbox" id="rec-chain_stuck" data-rec-type="chain_stuck" data-rec-entity="" onchange="onRecoveryCheck(this)" data-popover="Also notify on recovery">
+        <label for="rec-chain_stuck" style="${recStyle}" data-popover="Also notify on recovery">recovery</label>
     </div>`
 
                 // ---- chain rows: one-off events, no recovery ----
@@ -5493,8 +5521,8 @@
                         return `<div style="display:flex; align-items:center; gap:10px; padding:6px 0 6px 16px; font-size:0.88em;">
             <input type="checkbox" id="chk-${safeID}" data-type="validator_missing_blocks" data-entity="${escHTML(eid)}" onchange="onAlertCheck(this)">
             <label for="chk-${safeID}" style="flex:1; cursor:pointer; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" data-popover="${escHTML(label)}">${escHTML(label)}</label>
-            <input type="checkbox" id="rec-${safeID}" data-rec-type="validator_missing_blocks" data-rec-entity="${escHTML(eid)}" onchange="onRecoveryCheck(this)" title="Also notify on recovery">
-            <label for="rec-${safeID}" style="${recStyle}" title="Also notify on recovery">recovery</label>
+            <input type="checkbox" id="rec-${safeID}" data-rec-type="validator_missing_blocks" data-rec-entity="${escHTML(eid)}" onchange="onRecoveryCheck(this)" data-popover="Also notify on recovery">
+            <label for="rec-${safeID}" style="${recStyle}" data-popover="Also notify on recovery">recovery</label>
         </div>`
                     })
                     .join('')
@@ -7055,20 +7083,7 @@
                 document.addEventListener('keydown', function (e) {
                     if (!modal.classList.contains('open')) return
                     if (e.key === 'Escape') closeEtaModal()
-                    if (e.key !== 'Tab') return
-                    // Keep focus inside the dialog.
-                    var f = Array.from(
-                        modal.querySelectorAll('button:not(:disabled), input')
-                    )
-                    var first = f[0]
-                    var last = f[f.length - 1]
-                    if (e.shiftKey && document.activeElement === first) {
-                        last.focus()
-                        e.preventDefault()
-                    } else if (!e.shiftKey && document.activeElement === last) {
-                        first.focus()
-                        e.preventDefault()
-                    }
+                    if (e.key === 'Tab') keepFocusIn(modal, e)
                 })
                 modal.querySelectorAll('.eta-seg button').forEach(function (b) {
                     b.addEventListener('click', function () {
@@ -7372,11 +7387,8 @@
                     if (text != null) e.textContent = text
                     return e
                 }
-                function short(a) {
-                    return a.length > 16 ? a.slice(0, 8) + '…' + a.slice(-4) : a
-                }
                 function who(m) {
-                    return m.moniker || short(m.address)
+                    return m.moniker || shortAddr(m.address)
                 }
                 // names lists members, their names in bold and linked to their
                 // pages: [text, bold, address] segments.
@@ -7455,16 +7467,16 @@
                             cls: 'vt-rot',
                             what: [
                                 [
-                                    r.moniker || short(r.new_address),
+                                    r.moniker || shortAddr(r.new_address),
                                     true,
                                     r.new_address,
                                 ],
                                 [' rotated its key', false],
                             ],
                             p:
-                                short(r.old_address) +
+                                shortAddr(r.old_address) +
                                 ' → ' +
-                                short(r.new_address),
+                                shortAddr(r.new_address),
                         })
                     })
                     return out
@@ -7740,6 +7752,8 @@
                 // axes scroll together and open on the newest day. On a phone,
                 // Uptime and Proposals are calendars.
                 var DAY_PX = 8
+                var DAY_MS = 86400000
+                var NO_HISTORY = 'nothing in the block history yet'
                 var EMPTY = 'var(--border)'
                 var BAND_FILL = {
                     ok: 'var(--green)',
@@ -7781,6 +7795,9 @@
                     )
                     t.textContent = s
                     return t
+                }
+                function dayStart(ms) {
+                    return Math.floor(ms / DAY_MS) * DAY_MS
                 }
                 function month(day) {
                     return new Date(day + 'T00:00:00Z')
@@ -7835,9 +7852,10 @@
                         svg.appendChild(axisText(2, y + 14, month(days[0].day)))
                 }
 
-                // chartDays lists the UTC days from the report's first to
-                // today: each with its counters (null without blocks in the
-                // set) and the outages that started on it.
+                // chartDays lists the UTC days from the report's first to its
+                // today, the day after the scoring window's last: each with
+                // its counters (null without blocks in the set) and the
+                // outages that cover it.
                 function chartDays(rep) {
                     if (!rep.days.length) return []
                     var byDay = {}
@@ -7847,15 +7865,24 @@
                     var outages = {}
                     rep.timeline.forEach(function (e) {
                         if (e.kind !== 'outage') return
-                        var day = e.time.slice(0, 10)
-                        ;(outages[day] = outages[day] || []).push(e)
+                        // Its last absence is before block to+1's time.
+                        var last = dayStart(Date.parse(e.end_time) - 1)
+                        for (
+                            var t = dayStart(Date.parse(e.time));
+                            t <= last;
+                            t += DAY_MS
+                        ) {
+                            var day = new Date(t).toISOString().slice(0, 10)
+                            ;(outages[day] = outages[day] || []).push(e)
+                        }
                     })
-                    var today = Math.floor(Date.now() / 86400000) * 86400000
+                    var today =
+                        Date.parse(rep.summary.last_day + 'T00:00:00Z') + DAY_MS
                     var out = []
                     for (
                         var t = Date.parse(rep.days[0].day + 'T00:00:00Z');
                         t <= today;
-                        t += 86400000
+                        t += DAY_MS
                     ) {
                         var day = new Date(t).toISOString().slice(0, 10)
                         out.push({
@@ -7906,13 +7933,14 @@
                                 ) +
                                 (o.ongoing ? ', ongoing' : ''),
                         ])
+                        // A day the outage continues into dates its start.
+                        var start = o.time.slice(11, 16)
+                        if (o.time.slice(0, 10) !== d.day)
+                            start = o.time.slice(0, 10) + ' ' + start
                         rows.push([
                             null,
                             '',
-                            'from ' +
-                                o.time.slice(11, 16) +
-                                ' UTC, #' +
-                                num(o.height),
+                            'from ' + start + ' UTC, #' + num(o.height),
                         ])
                     })
                     return rows
@@ -7949,54 +7977,63 @@
                     ]
                 }
 
-                // dayBars draws one bar per day, top y, h tall, coloured and
-                // explained by fillOf and rowsOf; outage dots above the bars
-                // when dots is set.
-                function dayBars(
-                    days,
-                    px,
-                    height,
-                    y,
-                    h,
-                    axisY,
-                    fillOf,
-                    rowsOf,
-                    dots
-                ) {
-                    var svg = svgRoot(days.length * px, height)
-                    days.forEach(function (d, i) {
-                        var r = filled(
-                            svgEl('rect', {
-                                x: i * px + 1,
-                                y: y,
-                                width: px - 2,
-                                height: h,
-                                rx: 1,
-                            }),
-                            fillOf(d)
-                        )
-                        popRows(r, d.day, rowsOf(d))
-                        svg.appendChild(r)
-                        if (dots && d.outages.length)
-                            svg.appendChild(
-                                filled(
-                                    svgEl('circle', {
-                                        cx: i * px + px / 2,
-                                        cy: 4,
-                                        r: 2.5,
-                                        'pointer-events': 'none',
-                                    }),
-                                    'var(--fg)'
-                                )
+                // A day series: each day's fill and popover rows, and whether a
+                // day with an outage gets a dot.
+                var UPTIME = { fill: uptimeFill, rows: uptimeRows, dots: true }
+                var PROPOSALS = {
+                    fill: proposalsFill,
+                    rows: proposalsRows,
+                    dots: false,
+                }
+
+                // dayCell draws day d's rect (attrs) coloured and explained by
+                // series, with an outage dot at (cx, cy) when the series dots.
+                function dayCell(svg, d, series, attrs, cx, cy) {
+                    var r = filled(svgEl('rect', attrs), series.fill(d))
+                    popRows(r, d.day, series.rows(d))
+                    svg.appendChild(r)
+                    if (series.dots && d.outages.length)
+                        svg.appendChild(
+                            filled(
+                                svgEl('circle', {
+                                    cx: cx,
+                                    cy: cy,
+                                    r: 2.5,
+                                    'pointer-events': 'none',
+                                }),
+                                'var(--fg)'
                             )
+                        )
+                }
+
+                // dayBars draws one bar per day of series; geo gives the
+                // chart's height, the bars' top (y) and height (h), and the
+                // axis's y.
+                function dayBars(days, px, series, geo) {
+                    var svg = svgRoot(days.length * px, geo.height)
+                    days.forEach(function (d, i) {
+                        dayCell(
+                            svg,
+                            d,
+                            series,
+                            {
+                                x: i * px + 1,
+                                y: geo.y,
+                                width: px - 2,
+                                height: geo.h,
+                                rx: 1,
+                            },
+                            i * px + px / 2,
+                            4
+                        )
                     })
-                    monthAxis(svg, days, px, axisY)
+                    monthAxis(svg, days, px, geo.axisY)
                     return svg
                 }
 
                 // calendar draws one cell per day, weeks as columns from
                 // Monday, opened on the newest week by drawCharts.
-                function calendar(days, fillOf, rowsOf, dots) {
+                function calendar(days, series) {
                     var s = 13
                     var step = s + 3
                     var first = (new Date(days[0].t).getUTCDay() + 6) % 7
@@ -8027,30 +8064,20 @@
                             svg.appendChild(
                                 axisText(col * step, 10, month(d.day))
                             )
-                        var r = filled(
-                            svgEl('rect', {
+                        dayCell(
+                            svg,
+                            d,
+                            series,
+                            {
                                 x: col * step,
                                 y: 16 + row * step,
                                 width: s,
                                 height: s,
                                 rx: 2,
-                            }),
-                            fillOf(d)
+                            },
+                            col * step + s / 2,
+                            16 + row * step + s / 2
                         )
-                        popRows(r, d.day, rowsOf(d))
-                        svg.appendChild(r)
-                        if (dots && d.outages.length)
-                            svg.appendChild(
-                                filled(
-                                    svgEl('circle', {
-                                        cx: col * step + s / 2,
-                                        cy: 16 + row * step + s / 2,
-                                        r: 2.5,
-                                        'pointer-events': 'none',
-                                    }),
-                                    'var(--fg)'
-                                )
-                            )
                     })
                     var scroll = mkEl('div', null, 'val-cal-scroll')
                     scroll.appendChild(svg)
@@ -8058,36 +8085,9 @@
                     return wrap
                 }
 
-                // scoredRecoveries returns the samples the ranking takes: the
-                // last 3 whose restart day is within the 180 complete UTC days
-                // before today.
-                function scoredRecoveries(rep) {
-                    var today = Math.floor(Date.now() / 86400000) * 86400000
-                    var from = today - 180 * 86400000
-                    return rep.recoveries
-                        .filter(function (r) {
-                            var day = Date.parse(
-                                r.restart_time.slice(0, 10) + 'T00:00:00Z'
-                            )
-                            return !r.pending && day >= from && day < today
-                        })
-                        .slice(-3)
-                }
-                function recoveryNote(r, scored) {
-                    if (scored.indexOf(r) >= 0) return 'yes (its last 3)'
-                    var today = Math.floor(Date.now() / 86400000) * 86400000
-                    var day = Date.parse(
-                        r.restart_time.slice(0, 10) + 'T00:00:00Z'
-                    )
-                    if (day >= today) return 'from tomorrow'
-                    if (day < today - 180 * 86400000)
-                        return 'no (over 180 days ago)'
-                    return 'no (before its last 3)'
-                }
-
                 // recoveryChart draws one bar per sample on its restart's day,
                 // its height on a log scale up to 24 h; a blue line over the
-                // ones the ranking takes.
+                // ones the scoring takes, as the report marks them.
                 function recoveryChart(days, px, rep) {
                     var base = 94
                     var svg = svgRoot(days.length * px, 120)
@@ -8095,7 +8095,6 @@
                     days.forEach(function (d, i) {
                         index[d.day] = i
                     })
-                    var scored = scoredRecoveries(rep)
                     var byDay = {}
                     rep.recoveries.forEach(function (r) {
                         if (r.pending) return
@@ -8118,6 +8117,8 @@
                                 8
                             )
                             var x = x0 + j * bw
+                            var fill =
+                                BAND_FILL[scoreBand.recovery(r.duration_ms)]
                             var bar = filled(
                                 svgEl('rect', {
                                     x: x,
@@ -8126,21 +8127,23 @@
                                     height: bh,
                                     rx: 1,
                                 }),
-                                BAND_FILL[scoreBand.recovery(r.duration_ms)]
+                                fill
                             )
                             popRows(bar, day, [
                                 [
-                                    BAND_FILL[
-                                        scoreBand.recovery(r.duration_ms)
-                                    ],
+                                    fill,
                                     'signed again after',
                                     dur(r.duration_ms),
                                 ],
                                 [null, 'restart', '#' + num(r.restart_height)],
-                                [null, 'scored', recoveryNote(r, scored)],
+                                [
+                                    null,
+                                    'scored',
+                                    r.scored ? 'yes (its last 3)' : 'no',
+                                ],
                             ])
                             svg.appendChild(bar)
-                            if (scored.indexOf(r) >= 0) {
+                            if (r.scored) {
                                 if (lineFrom === null || x < lineFrom)
                                     lineFrom = x
                                 if (lineTo === null || x + bw > lineTo)
@@ -8262,18 +8265,13 @@
                     uptime: function (days, px, rep, cal) {
                         return {
                             chart: cal
-                                ? calendar(days, uptimeFill, uptimeRows, true)
-                                : dayBars(
-                                      days,
-                                      px,
-                                      59,
-                                      9,
-                                      28,
-                                      41,
-                                      uptimeFill,
-                                      uptimeRows,
-                                      true
-                                  ),
+                                ? calendar(days, UPTIME)
+                                : dayBars(days, px, UPTIME, {
+                                      height: 59,
+                                      y: 9,
+                                      h: 28,
+                                      axisY: 41,
+                                  }),
                             legend: legend(
                                 cal
                                     ? 'one cell per UTC day'
@@ -8295,23 +8293,13 @@
                     proposals: function (days, px, rep, cal) {
                         return {
                             chart: cal
-                                ? calendar(
-                                      days,
-                                      proposalsFill,
-                                      proposalsRows,
-                                      false
-                                  )
-                                : dayBars(
-                                      days,
-                                      px,
-                                      50,
-                                      0,
-                                      28,
-                                      32,
-                                      proposalsFill,
-                                      proposalsRows,
-                                      false
-                                  ),
+                                ? calendar(days, PROPOSALS)
+                                : dayBars(days, px, PROPOSALS, {
+                                      height: 50,
+                                      y: 0,
+                                      h: 28,
+                                      axisY: 32,
+                                  }),
                             legend: legend(
                                 cal
                                     ? 'one cell per UTC day'
@@ -8365,13 +8353,7 @@
                     if (!days.length) {
                         boxes.forEach(function (box) {
                             clearChildren(box)
-                            box.appendChild(
-                                mkEl(
-                                    'div',
-                                    'nothing in the block history yet',
-                                    'val-msg'
-                                )
-                            )
+                            box.appendChild(mkEl('div', NO_HISTORY, 'val-msg'))
                         })
                         return
                     }
@@ -8399,16 +8381,17 @@
                             s.scrollLeft = s.scrollWidth
                         }
                     )
+                    // A scroll moves the other axes to it once: their own scroll
+                    // events, which come later, find them at that position.
                     var axes = body.querySelectorAll('.val-axis')
-                    var syncing = false
+                    var synced = null
                     axes.forEach(function (a) {
                         a.addEventListener('scroll', function () {
-                            if (syncing) return
-                            syncing = true
+                            if (a.scrollLeft === synced) return
+                            synced = a.scrollLeft
                             axes.forEach(function (o) {
-                                if (o !== a) o.scrollLeft = a.scrollLeft
+                                if (o !== a) o.scrollLeft = synced
                             })
-                            syncing = false
                         })
                     })
                 }
@@ -8567,7 +8550,7 @@
                         info(
                             'per UTC day, of the blocks it was in the set for: signed (a nil vote counts as signed), absent from the commit, or voted for another block',
                             "the block history: every block's commit",
-                            'signed ÷ blocks in the set (50 %), and outages, runs of 10 or more absences (20 %), over the 30 complete UTC days before today; the ranking leaves recovery runs out, the figures here count every height'
+                            'signed ÷ blocks in the set (50 %), and outages, runs of 10 or more absences (20 %), over the 30 complete UTC days before today; outages leave recovery runs out, as the ranking does; signed counts every height, where the ranking leaves recovery runs out'
                         )
                     )
                     var signed = sm.in_set
@@ -8743,6 +8726,12 @@
                 function timelineRow(e) {
                     var k, cls, what, p
                     switch (e.kind) {
+                        case 'recovering':
+                            k = '↻'
+                            cls = 'vt-out'
+                            what = ['not signed since the restart']
+                            p = 'restart at #' + num(e.restart_height)
+                            break
                         case 'recovered':
                             k = '↻'
                             cls = 'vt-rec'
@@ -8836,13 +8825,7 @@
                     )
                     var rows = rep.timeline.map(timelineRow).filter(Boolean)
                     if (!rows.length)
-                        sec.appendChild(
-                            mkEl(
-                                'div',
-                                'nothing in the block history yet',
-                                'val-msg'
-                            )
-                        )
+                        sec.appendChild(mkEl('div', NO_HISTORY, 'val-msg'))
                     rows.forEach(function (r) {
                         sec.appendChild(r)
                     })
@@ -8879,6 +8862,7 @@
                 // follows to the report's operator when it names one.
                 function show(val) {
                     shown = val
+                    chartRep = null
                     if (!modal.classList.contains('open')) {
                         opener = document.activeElement
                         modal.classList.add('open')
@@ -8893,26 +8877,39 @@
                                 return { ok: res.ok, d: d }
                             })
                         })
-                        .then(function (r) {
-                            if (s !== seq) return
-                            if (!r.ok) {
-                                message(r.d.error || 'could not load')
-                                return
+                        .then(
+                            function (r) {
+                                if (s !== seq) return
+                                if (!r.ok) {
+                                    message(r.d.error || 'could not load')
+                                    return
+                                }
+                                try {
+                                    render(r.d)
+                                } catch (e) {
+                                    // The page's fault, not the read's: said
+                                    // so, and thrown on for the console.
+                                    chartRep = null
+                                    message('could not show it: ' + e.message)
+                                    setTimeout(function () {
+                                        throw e
+                                    })
+                                    return
+                                }
+                                if (r.d.operator && r.d.operator !== val) {
+                                    shown = r.d.operator
+                                    history.replaceState(
+                                        history.state ? { val: shown } : null,
+                                        '',
+                                        urlWith(shown)
+                                    )
+                                }
+                            },
+                            function (e) {
+                                if (s === seq)
+                                    message('could not load: ' + e.message)
                             }
-                            render(r.d)
-                            if (r.d.operator && r.d.operator !== val) {
-                                shown = r.d.operator
-                                history.replaceState(
-                                    history.state ? { val: shown } : null,
-                                    '',
-                                    urlWith(shown)
-                                )
-                            }
-                        })
-                        .catch(function (e) {
-                            if (s === seq)
-                                message('could not load: ' + e.message)
-                        })
+                        )
                 }
                 function hide() {
                     shown = null
@@ -8955,10 +8952,20 @@
                     if (e.target === modal) closeValidator()
                 })
                 document.addEventListener('keydown', function (e) {
-                    if (e.key === 'Escape' && shown) closeValidator()
+                    if (!shown) return
+                    if (e.key === 'Escape') closeValidator()
+                    if (e.key === 'Tab') keepFocusIn(modal, e)
                 })
+                // The link names the validator alone, without the page's
+                // other parameters (an ETA card's).
                 $('val-link-btn').addEventListener('click', function (e) {
-                    copyNotify(location.href, e)
+                    copyNotify(
+                        location.origin +
+                            location.pathname +
+                            '?val=' +
+                            encodeURIComponent(shown),
+                        e
+                    )
                 })
                 // A plain click on a validator's name opens its page, and no
                 // other handler sees it (the row's or the card's copy); a
@@ -8983,8 +8990,12 @@
                     },
                     true
                 )
+                // A reload keeps the entry an open pushed, so closing goes back.
                 var initial = new URLSearchParams(location.search).get('val')
-                if (initial) show(initial)
+                if (initial) {
+                    pushed = !!(history.state && history.state.val)
+                    show(initial)
+                }
             })()
         </script>
     </body>
