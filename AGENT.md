@@ -16,13 +16,20 @@ node/            — RPC client + types (pure data layer, no UI)
   validators.go  — NameRegistry: maps validator addresses ↔ monikers, persists to JSON
   geoip.go       — DB-IP City Lite: IP → coordinates + country (auto-downloaded, monthly)
   asn.go         — DB-IP ASN Lite: IP → ASN + cloud provider (auto-downloaded, monthly)
-  abci.go        — ABCI queries: realm renders (valoper names), the halt params
+  abci.go        — ABCI queries: realm renders (valoper names, profiles), valoper state via vm/qeval, the halt params
   rpcerror.go    — HTTPStatusError, RPCError, IsRefusal
-  signing.go     — per-validator signing over the live window (computeSigning)
+  signing.go     — per-validator signing over the live window (computeSigning): missed, its nil / other-block split, vote delay
+  median.go      — tm2's voting-power-weighted median time (MedianTime), shared with blocks/record.go
   batch.go       — JSON-RPC batches (one POST, several calls); HeightError
   chain.go       — Commit/Precommit, SetMember, BlockEvent and their reads: commits (one, or a batch), validator sets with priorities, block events
 blocks/          — block history since genesis: per-height facts in SQLite, filled from the primary source (shares the push DB handle)
-  store.go       — schema, block rows (absences, round proposers, flags, per-day miss and vote-delay counters), meta (chain id, floor); each address once (blocks_validators), the rest by id (blocks_events keeps text addresses), no index beside the keys
+  store.go       — schema, block rows (absences, round proposers, flags), the counters Write keeps beside them (days, gaps, absence runs, vote delays), meta (chain id, floor, one-time fills); each address once (blocks_validators), the rest by id (blocks_events keeps text addresses), no index beside the keys
+  days.go        — blocks_days: per UTC day and validator, absences by kind, proposals expected / missed
+  proposals.go   — a block's proposals expected and missed (proposalCounts); round-0 blocks by aggregate in the one-time fill
+  gaps.go        — blocks_gaps: restarts (RestartGap, 2 min, between blocks b and b+1)
+  runs.go        — blocks_absence_runs: each validator's runs of consecutive absences (absent or other block)
+  history.go     — ValidatorHistory: a validator's days, outages, recoveries and scoring-window summary; the scoring constants
+  keys.go        — an operator's signing keys over time (OperatorKeys), a key's operator (OperatorOf), Known
   valsets.go     — validator sets by hash; address → id
   windows.go     — missed-block windows: first block by bisecting heights, the first (partial) day's absences + the per-day counters, one read transaction
   delays.go      — daily vote-delay histograms (bucket edges)
@@ -43,6 +50,8 @@ web/             — Web dashboard + HTTP API
   stats.go       — /api/stats: missed-block windows, provider/country aggregates, set health, Nakamoto
   eta.go         — /api/eta: ETA of a height, height at a time, or the scheduled halt (model from eta.Tracker)
   history.go     — /api/history: the block history's reach, the blocks of a height range (≤ 1,000), daily vote delays (≤ 31 days), set changes (≤ 100 a page)
+  validator.go   — /api/validator: one validator's page data (Validator history below)
+  api.go         — serveJSON, errorBody: the JSON API's response writing
   reminder.go    — /api/push/reminder; schedule(): the head, the scheduled halt and time-left estimates the lead-time alerts check
   push/          — browser push and Shoutrrr: alert detection, devices (one per push endpoint), the notification config file (notifyconfig.go: parse; notifyroute.go: per-target senders, reload on change), chain alerts and their sent state (schedule.go), ETA reminders (reminders.go)
   analytics.go   — Optional third-party analytics snippet (--analytics), injected before </body>; off by default
@@ -67,6 +76,17 @@ web/             — Web dashboard + HTTP API
     - Set changes: `Write` records a height whose set differs from the stored height below (settling the written height and the one above, so a batch edge is caught either way). After the upward loop, the tracker tells (`OnValsetChange`, wired to `push.Manager.NotifyValsetChange` in main.go) the changes above the `valset_told_to` watermark, which starts at the first stored high: the backfill and a new chain's first fill never tell.
     - `/validators` once per new `validators_hash`, plus h−1 and h for a block with round > 0 (rounds kept) and every 1,000th (check only); a set below refused twice, over 1,000 below the head, flags the block; a first refusal, or one nearer, fails the pass. Set-change events from `/block_results` at H−2; a failed read becomes an event gap, retried every 10 minutes, dropped when its events are below the floor.
 
+### Validator history (blocks/history.go, web/validator.go)
+
+- **Counters**, kept by `Write` with each record: `blocks_days` (day, validator → absent, nil_votes, other_block, proposals_expected, proposals_missed), `blocks_gaps` (b where block b+1's time is over `RestartGap` after b's) and `blocks_absence_runs` (validator, first, last). Each is filled once for blocks stored before it, while its meta key (`days_filled`, `proposals_filled`, `gaps_filled`, `runs_filled`) is unset; `Reset` sets them all.
+- **Blocks in the set** are derived, never stored: `blocks_vote_delays.votes` (one per precommit present, nil and other block included) + absent.
+- **Proposals**: k = the earliest round ≤ the commit round whose expected proposer is the header's; rounds 0..k expected, 0..k−1 missed. Unknown rounds or no match → the height counts nothing.
+- **Recovery** after a restart at b: R = the run holding b, else the one ending at b−1; signed at h = R.Last+1 when R holds b, else b; a sample when fewer than 10 of R's heights are ≤ b−1 and block h+1 is stored (else pending); duration = time(h+1) − time(b+1).
+- **Outages**: runs of 10+ absences, recovery runs left out up to 24 h of block time after block b+1 (past that, the rest when it holds 10+).
+- **Scoring constants** live in code, never flags: `outageMin`, `recoveryRunCap`, `scoringDays` (30 complete UTC days before today), `recoveryDays` (180), `recoveryLast` (3) in history.go; `RestartGap` in gaps.go.
+- **Identity**: `OperatorKeys` reads an operator's spans from set events (Added at H opens a key from H; an applied rotation at H closes the old key at H−1 and opens the new one at H; Removed closes at H−1); with no event, the profile's key alone. `/api/validator` resolves `?val=` to the operator it is, else `OperatorOf` (an event naming it), else a profile naming it as signing key, else the key alone (operator "") when `Known` or in the current set; else 404.
+- **Valopers**: `valoperRefreshLoop` (every 15 min) → `refreshValopers` reads every profile's render and two `vm/qeval` reads (`KeepRunning`, `LastRotationHeight`) into `Server.valopers`; a refused qeval leaves `State` nil, logged once a refresh.
+
 ### NameRegistry (validators.go)
 
 Maps validator addresses to human-readable monikers. This is critical because Tendermint RPC only returns addresses, not names. Discovery happens through:
@@ -84,8 +104,8 @@ Fetches the last N blocks (default 100), extracts:
 
 - Who signed each block (from `/commit`'s precommits, which finalize that height; one for the block or for nil signs it, an empty slot or one for another block misses it, as in the block history)
 - Who proposed each block (from `header.proposer_address`)
-- Block timestamps → compute per-proposer average block time
-- Sign rate per validator (signed/total as percentage)
+- Block timestamps → the chain-wide average block time
+- Per validator: missed (absent, or a precommit for another block), nil votes (signed), and the median delay of its precommits from each commit's weighted median time (`MedianTime`), within the blocks it was in the set for
 
 This is a live 100-block window; the commits the node marks `canonical` (final)
 are kept in memory, so a refresh fetches only the heights not yet read final:
@@ -98,6 +118,7 @@ one or two when the window slid by one block. Longer-term **missed-block counts*
 - `/api/stats` (stats.go) — per-validator missed-block windows, provider + country aggregates, validator-set health, Nakamoto coefficient.
 - `/api/eta` (eta.go) — `?height=` (+`since` for original/drift/trail), `?time=`, or none for the on-chain halt.
 - `/api/history` (history.go) — the block history's reach (`filled`); `?from=&to=` (≤ 1,000 heights): blocks with absent / nil / other-block members, round proposers, flags, set changes, and the validator sets; `?days=N` (≤ 31): daily vote-delay histograms; `?changes=N&before=H` (≤ 100): set changes newest first with their diff, paged by `next_before`.
+- `/api/validator` (validator.go) — `?val=<g1 operator or signing key>`: status, keys, profile, timeline, days, recoveries, summary, live; 400 malformed, 404 unknown, 503 history off. Not paged.
 - `/api` (server.go) — raw `Snapshot` dump (unstable shape; debugging).
 - Also: `/badge.svg`, `/ws`, `/api/boot`, `/api/push/*` (subscribe: one device per endpoint, `""` id once it has nothing left; `/api/push/reminder` in reminder.go), `/api/notify/*` (the config's targets and their alerts, a test send; `GNOCKPIT_NOTIFY_TEST_TOKEN`).
 

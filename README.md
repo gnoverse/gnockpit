@@ -249,6 +249,9 @@ about 100 bytes a block on onyx (56 validators): about 130 MB for 1.25M blocks.
   proposer of each round of a block finalized after round 0, and a flag when a
   block's proposer is not the expected one or cannot be checked (checked on
   those blocks and on every 1,000th); and the events behind each validator set change.
+  Kept beside them, per UTC day and validator: the absences by kind and the
+  proposals expected and missed; the restarts (two blocks over 2 minutes
+  apart); and each validator's runs of consecutive absences.
 - **Fill** — gnockpit follows the chain head from the first `-rpc` and, in
   between, fills the older blocks newest first, in JSON-RPC batches of
   `--history-batch` commits with `--history-pace` between them (also between
@@ -275,9 +278,45 @@ about 100 bytes a block on onyx (56 validators): about 130 MB for 1.25M blocks.
   nil as signed; the validators card's **Timeline** (beside **Live**): every
   validator set change, newest first, with who joined, left, changed power or
   rotated its key, read back to genesis as the history fills; the set-change
-  alerts; and [`/api/history`](#apihistory). While the history fills,
+  alerts; the [validator page](#validator-page); and
+  [`/api/history`](#apihistory). While the history fills,
   Network State's header shows how much is filled and, once the server has
   measured the fill rate, the time left.
+
+## Validator page
+
+A click on a validator's name (the validators card's Live or Timeline view, or
+a phone card) opens its page over the dashboard; `/?val=<operator or signing
+address>` opens it directly. Back, Esc, × or the backdrop close it, and
+**⧉ link** copies its link, which names the operator once gnockpit knows it.
+The page reads [`/api/validator`](#apivalidator).
+
+| Section    | What                                                                                                                              | Source                                                                                   | Scored                                                                                           |
+| ---------- | --------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
+| Status     | in the set since (a key rotation is no break) or not in it since; power and share; country · provider; version                    | the node's current set; the block history's set changes for since; its matched peer      | no                                                                                               |
+| Profile    | description, server type, operator, signing address and key, keep running, last rotation                                          | the valopers realm, read every 15 min; keep running and last rotation through `vm/qeval` | no                                                                                               |
+| Uptime     | per UTC day, of the blocks it was in the set for: signed (a nil vote signs), absent, other block; outages (10+ absences in a row) | every block's commit                                                                     | signed ÷ blocks in the set (50 %) and outages (20 %), over the 30 complete UTC days before today |
+| Proposals  | per UTC day: the rounds it was the expected proposer of until the block was made, and those it missed                             | block headers and each round's expected proposer                                         | missed ÷ expected (10 %), over the same window                                                   |
+| Recovery   | after a restart, how long it took to sign again; a sample only when it was signing before                                         | restarts and absences                                                                    | the median of its last 3 samples within the 180 complete UTC days before today (20 %)            |
+| Vote delay | its precommits' delay from each commit's voting-power-weighted median time                                                        | the daily vote-delay histograms; the live window for the last 100 blocks                 | no                                                                                               |
+| Timeline   | joins, leaves, power changes, key rotations, outages and recoveries, newest first                                                 | set changes and their events, absences, restarts                                         | its outages and recoveries                                                                       |
+
+**Scored** is the rule and weight the validator scoring gives a datum. The page
+counts every height; the scoring's filters (recovery runs out of uptime,
+proposals on signed heights only, restart heights out) are left to it. A scored
+value is green where its sub-score is full, orange partial, red zero: signed
+≥ 99.9 / 95 to 99.9 / ≤ 95 %; outages 0 / 1 to 9 / 10 or more; proposals missed
+none / under 5 % / 5 % or more; recovery ≤ 10 min / 10 min to 24 h / ≥ 24 h.
+
+On a wide screen the charts share one day axis (at least 8 px a day), scroll
+together and open on the newest day; on a phone, Uptime and Proposals are
+calendars. Each bar or day has a popover with its numbers.
+
+Every tooltip in gnockpit is one popover, in two forms: text (the column headers
+and every ⓘ) and rows (a title, then label / value rows, with a colour swatch
+where a colour means something), for the Recent Blocks boxes, the address and
+node ID cells, the peer RPC ✓, the provider's IP, the map's dots, the Missed last
+100 split and every chart. Hover on a desktop, tap on a phone.
 
 ## Block ETA
 
@@ -319,14 +358,15 @@ target time, then counting down to it.
 
 All endpoints are CORS-open JSON, for building external badges/dashboards.
 
-| Endpoint       | Description                                                                                                                                                                                                                                                                                                                                                                                    |
-| -------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `/api/status`  | Health summary (`status`/`chain`/`height`/`reason`/`time`) plus live network state, the last 100 blocks with signing status, and per-peer / per-validator column data, including `name`, `country`, `city`, `lat`/`lon` and cloud `provider`. A validator's location and provider are its matched peer's. Unknown fields are omitted; when only one of `lat`/`lon` is present, the other is 0. |
-| `/api/stats`   | Aggregate stats: per-validator missed-block windows, cloud-provider and country aggregates, validator-set health, and the Nakamoto coefficient.                                                                                                                                                                                                                                                |
-| `/api/eta`     | Block ETAs: when a height is expected, which height a time reaches, or the scheduled halt; see [`/api/eta`](#apieta).                                                                                                                                                                                                                                                                          |
-| `/api/history` | The block history: how far back it reaches, the blocks of a range of heights with the validators that did not sign each for it, daily vote delays, and the validator set changes; see [`/api/history`](#apihistory).                                                                                                                                                                           |
-| `/api`         | Raw internal snapshot dump (unstable shape; for debugging).                                                                                                                                                                                                                                                                                                                                    |
-| `/badge.svg`   | SVG status badge.                                                                                                                                                                                                                                                                                                                                                                              |
+| Endpoint         | Description                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `/api/status`    | Health summary (`status`/`chain`/`height`/`reason`/`time`) plus live network state, the last 100 blocks with signing status, and per-peer / per-validator column data, including `name`, `country`, `city`, `lat`/`lon` and cloud `provider`. A validator's location and provider are its matched peer's. Unknown fields are omitted; when only one of `lat`/`lon` is present, the other is 0. Each validator also has `voting_power`, `spof`, `inactive`, `missed_100` (absent or a vote for another block, over the last 100 blocks), `other_block_100` and `nil_100` (nil votes, counted as signed), `vote_delay_ms` (the median delay of its precommits in the last 100 blocks; null without one), `missed_24h`, and `missed_proposals_24h` of `expected_proposals_24h`. **Breaking:** the per-validator `avg_block_ms` (block time when it proposed) is gone. |
+| `/api/stats`     | Aggregate stats: per-validator missed-block windows, cloud-provider and country aggregates, validator-set health, and the Nakamoto coefficient.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| `/api/eta`       | Block ETAs: when a height is expected, which height a time reaches, or the scheduled halt; see [`/api/eta`](#apieta).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| `/api/history`   | The block history: how far back it reaches, the blocks of a range of heights with the validators that did not sign each for it, daily vote delays, and the validator set changes; see [`/api/history`](#apihistory).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| `/api/validator` | One validator's page data: status, keys, profile, timeline, daily series, recoveries, scoring-window summary and live figures; see [`/api/validator`](#apivalidator).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| `/api`           | Raw internal snapshot dump (unstable shape; for debugging).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| `/badge.svg`     | SVG status badge.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
 
 ### `/api/eta`
 
@@ -391,6 +431,37 @@ curl -s 'http://localhost:8080/api/history?days=7'
 curl -s 'http://localhost:8080/api/history?changes=20'
 ```
 
+### `/api/validator`
+
+`?val=` is a g1 address: a validator's operator or one of its signing keys.
+gnockpit resolves it, in this order, to the operator it is, the operator a set
+event links it to as a signing key, or the operator whose valopers profile names
+it; a key none of those link, but a stored or the current set holds, is answered
+alone, with `operator` empty. The operator's keys are taken together. Times are
+RFC 3339 UTC to the millisecond, days `YYYY-MM-DD`.
+
+| Field                                     | Content                                                                                                                                                                                                                                                                                                                              |
+| ----------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `chain`, `address`, `operator`, `moniker` | `address` is the one asked.                                                                                                                                                                                                                                                                                                          |
+| `status`                                  | `in_set`; `since_height` and `since_time`: in the set, its latest join with no leave after (a key rotation is none), out of it, its latest leave, left out when below the stored history; `signing_address`, its key in the set; `power` and `share` of the set's total power. Left out until the node's current set is known.       |
+| `keys[]`                                  | Its signing keys, from the set events: `address`, `from` (0: before the stored history) and `to` (left out: still its key).                                                                                                                                                                                                          |
+| `location`                                | Its matched peer's `country`, `city`, `provider` and `version`; left out without one.                                                                                                                                                                                                                                                |
+| `profile`                                 | Its valopers profile: `moniker`, `description`, `server_type`, `operator`, `signing_address`, `signing_pubkey`, and `keep_running` and `last_rotation_height` when the node answered `vm/qeval`. Left out without a profile.                                                                                                         |
+| `timeline[]`                              | Newest first, each with `kind`, `height`, `time` and its kind's fields: `recovered` (`restart_height`, `duration_ms`; `height` is the first height signed again), `outage` (`to`, `blocks`, `end_time`, `ongoing`), `power` (`before`, `after`), `rotated` (`old_address`, `new_address`), `joined`, `left` and `genesis` (`power`). |
+| `vote_delay_edges_ms`                     | The vote-delay buckets' edges, as in `/api/history`.                                                                                                                                                                                                                                                                                 |
+| `days[]`                                  | Each UTC day with a row, ascending: `day`, `in_set`, `signed`, `absent`, `nil`, `other_block`, `proposals_expected`, `proposals_missed`, `votes`, `vote_delay_mean_ms` and `vote_delay_buckets`.                                                                                                                                     |
+| `recoveries[]`                            | `restart_height` (b: block b+1 came over 2 minutes after block b), `restart_time` (block b+1's), `signed_at`, `duration_ms` and `pending` (still absent at the newest block; `signed_at` and `duration_ms` are 0).                                                                                                                   |
+| `summary`                                 | Over the 30 complete UTC days before today (`first_day`, `last_day`): the `days` counters summed, and `outages`; `recovery`: the `samples` within the 180 complete UTC days before today, `median_ms` of the last 3 and `slowest_ms`. Every height counts.                                                                           |
+| `live`                                    | The validators table's: `vote_delay_ms` (null without one), `missed_100`, `nil_100`, `other_block_100`, `missed_24h`, `missed_proposals_24h` and `expected_proposals_24h`.                                                                                                                                                           |
+
+Errors come as `{"error": "…"}`: 400 when `val` is not a g1 address, 404 for
+one gnockpit knows nothing of, 500 when the database read fails, 503 when the
+block history is off.
+
+```bash
+curl -s 'http://localhost:8080/api/validator?val=g1u7g4cejjqsm44nha34hzpzu6df6a7egc9rpqw5'
+```
+
 ## Features
 
 - Live WebSocket dashboard with real-time updates
@@ -398,9 +469,10 @@ curl -s 'http://localhost:8080/api/history?changes=20'
 - Consensus monitoring — height, round, step, prevotes, precommits per validator
 - Peer management — validator detection, health status, RPC reachability
 - Network map — IP-geolocated peers, per-country list, Country + cloud-Provider columns
-- Signing stats — per-validator blocks missed in the last 100 + proposer speed, and missed-block counts over 1h/24h/7d/30d/total
+- Signing stats — per-validator blocks missed in the last 100 (absent or other block, with nil votes), vote delay, proposals missed in the last 24 h, and missed-block counts over 1h/24h/7d/30d/total
+- Validator page — a validator's status, valopers profile, uptime, proposals, recoveries after restarts, vote delay and timeline, with what the scoring counts (`/api/validator`)
 - Block ETA — when a height will be produced (or which height at a given time), with 80%/95% ranges and drift from the original estimate; countdown cards for shared links and for the halt scheduled on chain
-- HTTP API — CORS-open `/api/status`, `/api/stats`, `/api/eta` and `/api/history` for external badges, dashboards and scripts
+- HTTP API — CORS-open `/api/status`, `/api/stats`, `/api/eta`, `/api/history` and `/api/validator` for external badges, dashboards and scripts
 - Alerts — browser push (PWA) and external notifications (Discord, Telegram, …, each webhook its own alerts) for chain-stuck, missed blocks, validator set changes and coordinated halts, and a per-device reminder before an ETA card's height
 - Recent blocks — the last 100 blocks with signing visualization
 - Block history — every block since genesis: proposer, round, the validators that did not sign it for the block and how, vote delays, expected round proposers and validator set changes, shown as a timeline (`/api/history`)
