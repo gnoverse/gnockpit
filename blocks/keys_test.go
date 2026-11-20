@@ -4,6 +4,7 @@ import (
 	"context"
 	"reflect"
 	"testing"
+	"time"
 )
 
 func operatorKeys(t *testing.T, s *Store, operator, profileKey string) []KeySpan {
@@ -74,6 +75,15 @@ func TestOperatorOf(t *testing.T) {
 	}
 }
 
+func TestOperatorOfTakesTheLatestEvent(t *testing.T) {
+	s := newTestStore(t)
+	putEvents(t, s, 50, Event{Type: "ValidatorRemoved", Operator: "g1first", Address: "g1k", Applied: true})
+	putEvents(t, s, 100, Event{Type: "ValidatorAdded", Operator: "g1second", Address: "g1k", Applied: true})
+	if got, err := s.OperatorOf(context.Background(), "g1k"); err != nil || got != "g1second" {
+		t.Errorf("OperatorOf = %q, %v; want g1second, the latest event's", got, err)
+	}
+}
+
 func TestKnown(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
@@ -82,5 +92,53 @@ func TestKnown(t *testing.T) {
 		if got, err := s.Known(ctx, addr); err != nil || got != want {
 			t.Errorf("Known(%s) = %v, %v; want %v", addr, got, err, want)
 		}
+	}
+}
+
+// writeSetBlocks stores heights from to to on the test set, valG0Y and
+// val15T both members.
+func writeSetBlocks(t *testing.T, s *Store, from, to int64) {
+	t.Helper()
+	putTestSet(t, s)
+	var recs []Record
+	for h := from; h <= to; h++ {
+		recs = append(recs, Record{Height: h, Time: time.Unix(h, 0).UTC(), Proposer: valG0Y, ValsetHash: "SET"})
+	}
+	if err := s.Write(context.Background(), recs); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestOperatorKeysPowerChangeKeepsTheSpan(t *testing.T) {
+	s := newTestStore(t)
+	writeSetBlocks(t, s, 40, 90)
+	// valG0Y is in the set below both: each ValidatorAdded is a power change.
+	putEvents(t, s, 50, Event{Type: "ValidatorAdded", Operator: "g1op", Address: valG0Y, Power: 500, Applied: true})
+	putEvents(t, s, 80, Event{Type: "ValidatorAdded", Operator: "g1op", Address: valG0Y, Power: 60, Applied: true})
+	want := []KeySpan{{valG0Y, 0, 0}}
+	if got := operatorKeys(t, s, "g1op", ""); !reflect.DeepEqual(got, want) {
+		t.Errorf("keys = %+v, want %+v", got, want)
+	}
+}
+
+func TestOperatorKeysJoinThenPowerChange(t *testing.T) {
+	s := newTestStore(t)
+	writeSetBlocks(t, s, 50, 90)
+	// Block 49 is not stored: the addition at 50 is a join.
+	putEvents(t, s, 50, Event{Type: "ValidatorAdded", Operator: "g1op", Address: valG0Y, Power: 1, Applied: true})
+	putEvents(t, s, 80, Event{Type: "ValidatorAdded", Operator: "g1op", Address: valG0Y, Power: 60, Applied: true})
+	want := []KeySpan{{valG0Y, 50, 0}}
+	if got := operatorKeys(t, s, "g1op", ""); !reflect.DeepEqual(got, want) {
+		t.Errorf("keys = %+v, want %+v", got, want)
+	}
+}
+
+func TestOperatorKeysAddTheProfileKeyNoEventNames(t *testing.T) {
+	s := newTestStore(t)
+	putEvents(t, s, 100, Event{Type: "ValoperRotated", Operator: "g1op", OldAddress: "g1old", NewAddress: "g1new", Applied: true})
+	// The profile's key rotated again in a block whose events are not read.
+	want := []KeySpan{{"g1old", 0, 99}, {"g1new", 100, 0}, {"g1newer", 0, 0}}
+	if got := operatorKeys(t, s, "g1op", "g1newer"); !reflect.DeepEqual(got, want) {
+		t.Errorf("keys = %+v, want %+v", got, want)
 	}
 }
