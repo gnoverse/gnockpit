@@ -1627,6 +1627,27 @@
                 word-break: normal;
                 overflow-wrap: break-word;
             }
+            /* A profile's markdown: paragraphs, headings and lists spaced as
+               blocks, in the page's own sizes. */
+            .val-text p,
+            .val-text ul,
+            .val-text ol {
+                margin: 0 0 6px;
+            }
+            .val-text ul,
+            .val-text ol {
+                padding-left: 18px;
+            }
+            .val-text .val-md-h {
+                font-weight: 600;
+                margin: 10px 0 4px;
+            }
+            .val-text code {
+                font: inherit;
+                background: var(--bg);
+                padding: 0 3px;
+                border-radius: 3px;
+            }
             /* Stats lines: per window, its name small, then label / bold
                value pairs; a divider between windows. */
             .val-stats {
@@ -8406,6 +8427,115 @@
                     }, 150)
                 })
 
+                // ---- Profile markdown
+                // markdownNodes renders a profile's markdown as DOM nodes, never
+                // as HTML: paragraphs (a single newline is a space), #
+                // headings, - and 1. lists, and inline **bold**, *italic* or
+                // _italic_, `code`, [text](url) and bare URLs. Only http(s)
+                // URLs become links; any other keeps its text.
+                var MD_HEADING = /^\s*#{1,6}\s+/
+                var MD_BULLET = /^\s*[-*+]\s+/
+                var MD_NUMBERED = /^\s*\d+[.)]\s+/
+                var MD_INLINE =
+                    /`([^`]+)`|\[([^\]]+)\]\(([^)\s]+)\)|\*\*([^*]+)\*\*|\*([^*\s][^*]*?)\*|(?<!\w)_([^_\s][^_]*?)_(?!\w)|(https?:\/\/[^\s<>]*[^\s<>.,;:!?'")\]])/g
+                function markdownNodes(md) {
+                    var out = document.createDocumentFragment()
+                    var lines = md.replace(/\r\n?/g, '\n').split('\n')
+                    var block = function (l) {
+                        return (
+                            MD_HEADING.test(l) ||
+                            MD_BULLET.test(l) ||
+                            MD_NUMBERED.test(l)
+                        )
+                    }
+                    for (var i = 0; i < lines.length; ) {
+                        var line = lines[i]
+                        if (!line.trim()) {
+                            i++
+                        } else if (MD_HEADING.test(line)) {
+                            var text = line
+                                .replace(MD_HEADING, '')
+                                .replace(/\s+#+\s*$/, '')
+                            out.appendChild(
+                                mdInline(mkEl('div', null, 'val-md-h'), text)
+                            )
+                            i++
+                        } else if (
+                            MD_BULLET.test(line) ||
+                            MD_NUMBERED.test(line)
+                        ) {
+                            var item = MD_BULLET.test(line)
+                                ? MD_BULLET
+                                : MD_NUMBERED
+                            var list = document.createElement(
+                                item === MD_BULLET ? 'ul' : 'ol'
+                            )
+                            for (; i < lines.length && item.test(lines[i]); i++)
+                                list.appendChild(
+                                    mdInline(
+                                        document.createElement('li'),
+                                        lines[i].replace(item, '')
+                                    )
+                                )
+                            out.appendChild(list)
+                        } else {
+                            var para = []
+                            for (
+                                ;
+                                i < lines.length &&
+                                lines[i].trim() &&
+                                !block(lines[i]);
+                                i++
+                            )
+                                para.push(lines[i].trim())
+                            out.appendChild(
+                                mdInline(
+                                    document.createElement('p'),
+                                    para.join(' ')
+                                )
+                            )
+                        }
+                    }
+                    return out
+                }
+                // mdInline appends text's inline markdown to el, as text nodes
+                // and elements.
+                function mdInline(el, text) {
+                    var at = 0
+                    var m
+                    MD_INLINE.lastIndex = 0
+                    var spans = []
+                    while ((m = MD_INLINE.exec(text))) spans.push(m)
+                    spans.forEach(function (m) {
+                        if (m.index > at)
+                            el.appendChild(
+                                document.createTextNode(text.slice(at, m.index))
+                            )
+                        at = m.index + m[0].length
+                        if (m[1] !== undefined)
+                            el.appendChild(mkEl('code', m[1]))
+                        else if (m[2] !== undefined)
+                            el.appendChild(
+                                /^https?:\/\//i.test(m[3])
+                                    ? mkLink(m[2], m[3])
+                                    : document.createTextNode(m[2])
+                            )
+                        else if (m[4] !== undefined)
+                            el.appendChild(mdInline(mkEl('strong'), m[4]))
+                        else if (m[5] !== undefined || m[6] !== undefined)
+                            el.appendChild(
+                                mdInline(
+                                    mkEl('em'),
+                                    m[5] !== undefined ? m[5] : m[6]
+                                )
+                            )
+                        else el.appendChild(mkLink(m[7], m[7]))
+                    })
+                    if (at < text.length)
+                        el.appendChild(document.createTextNode(text.slice(at)))
+                    return el
+                }
+
                 // ---- Content
                 function statusLine(rep) {
                     var line = mkEl('div', null, 'val-status')
@@ -8417,10 +8547,14 @@
                                 (Date.now() - Date.parse(st.since_time)) /
                                     86400000
                             )
+                            // A bound when its join is older than the history.
+                            var before = st.since_before ? 'before ' : ''
                             text +=
                                 ' since ' +
+                                before +
                                 st.since_time.slice(0, 10) +
                                 ' (' +
+                                (st.since_before ? 'over ' : '') +
                                 days +
                                 ' d)'
                         }
@@ -8443,7 +8577,7 @@
                         s.appendChild(
                             info(
                                 'whether it is in the validator set, since when without a break (key rotations included), its voting power and share of the set',
-                                "the node's current validator set; the block history's set changes for since",
+                                "the node's current validator set; the block history's set changes for since, a bound (since before) when its join is older than the history",
                                 ''
                             )
                         )
@@ -8491,15 +8625,24 @@
                         )
                     )
                     var kv = mkEl('div', null, 'kv')
+                    // row adds a key and its value: text, or a node.
                     function row(k, v, cls) {
                         kv.appendChild(mkEl('span', k, 'k'))
-                        kv.appendChild(
-                            mkEl('span', v, 'v' + (cls ? ' ' + cls : ''))
+                        var cell = mkEl(
+                            typeof v === 'string' ? 'span' : 'div',
+                            typeof v === 'string' ? v : null,
+                            'v' + (cls ? ' ' + cls : '')
                         )
+                        if (typeof v !== 'string') cell.appendChild(v)
+                        kv.appendChild(cell)
                     }
                     var p = rep.profile
                     if (p) {
-                        row('description', p.description || '—', 'val-text')
+                        row(
+                            'description',
+                            p.description ? markdownNodes(p.description) : '—',
+                            'val-text'
+                        )
                         row('server type', p.server_type || '—')
                         row('operator', p.operator)
                         row('signing address', p.signing_address)
