@@ -3230,7 +3230,6 @@
                             (p.catching_up ? ' (syncing)' : ' (synced)'),
                     ],
                 ]
-                if (p.version) rows.push([null, 'version', p.version])
                 var ok = mkEl('span', '✓', 'ok info-btn')
                 popRows(ok, p.rpc_url, rows)
                 ok.setAttribute('data-open-url', p.rpc_url)
@@ -8606,17 +8605,6 @@
                             )
                         )
                         line.appendChild(where)
-                    }
-                    if (loc && loc.version) {
-                        var version = mkEl('span', loc.version)
-                        version.appendChild(
-                            info(
-                                'the gno version its node reports',
-                                "its matched peer's net_info",
-                                ''
-                            )
-                        )
-                        line.appendChild(version)
                     }
                     return line
                 }

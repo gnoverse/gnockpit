@@ -259,9 +259,9 @@ func TestValidatorLocation(t *testing.T) {
 	srv := rotationServer(t)
 	srv.setSnapshot(&node.Snapshot{
 		Validators: []node.Validator{{Address: valLoneKey, VotingPower: "1"}, {Address: valNewKey, VotingPower: "1"}},
-		Peers:      []node.Peer{{ValAddress: valNewKey, Country: "DE", City: "Berlin", Provider: "Hetzner", Version: "v1.4.2"}},
+		Peers:      []node.Peer{{ValAddress: valNewKey, Country: "DE", City: "Berlin", Provider: "Hetzner"}},
 	})
-	want := map[string]any{"country": "DE", "city": "Berlin", "provider": "Hetzner", "version": "v1.4.2"}
+	want := map[string]any{"country": "DE", "city": "Berlin", "provider": "Hetzner"}
 	if _, body := getValidator(t, srv, "?val="+valOperator); !reflect.DeepEqual(body["location"], want) {
 		t.Errorf("location = %v, want %v", body["location"], want)
 	}

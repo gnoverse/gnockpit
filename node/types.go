@@ -21,7 +21,6 @@ type NodeInfo struct {
 	Moniker    string `json:"moniker"`
 	Network    string `json:"network"`
 	ID         string `json:"id"`
-	Version    string `json:"version"`
 	NetAddress string `json:"net_address"`
 }
 
@@ -105,7 +104,6 @@ type Peer struct {
 	Moniker    string `json:"moniker"`
 	RemoteIP   string `json:"remote_ip"`
 	NodeID     string `json:"node_id"`
-	Version    string `json:"version,omitempty"`     // software version from net_info
 	P2PAddress string `json:"p2p_address,omitempty"` // nodeID@ip:port
 	// From net_info node_info (advertised identity).
 	ExternalAddress string `json:"external_address,omitempty"` // advertised host from node_info.net_address

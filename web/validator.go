@@ -61,7 +61,6 @@ type validatorLocation struct {
 	Country  string `json:"country,omitempty"`
 	City     string `json:"city,omitempty"`
 	Provider string `json:"provider,omitempty"`
-	Version  string `json:"version,omitempty"`
 }
 
 // validatorProfile is the operator's valopers profile; the state fields are
@@ -263,7 +262,7 @@ func (s *Server) buildValidatorReport(ctx context.Context, val string, ref valid
 	}
 	if src.snap != nil {
 		if p, ok := peersByValAddr(src.snap.Peers)[liveKey]; ok {
-			rep.Location = &validatorLocation{Country: p.Country, City: p.City, Provider: p.Provider, Version: p.Version}
+			rep.Location = &validatorLocation{Country: p.Country, City: p.City, Provider: p.Provider}
 		}
 	}
 	rep.Live = s.liveOf(src.snap, liveKey)
