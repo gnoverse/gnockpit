@@ -45,6 +45,22 @@ type SubscriptionAlert struct {
 	Lead           string    `json:"lead,omitempty"` // halt_approaching: how far ahead of the halt, as ParseLead reads it
 }
 
+// ValidateKeep checks the alert types a save keeps: each a routable alert,
+// none of the alerts it saves.
+func ValidateKeep(keep []AlertType, alerts []SubscriptionAlert) error {
+	for _, t := range keep {
+		if _, err := routable(string(t)); err != nil {
+			return err
+		}
+		for _, a := range alerts {
+			if a.AlertType == t {
+				return fmt.Errorf("%s is kept and saved at once", t)
+			}
+		}
+	}
+	return nil
+}
+
 // ValidateDeviceAlerts checks the alerts a device saves: each a routable
 // alert, halt_approaching with a lead, no other with one.
 func ValidateDeviceAlerts(alerts []SubscriptionAlert) error {
@@ -84,4 +100,8 @@ type SubscribeRequest struct {
 	P256dh   string              `json:"p256dh"`
 	Auth     string              `json:"auth"`
 	Alerts   []SubscriptionAlert `json:"alerts"`
+	// Keep names the alert types whose stored alerts the save leaves as they
+	// are, as a page sends for alerts it could not show: Alerts has none of
+	// them.
+	Keep []AlertType `json:"keep,omitempty"`
 }

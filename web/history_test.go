@@ -21,18 +21,30 @@ const (
 	histValB = "g15t7f9q6km3ldt885duwl8xu5dncs98528amk4f"
 )
 
-func newBlocksStore(t *testing.T) *blocks.Store {
+// openBlocksStore opens an empty block history on an in-memory database
+// closed with the test.
+func openBlocksStore(t *testing.T) *blocks.Store {
 	t.Helper()
 	db, err := sql.Open("sqlite", ":memory:")
 	if err != nil {
 		t.Fatal(err)
 	}
 	db.SetMaxOpenConns(1)
-	t.Cleanup(func() { db.Close() })
+	t.Cleanup(func() {
+		if err := db.Close(); err != nil {
+			t.Errorf("close the block history: %v", err)
+		}
+	})
 	s, err := blocks.NewStore(context.Background(), db)
 	if err != nil {
 		t.Fatal(err)
 	}
+	return s
+}
+
+func newBlocksStore(t *testing.T) *blocks.Store {
+	t.Helper()
+	s := openBlocksStore(t)
 	if err := s.PutValset(context.Background(), "SET", []blocks.Member{{Address: histValA, PubKey: "KA", Power: 1}, {Address: histValB, PubKey: "KB", Power: 1}}); err != nil {
 		t.Fatal(err)
 	}
@@ -127,13 +139,29 @@ func TestHistoryDisabled(t *testing.T) {
 func TestHistoryProgress(t *testing.T) {
 	from := time.Date(2026, 11, 3, 8, 0, 0, 0, time.UTC)
 	srv := &Server{Blocks: newBlocksStore(t), BlockFill: fakeFill{ChainID: "gnoland-1", From: 10, To: 12, FromTime: from, Floor: 5, Rate: 12.5}}
+	srv.clock = func() time.Time { return from.Add(time.Hour) }
 	code, body := getHistory(t, srv, "")
 	want := map[string]any{
+		"now":    "2026-11-03T09:00:00.000Z",
 		"chain":  "gnoland-1",
 		"filled": map[string]any{"from": 10.0, "from_time": "2026-11-03T08:00:00.000Z", "to": 12.0, "floor": 5.0, "complete": false, "rate": 12.5},
 	}
 	if code != http.StatusOK || !reflect.DeepEqual(body, want) {
 		t.Errorf("got %d %v, want 200 %v", code, body, want)
+	}
+}
+
+// TestHistoryCarriesTheServersNow checks that every answer carries the
+// instant it is as of: the server's clock, as the Timeline reads its ages
+// from it.
+func TestHistoryCarriesTheServersNow(t *testing.T) {
+	srv := changesServer(t)
+	srv.clock = func() time.Time { return time.Date(2026, 11, 19, 12, 30, 5, 250e6, time.FixedZone("CET", 3600)) }
+	for _, query := range []string{"", "?changes=10", "?from=1&to=5", "?days=1"} {
+		code, body := getHistory(t, srv, query)
+		if code != http.StatusOK || body["now"] != "2026-11-19T11:30:05.250Z" {
+			t.Errorf("%s: got %d now %v, want 200 now 2026-11-19T11:30:05.250Z", query, code, body["now"])
+		}
 	}
 }
 
@@ -343,6 +371,30 @@ func TestHistoryServesTheValsetChanges(t *testing.T) {
 	_, body = getHistory(t, srv, "?changes=1&before=4")
 	if changes, _ := body["changes"].([]any); len(changes) != 1 || changes[0].(map[string]any)["height"] != 1.0 || body["next_before"] != nil {
 		t.Errorf("before=4: %v, next_before %v; want the genesis set and no next page", body["changes"], body["next_before"])
+	}
+}
+
+func TestHistoryOffersTheNextPageOnlyWithChangesBelow(t *testing.T) {
+	ctx := context.Background()
+	s := newBlocksStore(t)
+	if err := s.PutValset(ctx, "SET2", []blocks.Member{{Address: histValA, PubKey: "KA", Power: 2}, {Address: histValB, PubKey: "KB", Power: 1}}); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	recs := []blocks.Record{histBlock(2, now), histBlock(3, now)}
+	for h := int64(4); h <= 5; h++ {
+		r := histBlock(h, now)
+		r.ValsetHash = "SET2"
+		recs = append(recs, r)
+	}
+	if err := s.Write(ctx, recs); err != nil {
+		t.Fatal(err)
+	}
+	srv := &Server{Blocks: s, BlockFill: fakeFill{ChainID: "gnoland-1", From: 2, To: 5, Floor: 2, Complete: true}}
+	// The one change, at 4, fills the page; nothing lies below it.
+	_, body := getHistory(t, srv, "?changes=1")
+	if changes, _ := body["changes"].([]any); len(changes) != 1 || body["next_before"] != nil {
+		t.Errorf("changes=1: %v, next_before %v; want change 4 and no next page", body["changes"], body["next_before"])
 	}
 }
 

@@ -20,6 +20,7 @@ import (
 // validator, its operator's signing keys taken together.
 type validatorReport struct {
 	Chain            string              `json:"chain"`
+	Now              string              `json:"now"`      // the instant the report is as of: its windows and ages read it
 	Address          string              `json:"address"`  // as asked
 	Operator         string              `json:"operator"` // "" for a key no event or profile links to one
 	Moniker          string              `json:"moniker"`
@@ -42,13 +43,16 @@ type validatorReport struct {
 // SinceBefore is set: it joined before. Since is omitted when the stored
 // history contradicts the current set (a change not stored yet).
 type validatorStatus struct {
-	InSet          bool    `json:"in_set"`
-	SinceHeight    int64   `json:"since_height,omitempty"`
-	SinceTime      string  `json:"since_time,omitempty"`
-	SinceBefore    bool    `json:"since_before,omitempty"`    // since is a bound: it joined before
-	SigningAddress string  `json:"signing_address,omitempty"` // its key in the set
-	Power          int64   `json:"power"`
-	Share          float64 `json:"share"` // of the set's total power
+	InSet          bool   `json:"in_set"`
+	SinceHeight    int64  `json:"since_height,omitempty"`
+	SinceTime      string `json:"since_time,omitempty"`
+	SinceBefore    bool   `json:"since_before,omitempty"`    // since is a bound: it joined before
+	SigningAddress string `json:"signing_address,omitempty"` // its key in the set
+	// Power and Share are null while unknown: Power when its own voting
+	// power reads as no number, Share when any member's does, which leaves
+	// the set's total unknown.
+	Power *int64   `json:"power"`
+	Share *float64 `json:"share"` // of the set's total power
 }
 
 type validatorKey struct {
@@ -136,7 +140,7 @@ type validatorLive struct {
 // handleValidator serves what gnockpit knows of the validator ?val= names
 // (its operator or one of its signing keys) as JSON, CORS-open.
 func (s *Server) handleValidator(w http.ResponseWriter, r *http.Request) {
-	s.serveValidator(w, r, time.Now())
+	s.serveValidator(w, r, s.now())
 }
 
 // serveValidator answers a /api/validator request as of now.
@@ -237,7 +241,7 @@ func (s *Server) resolveValidator(ctx context.Context, val string, src reportSou
 func (s *Server) buildValidatorReport(ctx context.Context, val string, ref validatorRef, src reportSources, now time.Time) (validatorReport, error) {
 	edges := blocks.DelayEdges()
 	rep := validatorReport{
-		Chain: s.BlockFill.Progress().ChainID, Address: val, Operator: ref.operator,
+		Chain: s.BlockFill.Progress().ChainID, Now: now.UTC().Format(historyTime), Address: val, Operator: ref.operator,
 		Keys: make([]validatorKey, len(ref.spans)), VoteDelayEdgesMs: edges[:],
 	}
 	var addresses []string // oldest key first
@@ -331,14 +335,18 @@ func (s *Server) buildValidatorReport(ctx context.Context, val string, ref valid
 }
 
 // currentSet returns the voting power of each member of the node's current
-// set, nil while it is unknown.
-func currentSet(snap *node.Snapshot) map[string]int64 {
+// set, nil while the set is unknown; a member whose power reads as no
+// number has a nil power.
+func currentSet(snap *node.Snapshot) map[string]*int64 {
 	if snap == nil || len(snap.Validators) == 0 {
 		return nil
 	}
-	powers := make(map[string]int64, len(snap.Validators))
+	powers := make(map[string]*int64, len(snap.Validators))
 	for _, v := range snap.Validators {
-		powers[v.Address], _ = strconv.ParseInt(v.VotingPower, 10, 64)
+		powers[v.Address] = nil
+		if p, err := strconv.ParseInt(v.VotingPower, 10, 64); err == nil {
+			powers[v.Address] = &p
+		}
 	}
 	return powers
 }
@@ -351,7 +359,8 @@ func statusOf(snap *node.Snapshot, addresses []string) *validatorStatus {
 	if powers == nil {
 		return nil
 	}
-	st := &validatorStatus{}
+	// Out of the set, its power is 0.
+	st := &validatorStatus{Power: new(int64)}
 	for _, a := range addresses {
 		if power, ok := powers[a]; ok {
 			st.InSet, st.SigningAddress, st.Power = true, a, power
@@ -360,11 +369,16 @@ func statusOf(snap *node.Snapshot, addresses []string) *validatorStatus {
 	}
 	var total int64
 	for _, p := range powers {
-		total += p
+		if p == nil {
+			return st
+		}
+		total += *p
 	}
+	share := 0.0
 	if total > 0 {
-		st.Share = float64(st.Power) / float64(total)
+		share = float64(*st.Power) / float64(total)
 	}
+	st.Share = &share
 	return st
 }
 

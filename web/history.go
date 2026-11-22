@@ -26,12 +26,13 @@ const maxHistoryChanges = 100
 // historyTime formats /api/history's times: RFC 3339 UTC, to the millisecond.
 const historyTime = "2006-01-02T15:04:05.000Z07:00"
 
-// historyReport is the /api/history payload: how far the block history
-// reaches; for ?from=&to=, the blocks of that range it holds, with the
-// validator sets they name; for ?days=, the vote delays of those UTC days.
-// Blocks and Valsets are nil without a range, and empty for a range it holds
-// none of.
+// historyReport is the /api/history payload: the instant it is as of and how
+// far the block history reaches; for ?from=&to=, the blocks of that range it
+// holds, with the validator sets they name; for ?days=, the vote delays of
+// those UTC days. Blocks and Valsets are nil without a range, and empty for a
+// range it holds none of.
 type historyReport struct {
+	Now        string                     `json:"now"` // the server's clock, as the page reads ages
 	Chain      string                     `json:"chain"`
 	Filled     historyFilled              `json:"filled"`
 	Blocks     []historyBlock             `json:"blocks,omitzero"`
@@ -146,7 +147,7 @@ type historyDelayCounts struct {
 
 // handleHistory serves the block history as JSON, CORS-open.
 func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) {
-	rep, status, err := s.historyReport(r.Context(), r.URL.Query())
+	rep, status, err := s.historyReport(r.Context(), r.URL.Query(), s.now())
 	if err != nil {
 		serveJSON(w, "history", status, errorBody{Error: err.Error()})
 		return
@@ -154,12 +155,12 @@ func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) {
 	serveJSON(w, "history", status, rep)
 }
 
-func (s *Server) historyReport(ctx context.Context, q url.Values) (historyReport, int, error) {
+func (s *Server) historyReport(ctx context.Context, q url.Values, now time.Time) (historyReport, int, error) {
 	if s.Blocks == nil || s.BlockFill == nil {
 		return historyReport{}, http.StatusServiceUnavailable, errors.New("block history disabled")
 	}
 	p := s.BlockFill.Progress()
-	rep := historyReport{Chain: p.ChainID, Filled: historyFilled{From: p.From, To: p.To, Floor: p.Floor, Complete: p.Complete, Rate: p.Rate}}
+	rep := historyReport{Now: now.UTC().Format(historyTime), Chain: p.ChainID, Filled: historyFilled{From: p.From, To: p.To, Floor: p.Floor, Complete: p.Complete, Rate: p.Rate}}
 	if !p.FromTime.IsZero() {
 		rep.Filled.FromTime = p.FromTime.UTC().Format(historyTime)
 	}
@@ -168,7 +169,7 @@ func (s *Server) historyReport(ctx context.Context, q url.Values) (historyReport
 		if err != nil || days < 1 || days > maxHistoryDays {
 			return historyReport{}, http.StatusBadRequest, fmt.Errorf("days must be from 1 to %d", maxHistoryDays)
 		}
-		if rep.VoteDelays, err = s.historyDelays(ctx, days); err != nil {
+		if rep.VoteDelays, err = s.historyDelays(ctx, days, now); err != nil {
 			log.Printf("history: vote delays of %d days: %v", days, err)
 			return historyReport{}, http.StatusInternalServerError, errors.New("internal error")
 		}
@@ -253,8 +254,17 @@ func (s *Server) historyChanges(ctx context.Context, q url.Values, rep *historyR
 	for _, c := range changes {
 		rep.Changes = append(rep.Changes, s.historyChange(c))
 	}
+	// A full page offers the next one only when a change lies below it: an
+	// empty next page would only end the paging.
 	if last := len(changes) - 1; len(changes) == n && changes[last].Height > 1 {
-		rep.NextBefore = changes[last].Height
+		more, err := s.Blocks.HasValsetChangeBelow(ctx, changes[last].Height)
+		if err != nil {
+			log.Printf("history: validator set changes below %d: %v", changes[last].Height, err)
+			return http.StatusInternalServerError, errors.New("internal error")
+		}
+		if more {
+			rep.NextBefore = changes[last].Height
+		}
 	}
 	return http.StatusOK, nil
 }
@@ -306,10 +316,10 @@ func (s *Server) moniker(addr string) string {
 	return ""
 }
 
-// historyDelays returns the vote delays of the last days UTC days, today
-// included.
-func (s *Server) historyDelays(ctx context.Context, days int) (*historyDelays, error) {
-	today := time.Now().UTC().Truncate(24 * time.Hour)
+// historyDelays returns the vote delays of the last days UTC days as of now,
+// today included.
+func (s *Server) historyDelays(ctx context.Context, days int, now time.Time) (*historyDelays, error) {
+	today := now.UTC().Truncate(24 * time.Hour)
 	got, err := s.Blocks.VoteDelays(ctx, today.AddDate(0, 0, 1-days), today)
 	if err != nil {
 		return nil, err

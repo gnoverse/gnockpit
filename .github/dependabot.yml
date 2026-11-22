@@ -1,6 +1,6 @@
 version: 2
 updates:
-  # Keep the SHA-pinned actions in release.yml current.
+  # Keep the SHA-pinned actions in release.yml and test.yml current.
   - package-ecosystem: github-actions
     directory: /
     schedule:

@@ -158,21 +158,28 @@ var errShortHistory = etaUnavailable("the block-time history is too short to mea
 // handleETA serves block ETAs: when a height is reached, which height a time
 // reaches, or the scheduled halt. CORS-open for scripts and dashboards.
 func (s *Server) handleETA(w http.ResponseWriter, r *http.Request) {
-	s.serveETA(w, r, time.Now())
+	s.serveETA(w, r, s.now())
 }
 
 func (s *Server) serveETA(w http.ResponseWriter, r *http.Request, now time.Time) {
-	rep, err := s.etaReport(r.Context(), r.URL.Query(), now)
+	rep, named, err := s.etaReport(r.Context(), r.URL.Query(), now)
 	if err != nil {
 		status := http.StatusInternalServerError
 		var ee *etaError
 		if errors.As(err, &ee) {
 			status = ee.status
 		}
-		serveJSON(w, "eta", status, errorBody{Error: err.Error()})
+		serveJSON(w, "eta", status, etaErrorBody{Error: err.Error(), Halt: named})
 		return
 	}
 	serveJSON(w, "eta", http.StatusOK, rep)
+}
+
+// etaErrorBody is an /api/eta error. Halt names the scheduled halt when the
+// question was the halt's and its estimate failed.
+type etaErrorBody struct {
+	Error string   `json:"error"`
+	Halt  *etaHalt `json:"halt,omitempty"`
 }
 
 // etaRequest is a parsed /api/eta query: a target height or time (neither
@@ -221,24 +228,27 @@ func parseETARequest(q url.Values, tipTime, now time.Time) (etaRequest, error) {
 	return req, nil
 }
 
-func (s *Server) etaReport(ctx context.Context, q url.Values, now time.Time) (etaReport, error) {
+// etaReport answers the query q at now. When it fails it returns no report,
+// and named is the scheduled halt if the question was the halt's own: the
+// halt is known even when its estimate is not.
+func (s *Server) etaReport(ctx context.Context, q url.Values, now time.Time) (rep etaReport, named *etaHalt, err error) {
 	if s.ETA == nil {
-		return etaReport{}, etaUnavailable("block ETA is not enabled")
+		return etaReport{}, nil, etaUnavailable("block ETA is not enabled")
 	}
 	snap := s.getSnapshot()
 	if snap == nil || snap.Status == nil {
-		return etaReport{}, etaUnavailable("no chain status yet")
+		return etaReport{}, nil, etaUnavailable("no chain status yet")
 	}
 	head, err := snap.Status.Head()
 	if err != nil {
-		return etaReport{}, etaUnavailable(fmt.Sprintf("chain status: %v", err))
+		return etaReport{}, nil, etaUnavailable(fmt.Sprintf("chain status: %v", err))
 	}
 	in := etaInput{view: s.ETA.View(), tip: eta.Sample{Height: head.Height, Time: head.Time}, now: now}
 	req, err := parseETARequest(q, in.tip.Time, now)
 	if err != nil {
-		return etaReport{}, err
+		return etaReport{}, nil, err
 	}
-	rep := etaReport{
+	rep = etaReport{
 		Chain:   head.ChainID,
 		Now:     &etaBlock{Height: in.tip.Height, BlockTime: rfc3339(in.tip.Time)},
 		Halt:    haltJSON(in.view.Halt),
@@ -250,13 +260,17 @@ func (s *Server) etaReport(ctx context.Context, q url.Values, now time.Time) (et
 	case req.height != 0:
 		err = s.fillETAHeight(ctx, &rep, in, req.height, req.since)
 	case halt != nil:
+		named = rep.Halt
 		err = s.fillETAHeight(ctx, &rep, in, halt.Height, halt.FirstSeen)
 	default:
 		if p, ok := in.view.Model.Pace(in.tip); ok {
 			rep.Pace = paceJSON(p)
 		}
 	}
-	return rep, err
+	if err != nil {
+		return etaReport{}, named, err
+	}
+	return rep, nil, nil
 }
 
 // etaInput is what an /api/eta answer is computed from: the tracker's view,

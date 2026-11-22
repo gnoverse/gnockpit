@@ -68,11 +68,11 @@ type NetworkState struct {
 // and cloud provider. Embedded in StatusPeer and StatusValidator, its fields
 // serialize inline; unknown ones are omitted.
 type nodeLocation struct {
-	Country  string  `json:"country,omitempty"`
-	City     string  `json:"city,omitempty"`
-	Lat      float64 `json:"lat,omitempty"`
-	Lon      float64 `json:"lon,omitempty"`
-	Provider string  `json:"provider,omitempty"`
+	Country  string   `json:"country,omitempty"`
+	City     string   `json:"city,omitempty"`
+	Lat      *float64 `json:"lat,omitempty"`
+	Lon      *float64 `json:"lon,omitempty"`
+	Provider string   `json:"provider,omitempty"`
 }
 
 // locationOf returns the location resolved for peer p.
@@ -98,10 +98,12 @@ type StatusValidator struct {
 	Address string `json:"address"`
 	nodeLocation
 	VotingPower string `json:"voting_power,omitempty"`
-	SPOF        bool   `json:"spof"`
-	Inactive    bool   `json:"inactive,omitempty"`
-	Missed100   int    `json:"missed_100"`
-	Missed24h   int    `json:"missed_24h"`
+	// SPOF tells whether losing it drops the rest below quorum; nil while
+	// the total voting power is unknown.
+	SPOF      *bool `json:"spof,omitempty"`
+	Inactive  bool  `json:"inactive,omitempty"`
+	Missed100 int   `json:"missed_100"`
+	Missed24h int   `json:"missed_24h"`
 	// Nil100 and OtherBlock100 split the last 100: nil votes (signed) and votes
 	// for another block (counted in Missed100).
 	Nil100        int `json:"nil_100"`
@@ -173,18 +175,23 @@ func (s *Server) buildStatusReport(snap *node.Snapshot, now time.Time) StatusRep
 			rep.Network.CatchingUp = snap.Status.SyncInfo.CatchingUp
 		}
 		byAddr := peersByValAddr(snap.Peers)
-		// Voting power from the authoritative validator set (as
-		// nakamotoCoefficient uses), parsed once per validator.
-		vpByAddr := make(map[string]int, len(snap.Validators))
-		totalVP := 0
-		for _, v := range snap.Validators {
-			if vp, err := strconv.Atoi(v.VotingPower); err == nil {
-				vpByAddr[v.Address] = vp
-				totalVP += vp
+		// Voting power as the payload lists it, each validator's from the
+		// set, parsed once, by its place. While one is unknown (unreadable,
+		// or a validator out of the set) so is the total, and so is each
+		// validator's spof.
+		vps := make([]int, len(votes.Validators))
+		totalVP, totalKnown := 0, true
+		for i, vi := range votes.Validators {
+			vp, err := strconv.Atoi(vi.VotingPower)
+			if err != nil {
+				totalKnown = false
+				break
 			}
+			vps[i] = vp
+			totalVP += vp
 		}
 		rep.Validators = make([]StatusValidator, 0, len(votes.Validators))
-		for _, vi := range votes.Validators {
+		for i, vi := range votes.Validators {
 			sv := StatusValidator{
 				Name:                 vi.Name,
 				Address:              vi.Address,
@@ -197,7 +204,10 @@ func (s *Server) buildStatusReport(snap *node.Snapshot, now time.Time) StatusRep
 				VoteDelayMs:          vi.VoteDelayMs,
 				MissedProposals24h:   vi.MissedProposals24h,
 				ExpectedProposals24h: vi.ExpectedProposals24h,
-				SPOF:                 isSPOF(vpByAddr[vi.Address], totalVP),
+			}
+			if totalKnown {
+				spof := isSPOF(vps[i], totalVP)
+				sv.SPOF = &spof
 			}
 			if p, ok := byAddr[vi.Address]; ok {
 				sv.nodeLocation = locationOf(p)
@@ -213,7 +223,7 @@ func (s *Server) buildStatusReport(snap *node.Snapshot, now time.Time) StatusRep
 // reason/time fields are retained for retrocompat. CORS-open so third parties
 // can build their own badges/dashboards from it.
 func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
-	rep := s.buildStatusReport(s.getSnapshot(), time.Now())
+	rep := s.buildStatusReport(s.getSnapshot(), s.now())
 	body, err := json.MarshalIndent(rep, "", "  ")
 	if err != nil {
 		log.Printf("status: encode: %v", err)
@@ -228,7 +238,7 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 
 // handleBadge serves a gnockpit-styled SVG status badge.
 func (s *Server) handleBadge(w http.ResponseWriter, r *http.Request) {
-	si := deriveStatus(s.getSnapshot(), s.ChainStuckSecs, time.Now())
+	si := deriveStatus(s.getSnapshot(), s.ChainStuckSecs, s.now())
 	label := si.Chain
 	if label == "" {
 		label = "gnockpit"

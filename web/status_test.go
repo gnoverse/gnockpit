@@ -12,6 +12,15 @@ import (
 	"github.com/gnoverse/gnockpit/node"
 )
 
+// statusTestServer is a server whose client reaches no node, with a name
+// registry of its own: enough to build the status report from a snapshot.
+func statusTestServer(t *testing.T) *Server {
+	t.Helper()
+	s := &Server{Client: node.NewClient("http://localhost:1", time.Second)}
+	s.Client.Names = node.NewNameRegistryWithPersist(filepath.Join(t.TempDir(), "names.json"))
+	return s
+}
+
 func TestIsSPOF(t *testing.T) {
 	tests := []struct {
 		name      string
@@ -34,8 +43,7 @@ func TestIsSPOF(t *testing.T) {
 }
 
 func TestBuildStatusReport(t *testing.T) {
-	s := &Server{Client: node.NewClient("http://localhost:1", time.Second)}
-	s.Client.Names = node.NewNameRegistryWithPersist(filepath.Join(t.TempDir(), "names.json"))
+	s := statusTestServer(t)
 	now := time.Date(2026, 7, 3, 12, 0, 0, 0, time.UTC)
 	snap := &node.Snapshot{
 		Status: &node.Status{
@@ -53,9 +61,10 @@ func TestBuildStatusReport(t *testing.T) {
 		Peers: []node.Peer{
 			{
 				NodeID: "n1", ValAddress: "g1a", RPCURL: "http://x", Provider: "AWS",
-				Country: "US", City: "Ashburn", Lat: 39.0438, Lon: -77.4874,
+				Country: "US", City: "Ashburn", Lat: float64Ptr(39.0438), Lon: float64Ptr(-77.4874),
 			},
 			{NodeID: "n2"}, // not geolocated
+			{NodeID: "n3", Country: "EC", City: "Quito", Lat: float64Ptr(0), Lon: float64Ptr(-78.5)},
 		},
 		Signing: &node.SigningStats{WindowSize: 100, ValidatorSigning: map[string]node.ValSigning{
 			"g1a": {Signed: 100, Eligible: 100, SignedInARow: 100},
@@ -100,8 +109,8 @@ func TestBuildStatusReport(t *testing.T) {
 	if a.Country != "US" || a.Provider != "AWS" {
 		t.Errorf("g1a country/provider = %q/%q, want US/AWS", a.Country, a.Provider)
 	}
-	if !a.SPOF {
-		t.Error("g1a should be SPOF (10 of 11 total VP)")
+	if a.SPOF == nil || !*a.SPOF {
+		t.Errorf("g1a spof = %v, want true (10 of 11 total VP)", a.SPOF)
 	}
 	if a.Missed100 != 0 {
 		t.Errorf("g1a missed_100 = %d, want 0", a.Missed100)
@@ -110,8 +119,8 @@ func TestBuildStatusReport(t *testing.T) {
 	if b.Country != "" || b.Provider != "" {
 		t.Errorf("g1b country/provider = %q/%q, want empty", b.Country, b.Provider)
 	}
-	if b.SPOF {
-		t.Error("g1b should not be SPOF (1 of 11 total VP)")
+	if b.SPOF == nil || *b.SPOF {
+		t.Errorf("g1b spof = %v, want false (1 of 11 total VP)", b.SPOF)
 	}
 
 	// Location (country, city, coordinates, provider): on a geolocated peer and
@@ -157,7 +166,59 @@ func TestBuildStatusReport(t *testing.T) {
 				}
 			}
 		}
+		// A peer on the equator keeps its zero latitude.
+		equator := rowWith(payload.Peers, "node_id", "n3")
+		for k, want := range map[string]any{"lat": 0.0, "lon": -78.5} {
+			if v, ok := equator[k]; !ok || v != want {
+				t.Errorf("%v: %s = %v (present %v), want %v", equator, k, v, ok, want)
+			}
+		}
 	})
+}
+
+// TestBuildStatusReportUnknownPower checks that while one validator's voting
+// power is unknown, unreadable or out of the set the source read, so is the
+// total, and so is whether each validator is a single point of failure, though
+// one holds all the power that reads: spof is omitted.
+func TestBuildStatusReportUnknownPower(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		set  []node.Validator
+	}{
+		{"unreadable", []node.Validator{{Address: "g1a", VotingPower: "10"}, {Address: "g1b", VotingPower: "lots"}}},
+		{"out of the set", []node.Validator{{Address: "g1a", VotingPower: "10"}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := statusTestServer(t)
+			now := time.Date(2026, 7, 3, 12, 0, 0, 0, time.UTC)
+			snap := &node.Snapshot{
+				Consensus: &node.ConsensusState{
+					Height: "100", Round: "0", Step: "1",
+					Votes: []node.VoteInfo{{Address: "g1a", Name: "val-a"}, {Address: "g1b", Name: "val-b"}},
+				},
+				Validators: tc.set,
+			}
+			rep := s.buildStatusReport(snap, now)
+			if len(rep.Validators) != 2 {
+				t.Fatalf("validators = %+v, want g1a and g1b", rep.Validators)
+			}
+			body, err := json.Marshal(rep)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var payload struct {
+				Validators []map[string]any `json:"validators"`
+			}
+			if err := json.Unmarshal(body, &payload); err != nil {
+				t.Fatal(err)
+			}
+			for _, v := range payload.Validators {
+				if spof, ok := v["spof"]; ok {
+					t.Errorf("%s: spof = %v, want it omitted while a voting power is unknown", v["address"], spof)
+				}
+			}
+		})
+	}
 }
 
 func snapAt(blockTime string, catchingUp bool) *node.Snapshot {
@@ -249,13 +310,15 @@ func TestHandleStatusAndBadge(t *testing.T) {
 }
 
 func TestStatusValidatorFields(t *testing.T) {
-	s := &Server{Client: node.NewClient("http://localhost:1", time.Second), proposals24h: map[string][2]int{"g1a": {14, 1}}}
-	s.Client.Names = node.NewNameRegistryWithPersist(filepath.Join(t.TempDir(), "names.json"))
+	s := statusTestServer(t)
+	s.proposals24h = map[string][2]int{"g1a": {14, 1}}
 	now := time.Date(2026, 7, 3, 12, 0, 0, 0, time.UTC)
 	snap := &node.Snapshot{
 		Status: &node.Status{SyncInfo: node.SyncInfo{LatestBlockHeight: "100", LatestBlockTime: now.Format(time.RFC3339Nano)}},
-		Consensus: &node.ConsensusState{Height: "100", Round: "0", Step: "1",
-			Votes: []node.VoteInfo{{Address: "g1a"}, {Address: "g1b"}}},
+		Consensus: &node.ConsensusState{
+			Height: "100", Round: "0", Step: "1",
+			Votes: []node.VoteInfo{{Address: "g1a"}, {Address: "g1b"}},
+		},
 		Validators: []node.Validator{{Address: "g1a", VotingPower: "1"}, {Address: "g1b", VotingPower: "1"}},
 		Signing: &node.SigningStats{WindowSize: 100, AvgBlockMs: 3500, ValidatorSigning: map[string]node.ValSigning{
 			"g1a": {Eligible: 100, Signed: 98, Missed: 2, Nil: 1, OtherBlock: 1, Votes: 99, VoteDelayMs: 210},

@@ -55,3 +55,56 @@ jobs:
             echo "$unformatted"
             exit 1
           fi
+
+  # The page tests drive the dashboard in Chromium and WebKit against the real
+  # server. A job of their own: they need the browsers and their system
+  # libraries, which `test` does without, and they run beside it rather than
+  # after it.
+  page:
+    runs-on: ubuntu-24.04
+    # make test-page's own 30-minute timeout, then 10 minutes for the setup
+    # (Go, the browsers and their system libraries): a hung test fails with
+    # Go's goroutine dump before the job is cancelled.
+    timeout-minutes: 40
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # go.sum pins playwright-go, which pins the driver and the browsers.
+      - name: Cache the browsers
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cache/ms-playwright
+            ~/.cache/ms-playwright-go
+          key: playwright-${{ runner.os }}-${{ hashFiles('go.sum') }}
+
+      # The Makefile's install runs with --with-deps: it installs the
+      # browsers' system libraries, which the cache does not hold.
+      - name: Install the browsers
+        run: make install-browsers
+
+      # make test-page vets the page tests, then runs them.
+      - name: Page tests
+        id: page-tests
+        env:
+          PAGE_ARTIFACTS: ${{ runner.temp }}/page
+        run: make test-page
+
+      # Only a failed test leaves traces and screenshots.
+      - name: Upload traces and screenshots
+        if: failure() && steps.page-tests.outcome == 'failure'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: page-traces
+          path: ${{ runner.temp }}/page
+          if-no-files-found: error
+          retention-days: 7

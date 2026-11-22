@@ -127,11 +127,12 @@ type Peer struct {
 	HasProposal    bool   `json:"has_proposal,omitempty"`
 	PeerPrevotes   string `json:"peer_prevotes,omitempty"`
 	PeerPrecommits string `json:"peer_precommits,omitempty"`
-	// Geolocation from the IP (DB-IP City Lite), for the network map.
-	Lat     float64 `json:"lat,omitempty"`
-	Lon     float64 `json:"lon,omitempty"`
-	City    string  `json:"city,omitempty"`
-	Country string  `json:"country,omitempty"`
+	// Geolocation from the IP (DB-IP City Lite), for the network map. Lat and
+	// Lon are set together, only when the IP is located: 0 is a coordinate.
+	Lat     *float64 `json:"lat,omitempty"`
+	Lon     *float64 `json:"lon,omitempty"`
+	City    string   `json:"city,omitempty"`
+	Country string   `json:"country,omitempty"`
 	// Cloud provider from the IP's ASN (DB-IP ASN Lite).
 	ASN      uint   `json:"asn,omitempty"`
 	ASOrg    string `json:"as_org,omitempty"`

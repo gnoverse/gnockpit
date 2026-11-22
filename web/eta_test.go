@@ -222,6 +222,74 @@ func TestETAScheduledHalt(t *testing.T) {
 	}
 }
 
+func TestETAScheduledHaltWithoutEstimate(t *testing.T) {
+	// The halt is known even when its estimate is not: without a query, the
+	// estimate's error names the halt; a question of its own gets the error
+	// alone. The status is the estimate's.
+	var logs bytes.Buffer
+	prev := log.Writer()
+	log.SetOutput(&logs)
+	t.Cleanup(func() { log.SetOutput(prev) })
+	failing := func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusInternalServerError) }
+	for _, tc := range []struct {
+		name   string
+		tip    int64
+		halt   eta.ScheduledHalt
+		rpc    http.HandlerFunc
+		own    string // a question of its own on the halt's height
+		status int
+		msg    string
+	}{
+		{
+			// 2,000 blocks of history are too few for a pace.
+			name: "no pace", tip: 2_000, rpc: answerBlockTimes, own: "height=5000",
+			halt:   eta.ScheduledHalt{Height: 5_000, MinVersion: "v1.8.0", FirstSeen: etaBlockTime(1_900)},
+			status: http.StatusServiceUnavailable, msg: errShortHistory.msg,
+		},
+		{
+			// The halt's block is produced and the RPC cannot date it.
+			name: "undated halt block", tip: tipHeight, rpc: failing, own: "height=987000",
+			halt:   eta.ScheduledHalt{Height: 987_000, MinVersion: "v1.8.0", FirstSeen: etaBlockTime(980_000)},
+			status: http.StatusBadGateway, msg: "the RPC could not give the time of block #987000",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := etaServerWithRPC(t, tc.tip, &tc.halt, tc.rpc)
+			var named struct {
+				Error string   `json:"error"`
+				Halt  *etaHalt `json:"halt"`
+			}
+			want := etaHalt{Height: tc.halt.Height, MinVersion: tc.halt.MinVersion, FirstSeen: rfc(tc.halt.FirstSeen)}
+			if code := decodeETAStrict(t, s, tc.tip, "", &named); code != tc.status || named.Error != tc.msg || named.Halt == nil || *named.Halt != want {
+				t.Errorf("no query: status %d, error %q, halt %+v; want %d, %q, %+v", code, named.Error, named.Halt, tc.status, tc.msg, want)
+			}
+			var own struct {
+				Error string `json:"error"`
+			}
+			if code := decodeETAStrict(t, s, tc.tip, tc.own, &own); code != tc.status || own.Error != tc.msg {
+				t.Errorf("?%s: status %d, error %q; want %d, %q", tc.own, code, own.Error, tc.status, tc.msg)
+			}
+		})
+	}
+	if !strings.Contains(logs.String(), "HTTP 500") {
+		t.Errorf("log = %q, want the RPC failure", logs.String())
+	}
+}
+
+// decodeETAStrict queries /api/eta?query at the time of block tip and
+// decodes the answer into v, which must have a field for each of its keys.
+func decodeETAStrict(t *testing.T, s *Server, tip int64, query string, v any) int {
+	t.Helper()
+	w := httptest.NewRecorder()
+	s.serveETA(w, httptest.NewRequest(http.MethodGet, "/api/eta?"+query, nil), etaBlockTime(tip))
+	dec := json.NewDecoder(bytes.NewReader(w.Body.Bytes()))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(v); err != nil {
+		t.Fatalf("?%s: decode %s: %v", query, w.Body, err)
+	}
+	return w.Code
+}
+
 func TestETANoHalt(t *testing.T) {
 	s := etaServer(t, tipHeight, nil)
 	code, rep, keys := getETA(t, s, "")

@@ -48,11 +48,11 @@ type Stats struct {
 // per-validator missed-block counts across the reported windows.
 type ValidatorStats struct {
 	Total               int               `json:"total"`
-	Active              int               `json:"active"`        // below the missed-blocks threshold
-	BFTThreshold        int               `json:"bft_threshold"` // validators needed for consensus
-	Margin              int               `json:"margin"`        // active - threshold
-	NakamotoCoefficient int               `json:"nakamoto_coefficient"`
-	WindowBlocks        map[string]int    `json:"window_blocks"` // window label -> blocks recorded
+	Active              int               `json:"active"`               // below the missed-blocks threshold
+	BFTThreshold        int               `json:"bft_threshold"`        // validators needed for consensus
+	Margin              int               `json:"margin"`               // active - threshold
+	NakamotoCoefficient *int              `json:"nakamoto_coefficient"` // null while unknown: no set, or a power reads as no number
+	WindowBlocks        map[string]int    `json:"window_blocks"`        // window label -> blocks recorded
 	Missed              []ValidatorMissed `json:"missed"`
 }
 
@@ -87,20 +87,29 @@ type PeerStats struct {
 
 // nakamotoCoefficient returns the minimum number of validators whose combined
 // voting power exceeds one third of the total — the count that could halt
-// consensus. Returns 0 when no voting power is known.
-func nakamotoCoefficient(vals []node.Validator) int {
+// consensus; 0 when every power reads as a number and none is above 0. It is
+// nil while the count is unknown: without a validator set (vals empty), or
+// while a validator's power reads as no number, which leaves the total
+// unknown.
+func nakamotoCoefficient(vals []node.Validator) *int {
+	if len(vals) == 0 {
+		return nil
+	}
 	powers := make([]int, 0, len(vals))
 	total := 0
 	for _, v := range vals {
 		p, err := strconv.Atoi(v.VotingPower)
-		if err != nil || p <= 0 {
+		if err != nil {
+			return nil
+		}
+		if p <= 0 {
 			continue
 		}
 		powers = append(powers, p)
 		total += p
 	}
 	if total == 0 {
-		return 0
+		return new(int)
 	}
 	sort.Sort(sort.Reverse(sort.IntSlice(powers)))
 	threshold := total / 3
@@ -112,7 +121,7 @@ func nakamotoCoefficient(vals []node.Validator) int {
 			break
 		}
 	}
-	return count
+	return &count
 }
 
 // buildStats assembles the /api/stats payload from the latest snapshot and the
@@ -261,7 +270,7 @@ func ctry(m map[string]*CountryStat, code string) *CountryStat {
 // handleStats serves aggregate network statistics as JSON. CORS-open so third
 // parties can build their own dashboards from it.
 func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
-	st := buildStats(r.Context(), s.getSnapshot(), s.Blocks, time.Now())
+	st := buildStats(r.Context(), s.getSnapshot(), s.Blocks, s.now())
 	body, err := json.MarshalIndent(st, "", "  ")
 	if err != nil {
 		log.Printf("stats: encode: %v", err)

@@ -19,9 +19,12 @@ type Lead struct {
 	Time   time.Duration
 }
 
-// ParseLead reads a lead: "<N> blocks" (N at least 1), or a duration of whole
-// minutes, at least one ("30m", "1h", "1h30m").
+// ParseLead reads a lead: "<N> blocks" (N at least 1) or "1 block", or a
+// duration of whole minutes, at least one ("30m", "1h", "1h30m").
 func ParseLead(s string) (Lead, error) {
+	if s == "1 block" {
+		return Lead{Blocks: 1}, nil
+	}
 	if n, ok := strings.CutSuffix(s, " blocks"); ok {
 		blocks, err := strconv.ParseInt(n, 10, 64)
 		if err != nil || blocks < 1 {
@@ -36,9 +39,12 @@ func ParseLead(s string) (Lead, error) {
 	return Lead{Time: d}, nil
 }
 
-// String writes the lead as ParseLead reads it: "100 blocks", "30m", "1h".
+// String writes the lead as ParseLead reads it: "100 blocks", "1 block",
+// "30m", "1h".
 func (l Lead) String() string {
 	switch {
+	case l.Blocks == 1:
+		return "1 block"
 	case l.Blocks > 0:
 		return strconv.FormatInt(l.Blocks, 10) + " blocks"
 	case l.Time%time.Hour == 0:

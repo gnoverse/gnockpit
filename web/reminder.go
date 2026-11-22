@@ -103,8 +103,12 @@ func (s *Server) putReminder(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "no chain status yet", http.StatusServiceUnavailable)
 		return
 	}
+	if sched.Head >= req.Height {
+		http.Error(w, fmt.Sprintf("#%d is already reached", req.Height), http.StatusConflict)
+		return
+	}
 	if lead.Met(req.Height, sched.Head, sched.TimeLeft) {
-		http.Error(w, fmt.Sprintf("#%d is less than %s away", req.Height, lead), http.StatusConflict)
+		http.Error(w, fmt.Sprintf("#%d is %s away or less", req.Height, lead), http.StatusConflict)
 		return
 	}
 	sub := push.Subscription{ID: generateID(), Endpoint: req.Endpoint, P256dh: req.P256dh, Auth: req.Auth}

@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 
 	_ "modernc.org/sqlite"
 )
@@ -168,9 +169,10 @@ func (d *DB) GetSubscription(id string) (Subscription, error) {
 // ---- Subscription alerts
 
 // SaveDevice stores sub, keeping its id when its endpoint is known, and
-// replaces its alerts. It returns the device's id, or "" when the device has
-// no alert and no reminder left and was deleted.
-func (d *DB) SaveDevice(sub Subscription, alerts []SubscriptionAlert) (string, error) {
+// replaces its alerts with alerts, but for its stored alerts of the types
+// keep names, which stay. It returns the device's id, or "" when the device
+// has no alert and no reminder left and was deleted.
+func (d *DB) SaveDevice(sub Subscription, alerts []SubscriptionAlert, keep []AlertType) (string, error) {
 	tx, err := d.db.Begin()
 	if err != nil {
 		return "", err
@@ -180,7 +182,7 @@ func (d *DB) SaveDevice(sub Subscription, alerts []SubscriptionAlert) (string, e
 	if err != nil {
 		return "", err
 	}
-	if err := replaceAlerts(tx, id, alerts); err != nil {
+	if err := replaceAlerts(tx, id, alerts, keep); err != nil {
 		return "", err
 	}
 	kept, err := keepDevice(tx, id)
@@ -236,14 +238,22 @@ func (d *DB) SaveSubscriptionAlerts(subscriptionID string, alerts []Subscription
 		return err
 	}
 	defer tx.Rollback()
-	if err := replaceAlerts(tx, subscriptionID, alerts); err != nil {
+	if err := replaceAlerts(tx, subscriptionID, alerts, nil); err != nil {
 		return err
 	}
 	return tx.Commit()
 }
 
-func replaceAlerts(tx *sql.Tx, subscriptionID string, alerts []SubscriptionAlert) error {
-	if _, err := tx.Exec(`DELETE FROM subscription_alerts WHERE subscription_id = ?`, subscriptionID); err != nil {
+func replaceAlerts(tx *sql.Tx, subscriptionID string, alerts []SubscriptionAlert, keep []AlertType) error {
+	drop := `DELETE FROM subscription_alerts WHERE subscription_id = ?`
+	args := []any{subscriptionID}
+	if len(keep) > 0 {
+		drop += ` AND alert_type NOT IN (?` + strings.Repeat(`, ?`, len(keep)-1) + `)`
+		for _, t := range keep {
+			args = append(args, string(t))
+		}
+	}
+	if _, err := tx.Exec(drop, args...); err != nil {
 		return fmt.Errorf("clear alerts: %w", err)
 	}
 	for _, a := range alerts {

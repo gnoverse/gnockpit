@@ -282,11 +282,45 @@ func TestValsetChangeReadsSearchTheKey(t *testing.T) {
 	for _, q := range []struct {
 		query string
 		args  []any
-	}{{valsetChangesBeforeQuery, []any{11, 2}}, {valsetChangesInQuery, []any{5, 9}}} {
+	}{{valsetChangesBeforeQuery, []any{11, 2}}, {valsetChangesInQuery, []any{5, 9}}, {valsetChangeBelowQuery, []any{9}}} {
 		for _, line := range queryPlan(t, s, q.query, q.args...) {
 			if strings.Contains(line, "SCAN") {
 				t.Errorf("plan of %q has %q, want a search of the key", q.query, line)
 			}
 		}
+	}
+}
+
+func TestHasValsetChangeBelow(t *testing.T) {
+	ctx := context.Background()
+	withGenesis := pagedChanges(t) // changes at 4, 7 and 9, and the genesis set
+	noGenesis := newTestStore(t)   // a change at 7 alone: 1 is not stored
+	empty := newTestStore(t)       // no block at all
+	putChangeSets(t, noGenesis)
+	writeRecs(t, noGenesis, onSets(5, 10, func(h int64) string {
+		if h >= 7 {
+			return "B"
+		}
+		return "A"
+	}))
+	for _, tc := range []struct {
+		name   string
+		s      *Store
+		height int64
+		want   bool
+	}{
+		{"a change below", withGenesis, 9, true},
+		{"the genesis set below", withGenesis, 4, true},
+		{"nothing below the genesis set", withGenesis, 1, false},
+		{"a change below, no genesis set", noGenesis, 8, true},
+		{"nothing below", noGenesis, 7, false},
+		{"an empty store", empty, 10, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := tc.s.HasValsetChangeBelow(ctx, tc.height)
+			if err != nil || got != tc.want {
+				t.Errorf("HasValsetChangeBelow(%d) = %v, %v; want %v", tc.height, got, err, tc.want)
+			}
+		})
 	}
 }

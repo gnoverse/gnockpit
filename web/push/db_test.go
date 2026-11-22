@@ -144,12 +144,12 @@ func openTestDB(t *testing.T) *push.DB {
 func TestSaveDeviceKeepsItsIdAcrossSaves(t *testing.T) {
 	db := openTestDB(t)
 	first, err := db.SaveDevice(push.Subscription{ID: "new1", Endpoint: "https://x.com/e", P256dh: "p", Auth: "a"},
-		[]push.SubscriptionAlert{{AlertType: push.AlertChainStuck}})
+		[]push.SubscriptionAlert{{AlertType: push.AlertChainStuck}}, nil)
 	if err != nil || first != "new1" {
 		t.Fatalf("first save = %q, %v; want new1", first, err)
 	}
 	second, err := db.SaveDevice(push.Subscription{ID: "new2", Endpoint: "https://x.com/e", P256dh: "p2", Auth: "a2"},
-		[]push.SubscriptionAlert{{AlertType: push.AlertValsetChanged}})
+		[]push.SubscriptionAlert{{AlertType: push.AlertValsetChanged}}, nil)
 	if err != nil || second != "new1" {
 		t.Fatalf("second save = %q, %v; want new1 kept", second, err)
 	}
@@ -167,10 +167,10 @@ func TestSaveDeviceKeepsItsIdAcrossSaves(t *testing.T) {
 func TestSaveDeviceDeletesADeviceLeftWithNothing(t *testing.T) {
 	db := openTestDB(t)
 	sub := push.Subscription{ID: "d1", Endpoint: "https://x.com/e", P256dh: "p", Auth: "a"}
-	if _, err := db.SaveDevice(sub, []push.SubscriptionAlert{{AlertType: push.AlertChainStuck}}); err != nil {
+	if _, err := db.SaveDevice(sub, []push.SubscriptionAlert{{AlertType: push.AlertChainStuck}}, nil); err != nil {
 		t.Fatal(err)
 	}
-	id, err := db.SaveDevice(sub, nil)
+	id, err := db.SaveDevice(sub, nil, nil)
 	if err != nil || id != "" {
 		t.Errorf("save with no alert = %q, %v; want \"\": the device is gone", id, err)
 	}
@@ -182,7 +182,7 @@ func TestSaveDeviceDeletesADeviceLeftWithNothing(t *testing.T) {
 func TestSaveDeviceStoresTheHaltLead(t *testing.T) {
 	db := openTestDB(t)
 	if _, err := db.SaveDevice(push.Subscription{ID: "d1", Endpoint: "https://x.com/e", P256dh: "p", Auth: "a"},
-		[]push.SubscriptionAlert{{AlertType: push.AlertHaltApproaching, Lead: "100 blocks"}}); err != nil {
+		[]push.SubscriptionAlert{{AlertType: push.AlertHaltApproaching, Lead: "100 blocks"}}, nil); err != nil {
 		t.Fatal(err)
 	}
 	got, err := db.SubscribersForAlert(push.AlertHaltApproaching, "")
@@ -218,7 +218,7 @@ func TestOpenDBDedupesEndpoints(t *testing.T) {
 		t.Errorf("subscriptions = %v, want the latest row of the endpoint", subs)
 	}
 	if _, err := db.SaveDevice(push.Subscription{ID: "x", Endpoint: "https://x.com/e", P256dh: "p", Auth: "a"},
-		[]push.SubscriptionAlert{{AlertType: push.AlertHaltApproaching, Lead: "1h"}}); err != nil {
+		[]push.SubscriptionAlert{{AlertType: push.AlertHaltApproaching, Lead: "1h"}}, nil); err != nil {
 		t.Errorf("SaveDevice with a lead on the migrated database: %v", err)
 	}
 }
@@ -257,7 +257,7 @@ func TestDeleteReminderDropsADeviceLeftWithNothing(t *testing.T) {
 	if subs, _ := db.AllSubscriptions(); len(subs) != 0 {
 		t.Errorf("subscriptions = %v, want none", subs)
 	}
-	if _, err := db.SaveDevice(reminderDevice, []push.SubscriptionAlert{{AlertType: push.AlertChainStuck}}); err != nil {
+	if _, err := db.SaveDevice(reminderDevice, []push.SubscriptionAlert{{AlertType: push.AlertChainStuck}}, nil); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := db.SetReminder(reminderDevice, testReminder(1000)); err != nil {
@@ -273,7 +273,7 @@ func TestSaveDeviceKeepsADeviceWithAReminder(t *testing.T) {
 	if _, err := db.SetReminder(reminderDevice, testReminder(1000)); err != nil {
 		t.Fatal(err)
 	}
-	if id, err := db.SaveDevice(reminderDevice, nil); err != nil || id != "r1" {
+	if id, err := db.SaveDevice(reminderDevice, nil, nil); err != nil || id != "r1" {
 		t.Errorf("SaveDevice with no alert = %q, %v; want r1 kept for its reminder", id, err)
 	}
 	if _, ok, _ := db.Reminder("r1"); !ok {
@@ -294,22 +294,33 @@ func TestRemindersGoWithAnExpiredDevice(t *testing.T) {
 	}
 }
 
+// readReminder returns the one reminder db holds, as Reminders reads it.
+func readReminder(t *testing.T, db *push.DB) push.DeviceReminder {
+	t.Helper()
+	rs, err := db.Reminders()
+	if err != nil || len(rs) != 1 {
+		t.Fatalf("Reminders = %+v, %v; want one", rs, err)
+	}
+	return rs[0]
+}
+
 func TestDropReminderLeavesAReplacedOne(t *testing.T) {
 	db := openTestDB(t)
 	if _, err := db.SetReminder(reminderDevice, testReminder(1000)); err != nil {
 		t.Fatal(err)
 	}
+	old := readReminder(t, db)
 	// The page replaces the reminder while the old one is being sent.
 	if _, err := db.SetReminder(reminderDevice, testReminder(2000)); err != nil {
 		t.Fatal(err)
 	}
-	if err := db.DropReminder("r1", testReminder(1000)); err != nil {
+	if err := db.DropReminder(old); err != nil {
 		t.Fatal(err)
 	}
 	if got, ok, _ := db.Reminder("r1"); !ok || got != testReminder(2000) {
 		t.Errorf("Reminder = %+v, %v; want the replacement kept", got, ok)
 	}
-	if err := db.DropReminder("r1", testReminder(2000)); err != nil {
+	if err := db.DropReminder(readReminder(t, db)); err != nil {
 		t.Fatal(err)
 	}
 	if _, ok, _ := db.Reminder("r1"); ok {

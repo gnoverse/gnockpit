@@ -2,6 +2,7 @@ package push_test
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -120,6 +121,35 @@ func TestManager_SendPush_RemovesBadRequestSubscription(t *testing.T) {
 	testSendPushRemovesStaleSubscription(t, http.StatusBadRequest)
 }
 
+// The keys of a browser's push subscription, which a push is encrypted to.
+const (
+	testP256dh = "BNNL5ZaTfK81qhXOx23-wewhigUeFb632jN6LvRWCFH1ubQr77FE_9qV1FuojuRmHP42zmf34rXgW80OvUVDgTk"
+	testAuth   = "zqbxT6JKstKSY9JKibZLSQ"
+)
+
+// managerWithDevice returns a manager on an in-memory database closed with
+// the test, holding device "test-sub" whose push service is at endpoint.
+func managerWithDevice(t *testing.T, endpoint string) *push.Manager {
+	t.Helper()
+	db, err := push.OpenDB(":memory:")
+	if err != nil {
+		t.Fatalf("OpenDB: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := db.Close(); err != nil {
+			t.Errorf("close db: %v", err)
+		}
+	})
+	m, err := push.NewManager(db, 30, 10)
+	if err != nil {
+		t.Fatalf("NewManager: %v", err)
+	}
+	if err := db.SaveSubscription(push.Subscription{ID: "test-sub", Endpoint: endpoint, P256dh: testP256dh, Auth: testAuth}); err != nil {
+		t.Fatalf("SaveSubscription: %v", err)
+	}
+	return m
+}
+
 func TestManager_SendTest_Success(t *testing.T) {
 	logs := logsOf(t)
 	var received bool
@@ -128,25 +158,7 @@ func TestManager_SendTest_Success(t *testing.T) {
 		w.WriteHeader(http.StatusCreated)
 	}))
 	defer srv.Close()
-
-	db, err := push.OpenDB(":memory:")
-	if err != nil {
-		t.Fatalf("OpenDB: %v", err)
-	}
-	defer db.Close()
-	m, err := push.NewManager(db, 30, 10)
-	if err != nil {
-		t.Fatalf("NewManager: %v", err)
-	}
-
-	if err := db.SaveSubscription(push.Subscription{
-		ID:       "test-sub",
-		Endpoint: srv.URL,
-		P256dh:   "BNNL5ZaTfK81qhXOx23-wewhigUeFb632jN6LvRWCFH1ubQr77FE_9qV1FuojuRmHP42zmf34rXgW80OvUVDgTk",
-		Auth:     "zqbxT6JKstKSY9JKibZLSQ",
-	}); err != nil {
-		t.Fatalf("SaveSubscription: %v", err)
-	}
+	m := managerWithDevice(t, srv.URL)
 
 	if err := m.SendTest("test-sub"); err != nil {
 		t.Fatalf("SendTest: %v", err)
@@ -160,20 +172,59 @@ func TestManager_SendTest_Success(t *testing.T) {
 }
 
 func TestManager_SendTest_NotFound(t *testing.T) {
-	db, err := push.OpenDB(":memory:")
-	if err != nil {
-		t.Fatalf("OpenDB: %v", err)
+	m := managerWithDevice(t, "https://push.example/unused")
+	if err := m.SendTest("nonexistent"); !errors.Is(err, push.ErrSubscriptionNotFound) {
+		t.Errorf("SendTest(nonexistent) = %v, want %v", err, push.ErrSubscriptionNotFound)
 	}
-	defer db.Close()
-	m, err := push.NewManager(db, 30, 10)
-	if err != nil {
-		t.Fatalf("NewManager: %v", err)
-	}
+}
 
-	err = m.SendTest("nonexistent")
-	if err == nil {
-		t.Fatal("expected error for nonexistent subscription")
+// TestManager_SendTest_ReturnsThePushServiceFailure checks that a test push
+// the push service refuses, or never answers, is an ErrDelivery error that
+// carries the push service's status and the start of its answer, quoted so
+// that it forges no log line; the status is logged once, by the caller.
+func TestManager_SendTest_ReturnsThePushServiceFailure(t *testing.T) {
+	const said = "push service says no\nforged: log line"
+	for _, tc := range []struct {
+		name   string
+		status int
+		body   string
+		want   string // the error's end
+	}{
+		{name: "gone", status: http.StatusGone, body: said, want: fmt.Sprintf("status 410: %q", said)},
+		{name: "server error", status: http.StatusInternalServerError, body: said, want: fmt.Sprintf("status 500: %q", said)},
+		{
+			name: "long answer", status: http.StatusBadGateway, body: strings.Repeat("x", 2000),
+			want: fmt.Sprintf("status 502: %q", strings.Repeat("x", 1024)),
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			logs := logsOf(t)
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(tc.status)
+				fmt.Fprint(w, tc.body)
+			}))
+			defer srv.Close()
+			m := managerWithDevice(t, srv.URL)
+
+			err := m.SendTest("test-sub")
+			if !errors.Is(err, push.ErrDelivery) || !strings.HasSuffix(err.Error(), tc.want) {
+				t.Errorf("SendTest = %v, want an ErrDelivery error ending %s", err, tc.want)
+			}
+			if status := fmt.Sprintf("status %d", tc.status); strings.Contains(logs.String(), status) {
+				t.Errorf("logs = %q, want no %q: the error carries it", logs, status)
+			}
+		})
 	}
+	t.Run("unreachable", func(t *testing.T) {
+		logsOf(t)
+		srv := httptest.NewServer(http.NotFoundHandler())
+		srv.Close()
+		m := managerWithDevice(t, srv.URL)
+
+		if err := m.SendTest("test-sub"); !errors.Is(err, push.ErrDelivery) {
+			t.Errorf("SendTest = %v, want an ErrDelivery error", err)
+		}
+	})
 }
 
 func TestManager_EvaluateAndNotify_CapturesChainName(t *testing.T) {

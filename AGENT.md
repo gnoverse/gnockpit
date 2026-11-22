@@ -7,55 +7,68 @@ gnockpit is a real-time monitoring dashboard for gno.land validator nodes. It's 
 ## Architecture
 
 ```text
-main.go          — CLI entry point (single command: starts the web dashboard)
-node/            — RPC client + types (pure data layer, no UI)
-  client.go      — HTTP client for Tendermint RPC (/status, /net_info, /validators, etc.)
-  sources.go     — Sources: an ordered set of RPC endpoints polled together; best-source pick for global data + peer union/dedup (MergePeers)
-  ip.go          — public-IP validation (IsPublicIP): only public IPs are ever geolocated or displayed
-  types.go       — snapshot and dashboard types (Status, Peer, Validator, Snapshot, SigningStats, etc.)
-  validators.go  — NameRegistry: maps validator addresses ↔ monikers, persists to JSON
-  geoip.go       — DB-IP City Lite: IP → coordinates + country (auto-downloaded, monthly)
-  asn.go         — DB-IP ASN Lite: IP → ASN + cloud provider (auto-downloaded, monthly)
-  abci.go        — ABCI queries: realm renders (valoper names, profiles), valoper state via vm/qeval, the halt params
-  rpcerror.go    — HTTPStatusError, RPCError, IsRefusal
-  signing.go     — per-validator signing over the live window (computeSigning): missed, its nil / other-block split, vote delay
-  median.go      — tm2's voting-power-weighted median time (MedianTime), shared with blocks/record.go
-  batch.go       — JSON-RPC batches (one POST, several calls); HeightError
-  chain.go       — Commit/Precommit, SetMember, BlockEvent and their reads: commits (one, or a batch), validator sets with priorities, block events
-blocks/          — block history since genesis: per-height facts in SQLite, filled from the primary source (shares the push DB handle)
-  store.go       — schema, block rows (absences, round proposers, flags), the counters Write keeps beside them (days, gaps, absence runs, vote delays), meta (chain id, floor, one-time fills); each address once (blocks_validators), the rest by id (blocks_events keeps text addresses), no index beside the keys
-  days.go        — blocks_days: per UTC day and validator, absences by kind, proposals expected / missed
-  proposals.go   — a block's proposals expected and missed (proposalCounts); round-0 blocks by aggregate in the one-time fill
-  gaps.go        — blocks_gaps: restarts (RestartGap, 2 min, between blocks b and b+1)
-  runs.go        — blocks_absence_runs: each validator's runs of consecutive absences (absent or other block)
-  history.go     — ValidatorHistory: a validator's days, outages, recoveries and scoring-window summary; the scoring constants
-  keys.go        — an operator's signing keys over time (OperatorKeys), a key's operator (OperatorOf), Known
-  valsets.go     — validator sets by hash; address → id
-  windows.go     — missed-block windows and proposals expected / missed: first block by bisecting heights, the first (partial) day's absences and late blocks + the per-day counters, one read transaction
-  delays.go      — daily vote-delay histograms (bucket edges)
-  changes.go     — validator set changes: their heights (blocks_valset_changes, kept by Write; filled by one scan while `valset_changes_filled` is unset), each read with its diff against the set below (added, removed, re-weighted, rotations from events)
-  events.go      — set-change events: stored, read from /block_results at H−2, event gaps
-  record.go      — a commit + its validator set → a Record: absence kinds, vote delays from tm2's weighted median time
-  proposer.go    — port of tm2's proposer-priority increment: the expected proposer of each round
-  tracker.go     — fill loop (Data Flow #7)
-  reads.go       — the fill's rate-limited reads, record building, round proposers + flags
-  progress.go    — Progress, fill rate
-eta/             — block ETAs: sampled block times + estimator + halt tracking (shares the push DB handle)
-  store.go       — eta_block_times (every 100th height), chain id, backfill floor, first sighting of each halt
-  model.go       — pure estimator: pace of the last 3000 blocks; 80/95% ranges from the predictor's past errors (30-day lookback)
-  tracker.go     — background loop on the primary source: backfill newest-first (~4 req/s, honours 429 Retry-After), halt params
-web/             — Web dashboard + HTTP API
-  server.go      — HTTP/WebSocket server, background data fetcher, system info collector
-  status.go      — /api/status: health + curated network state / recent blocks / peer + validator columns
-  stats.go       — /api/stats: missed-block windows, provider/country aggregates, set health, Nakamoto
-  eta.go         — /api/eta: ETA of a height, height at a time, or the scheduled halt (model from eta.Tracker)
-  history.go     — /api/history: the block history's reach, the blocks of a height range (≤ 1,000), daily vote delays (≤ 31 days), set changes (≤ 100 a page)
-  validator.go   — /api/validator: one validator's page data (Validator history below)
-  api.go         — serveJSON, errorBody: the JSON API's response writing
-  reminder.go    — /api/push/reminder; schedule(): the head, the scheduled halt and time-left estimates the lead-time alerts check
-  push/          — browser push and Shoutrrr: alert detection, devices (one per push endpoint), the notification config file (notifyconfig.go: parse; notifyroute.go: per-target senders, reload on change), chain alerts and their sent state (schedule.go), ETA reminders (reminders.go)
-  analytics.go   — Optional third-party analytics snippet (--analytics), injected before </body>; off by default
-  index.html     — Single-page dashboard (embedded via go:embed, vanilla JS, no framework)
+main.go                 — CLI entry point (single command: starts the web dashboard)
+node/                   — RPC client + types (pure data layer, no UI)
+  client.go             — HTTP client for Tendermint RPC (/status, /net_info, /validators, etc.)
+  sources.go            — Sources: an ordered set of RPC endpoints polled together; best-source pick for global data + peer union/dedup (MergePeers)
+  ip.go                 — public-IP validation (IsPublicIP): only public IPs are ever geolocated or displayed
+  types.go              — snapshot and dashboard types (Status, Peer, Validator, Snapshot, SigningStats, etc.)
+  validators.go         — NameRegistry: maps validator addresses ↔ monikers, persists to JSON
+  geoip.go              — DB-IP City Lite: IP → coordinates + country (auto-downloaded, monthly)
+  asn.go                — DB-IP ASN Lite: IP → ASN + cloud provider (auto-downloaded, monthly)
+  abci.go               — ABCI queries: realm renders (valoper names, profiles), valoper state via vm/qeval, the halt params
+  rpcerror.go           — HTTPStatusError, RPCError, IsRefusal
+  signing.go            — per-validator signing over the live window (computeSigning): missed, its nil / other-block split, vote delay
+  median.go             — tm2's voting-power-weighted median time (MedianTime), shared with blocks/record.go
+  batch.go              — JSON-RPC batches (one POST, several calls); HeightError
+  chain.go              — Commit/Precommit, SetMember, BlockEvent and their reads: commits (one, or a batch), validator sets with priorities, block events
+blocks/                 — block history since genesis: per-height facts in SQLite, filled from the primary source (shares the push DB handle)
+  store.go              — schema, block rows (absences, round proposers, flags), the counters Write keeps beside them (days, gaps, absence runs, vote delays), meta (chain id, floor, one-time fills); each address once (blocks_validators), the rest by id (blocks_events keeps text addresses), no index beside the keys
+  days.go               — blocks_days: per UTC day and validator, absences by kind, proposals expected / missed
+  proposals.go          — a block's proposals expected and missed (proposalCounts); round-0 blocks by aggregate in the one-time fill
+  gaps.go               — blocks_gaps: restarts (RestartGap, 2 min, between blocks b and b+1)
+  runs.go               — blocks_absence_runs: each validator's runs of consecutive absences (absent or other block)
+  history.go            — ValidatorHistory: a validator's days, outages, recoveries and scoring-window summary; the scoring constants
+  keys.go               — an operator's signing keys over time (OperatorKeys), a key's operator (OperatorOf), Known
+  valsets.go            — validator sets by hash; address → id
+  windows.go            — missed-block windows and proposals expected / missed: first block by bisecting heights, the first (partial) day's absences and late blocks + the per-day counters, one read transaction
+  delays.go             — daily vote-delay histograms (bucket edges)
+  changes.go            — validator set changes: their heights (blocks_valset_changes, kept by Write; filled by one scan while `valset_changes_filled` is unset), each read with its diff against the set below (added, removed, re-weighted, rotations from events)
+  events.go             — set-change events: stored, read from /block_results at H−2, event gaps
+  record.go             — a commit + its validator set → a Record: absence kinds, vote delays from tm2's weighted median time
+  proposer.go           — port of tm2's proposer-priority increment: the expected proposer of each round
+  tracker.go            — fill loop (Data Flow #7)
+  reads.go              — the fill's rate-limited reads, record building, round proposers + flags
+  progress.go           — Progress, fill rate
+eta/                    — block ETAs: sampled block times + estimator + halt tracking (shares the push DB handle)
+  store.go              — eta_block_times (every 100th height), chain id, backfill floor, first sighting of each halt
+  model.go              — pure estimator: pace of the last 3000 blocks; 80/95% ranges from the predictor's past errors (30-day lookback)
+  tracker.go            — background loop on the primary source: backfill newest-first (~4 req/s, honours 429 Retry-After), halt params
+web/                    — Web dashboard + HTTP API
+  server.go             — HTTP/WebSocket server, background data fetcher, system info collector
+  status.go             — /api/status: health + curated network state / recent blocks / peer + validator columns
+  stats.go              — /api/stats: missed-block windows, provider/country aggregates, set health, Nakamoto
+  eta.go                — /api/eta: ETA of a height, height at a time, or the scheduled halt (model from eta.Tracker)
+  history.go            — /api/history: the block history's reach, the blocks of a height range (≤ 1,000), daily vote delays (≤ 31 days), set changes (≤ 100 a page)
+  validator.go          — /api/validator: one validator's page data (see Validator history)
+  api.go                — serveJSON, errorBody: the JSON API's response writing
+  links.go              — /api/links: the header links (--link) and the status links (--status-link), each with its BetterStack page's state, polled every 45 s
+  reminder.go           — /api/push/reminder; schedule(): the head, the scheduled halt and time-left estimates the lead-time alerts check
+  push/                 — browser push and Shoutrrr: alert detection, devices (one per push endpoint), the notification config file (notifyconfig.go: parse; notifyroute.go: per-target senders, reload on change), chain alerts and their sent state (schedule.go), ETA reminders (reminders.go)
+  analytics.go          — Optional third-party analytics snippet (--analytics), injected before </body>; off by default
+  index.html            — Single-page dashboard (embedded via go:embed, vanilla JS, no framework)
+  page_test.go          — page tests' harness (build tag `page`, playwright-go): TestMain, browser profiles, openPage and its options, traces, the browser clock, which runFor moves with the server's
+  page_gate_test.go     — the gate in front of the routes: holds a request until the test releases or drops it
+  page_hygiene_test.go  — the hygiene checks: console errors and warnings, page errors, failed requests and error answers, against what a test declares
+  page_scenario_test.go — scenarios: the fake chain (snapshot, block history) the real server starts from
+  page_push_test.go     — the browser's push subscription stub and the fake push service
+  page_shared*_test.go  — every helper more than one area, or the harness, uses, under a name without an area prefix:
+    page_shared_test.go           — the page as a whole: press and point (a tap on a touch screen), the popover, colours and polls, what tests read of the page
+    page_shared_lists_test.go     — the node lists: rows and cards, tables, the map
+    page_shared_dialogs_test.go   — the push menu, the Block ETA cards, the validator page
+    page_shared_scenarios_test.go — builders and networks, the ETA chain, the reverse proxy, the settable fill, the server's stored devices
+    page_shared_history_test.go   — block histories and the networks on them
+  page_<area>*_test.go  — page tests by area (Testing lists them)
 ```
 
 ## Key Concepts
@@ -65,8 +78,8 @@ web/             — Web dashboard + HTTP API
 1. `server.go` runs a **publish loop** every N seconds (default 5s)
 2. Each cycle calls `fetchSnapshot()` which polls every configured source (`node/sources.go: Poll`): global chain data (status, validators, consensus, signing) comes from the freshest reachable source; peers are unioned across all reachable sources and deduped by node ID (`MergePeers`) before their RPCs are probed. All sources down → `snap.Error` drives the "connecting to sources" banner.
    The publish loop also rereads the notification config file when it changed, and, once the snapshot is set, sends the lead-time alerts (`notifySchedule` → `push.Manager.EvaluateSchedule`: a new halt and its approach, once per device or target, recorded in `push_sent`; the reminders whose lead is met, then dropped, their device kept). Every push or webhook send is bounded by `--send-timeout`.
-3. The snapshot is broadcast to all connected WebSocket clients as typed messages: `status`, `peers`, `votes`, `checks`, `signing`
-4. `index.html` receives these messages and updates the DOM in-place
+3. The snapshot is broadcast to every WebSocket client as one `update` message (see WebSocket protocol)
+4. `index.html` handles each message in one pass and updates the DOM in place; the tables, cards and map redraw only when what they show changed
 5. Each cycle also geolocates peers (`geoip`) and resolves their cloud provider (`asn`) — using each peer's resolved public IP only (peers with no usable public IP are geolocated to nothing and bucketed "Unknown" on the map) — and refreshes the missed-24h counts and the 24 h proposals expected / missed from the `blocks` store (#7, `refreshMissed`). This powers the network map and the Country/Provider columns. Validators inherit the country/provider of their correlated peer (matched via `ValAddress`), so validators no source is peered with have none.
 6. Separately, `eta.Tracker` (started in `main.go`) runs its own loop on the primary source: every minute, and back to back while backfilling, it reads the chain head, drops the stored history if the chain id changed, reads the halt params, and fetches the missing every-100th block times newest-first. `/api/eta` combines its model with the snapshot's newest block; the dashboard's ETA cards poll `/api/eta` every 10 s and tick the countdown locally in between. The link card's target lives in the page link (`?eta=&since=&label=`), or in the device's reminder (`push_reminders`) for a page opened without one; the halt card's comes from the chain params; the "original" estimate is recomputed from the stored history as of `since`.
 7. Separately, `blocks.Tracker` (started in `main.go`) fills the block history from the primary source. Deltas worth knowing:
@@ -118,9 +131,9 @@ one or two when the window slid by one block. A precommit's delay is from block 
 - `/api/stats` (stats.go) — per-validator missed-block windows, provider + country aggregates, validator-set health, Nakamoto coefficient.
 - `/api/eta` (eta.go) — `?height=` (+`since` for original/drift/trail), `?time=`, or none for the on-chain halt.
 - `/api/history` (history.go) — the block history's reach (`filled`); `?from=&to=` (≤ 1,000 heights): blocks with absent / nil / other-block members, round proposers, flags, set changes, and the validator sets; `?days=N` (≤ 31): daily vote-delay histograms; `?changes=N&before=H` (≤ 100): set changes newest first with their diff, paged by `next_before`.
-- `/api/validator` (validator.go, validator_timeline.go) — `?val=<g1 operator or signing key>`: status, keys, moniker, location, profile, timeline (with `recovering` for a pending recovery), vote-delay edges, days, recoveries (`scored`), summary, live; 400 malformed, 404 unknown, 503 history off. Not paged.
+- `/api/validator` (validator.go, validator_timeline.go) — `?val=<g1 operator or signing key>`: status, keys, moniker, location, profile, timeline (with `recovering` for a pending recovery), vote-delay edges, days, recoveries (`scored`), summary, live; 400 malformed, 404 unknown, 503 history off (unreachable in the shipped binary: main always sets the history up). Not paged.
 - `/api` (server.go) — raw `Snapshot` dump (unstable shape; debugging).
-- Also: `/badge.svg`, `/ws`, `/api/boot`, `/api/push/*` (subscribe: one device per endpoint, `""` id once it has nothing left; `/api/push/reminder` in reminder.go), `/api/notify/*` (the config's targets and their alerts, a test send; `GNOCKPIT_NOTIFY_TEST_TOKEN`).
+- Also: `/badge.svg`, `/ws`, `/api/boot`, `/api/links` (links.go: the header links and each status link's state, which the page reads every 30 s), `/api/push/*` (subscribe: one device per endpoint, `""` id once it has nothing left, `keep` the alert types whose stored alerts a save leaves, as the page sends for the validator alerts while it cannot read the validators; entities 503 while no consensus state is read; `/api/push/reminder` in reminder.go), `/api/notify/*` (the config's targets and their alerts, a test send; `GNOCKPIT_NOTIFY_TEST_TOKEN`).
 
 ## Important Patterns
 
@@ -149,15 +162,25 @@ self-contained otherwise.
 
 ### WebSocket protocol
 
-Messages are JSON with `{type: string, data: any}`. Types: `snapshot` (full state on connect), `update` (batched periodic), and individual `status`, `peers`, `votes`, `checks`, `signing`, `time`.
+`{type, data}`, two types only: `snapshot` (on connect, once a snapshot exists) and `update` (each publish). Both carry `liveData` (server.go: `buildLiveData`); a new field goes there.
+
+| Field             | Content                                                                                                                                                                                               |
+| ----------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `time`            | the snapshot's fetch time, `15:04:05`, server-local                                                                                                                                                   |
+| `status`, `votes` | always present; null while every source is down, `votes` also when the consensus read fails; without `status` the last head stays                                                                     |
+| `peers`           | always present; null while every source is down, `[]` when none is seen: the page empties the tables and hides the map either way                                                                     |
+| `checks`          | `apphash_last`, `val_address`, `val_pubkey`, `hide_sources`, `system.genesis_time`; `system.node_time` is `s.now()` as the message is built, to the ms (`historyTime`): the page sets its clock by it |
+| `signing`         | left out when nil                                                                                                                                                                                     |
+
+`/api`'s dump keeps the fetch's node time, to the second (`collectSystemInfo`).
 
 ### Scroll preservation
 
-`renderNetwork()` saves `window.scrollY` before DOM updates and restores it after, preventing the page from jumping during live updates.
+`renderNodeLists()` (validators and peers tables and cards) redraws only when `nodeListsFingerprint()` changed; it saves `window.scrollY` and the focused cell or card control before the redraw and restores both after.
 
 ### Collapsible sections
 
-Each card has `<h2 data-section="name">` that toggles `.collapsed` class. State persisted in `localStorage` under key `gnockpit-collapsed`.
+Each card's `<h2 data-section="name">` holds a `<button>` filling the title that folds the section: `.collapsed` on the h2, `aria-expanded` on the button. Folded keys persist in `localStorage` under `gnockpit-collapsed`, or `gnockpit-collapsed-mobile` when the window was ≤ 768 px wide at load.
 
 ## Common Tasks
 
@@ -166,16 +189,21 @@ Each card has `<h2 data-section="name">` that toggles `.collapsed` class. State 
 1. Add the fetch method to `node/client.go`
 2. Add types to `node/types.go` (or beside their read, as in `chain.go`)
 3. Call it in `web/server.go: fetchSnapshot()`
-4. Broadcast it in the publish loop
-5. Handle the WebSocket message in `web/index.html`
+4. Add it to `liveData` (`web/server.go: buildLiveData`), which both WebSocket messages send
+5. Read it in `ws.onmessage` (`web/index.html`)
 
 ### Adding a new peer table column
 
-1. Add `<th>` in the header row
-2. Add the cell creation in the validator loop (after `// Section 1: Validators`)
-3. Add the cell for non-validator peers (after `// Section 2: Non-validator peers`)
-4. Update all `colSpan` values
-5. If sortable, add `data-sort="key"` to `<th>` and handle in the sort function
+The value comes from a `node.Peer` field (`node/types.go`): the `/ws` `peers` send them all, so a new field needs only filling in `fetchSnapshot` (`web/server.go`). Steps 1–7 edit `web/index.html`.
+
+1. Header, in `#peers-card`'s `<thead>`: `<th data-sort="key"><button type="button" class="info-btn" data-popover="…">Label</button></th>` (a plain `<button type="button">` without a popover, as Name). `sortBy` and `updateSortHeaders` take any `th[data-sort]` (`aria-sort`, the arrow). Add its `<col>` to the `<colgroup>` (widths sum to 100 %) and count it in the loading row's `colspan`.
+2. Row: in `renderNodeLists()`, the `otherPeers` loop builds each row (`tr2`): append the cell in column order (`createCell`, or a builder: `peerRPCCell`, `countryCell`, `providerCell`, `midTruncCell`).
+3. `emptyRow('no peers', 6)`: the column count.
+4. Sort: a `peerSortKey` branch in the `otherPeers.sort` comparator setting `va`/`vb` for `compareSortValues`: `null` for a missing value (last either way); a value shown as a name joins `peersByName` (`compareNames`); a column that shows a code when narrow sorts by what it shows, as Country (`peerCountryShowsCode`, measured before the cells are cleared). Ties keep `setPeers`' name order.
+5. Card: in `buildPeersCards()`, a `[label, value]` in `makeCard`'s `data.minimal` `fields` and its property in the peers' `makeCard({…})` call; a `copyLines` line if the card copies it.
+6. `nodeListsFingerprint()`: the field in the peers' list, or its changes never redraw.
+7. Focus: rows and cards are keyed by `peerKeys()` (node id, else moniker, else IP and rank, else rank), never by the new value; `focusPlaceIn` / `focusPlace` give the focus back to the same cell's control, so a control in the new cell needs nothing more.
+8. Tests: `peersCol…`, `peersCardKeys` (`page_peers_helpers_test.go`); in `page_peers_test.go`, `peersKeys` with TestPagePeersTableHead, `peersNetworkRows` with TestPagePeersTableRows, `peersNetworkCards` with TestPagePeersCards, TestPagePeersCardCopy, `peersSortNetwork` with TestPagePeersSort and TestPagePeersSortMissingLast; TestPageTableHeaderPopovers (its popover), TestPageValidatorsEmpty (the column count), TestPageShownValuesFollowTheirData (the fingerprint).
 
 ## Testing
 
@@ -183,7 +211,70 @@ Each card has `<h2 data-section="name">` that toggles `.collapsed` class. State 
 go test ./...
 ```
 
-Go tests cover the RPC parsing, the stores, the trackers (fake sources) and the HTTP handlers. The web UI is tested manually.
+Go tests cover the RPC parsing, the stores, the trackers (fake sources) and the HTTP handlers.
+
+The page tests drive `web/index.html` in Chromium and WebKit against the real server, filled with chain data built in Go. The push tests stub the browser's Push API in an init script (`page_push_test.go`); every other answer comes from the real handlers, and the test server can hold or drop a request on purpose. They need the browsers, installed once:
+
+```bash
+make install-browsers
+make test-page
+```
+
+`make install-browsers BROWSER_INSTALL_FLAGS=` installs the browsers without their system packages (`--with-deps`). `make test-page` runs with `-count=1`: never a cached pass.
+
+The full page suite takes about 11 minutes: from an agent's shell, run it in the background. One test, on one profile:
+
+```bash
+go test -tags page -count=1 -run 'TestPageX/desktop' ./web/
+```
+
+Page test files by area (the harness files: Architecture tree). An area adds its files as `page_<area>[_<part>]_test.go`; a part without tests holds the area's helpers or scenarios. An area's own helpers carry its prefix (`peers…`); a helper a second area uses moves to the shared files (`page_shared*_test.go`) without one. Dependencies run one way: an area file may use the shared files and the harness, which never use an area file.
+
+| Files (`page_…_test.go`)                                | Cover                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| ------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `boot`                                                  | head (lang, viewport, title, theme colour, manifest, icons), the chain title, the boot panel and its `/api/boot` polls, header links and their status dots                                                                                                                                                                                                                                                                                                                       |
+| `live`                                                  | the WebSocket feed: reconnect, the first message, sources down and back, one redraw a frame and only on change (scroll, map); Network State's heights, times and ages on the server's clock (round age, head, block time, stuck tag, clock drift, genesis countdown, chain age)                                                                                                                                                                                                  |
+| `network`, `network_sync`                               | Network State: rows in full and compact mode, votes, active power, average block time, app hash, voting-power units, proposer, names; `_sync`: the block-history fill line                                                                                                                                                                                                                                                                                                       |
+| `blocks`                                                | Recent Blocks: colours, compact mode, popover, copy, the newest block's flash                                                                                                                                                                                                                                                                                                                                                                                                    |
+| `map`                                                   | network map: shown once a peer is located (0 coordinates included), clusters, popover, side list and its Country / Provider toggle, the highlight across map, list and tables                                                                                                                                                                                                                                                                                                    |
+| `mechanics`, `mechanics_popover`, `mechanics_helpers`   | page-wide: section folding, value flashes, copy and its toast, `localStorage` refused or unreadable, dialog focus, colours, number and time formats, bands; `_popover`: the one popover (hover, tap, keyboard ⓘ, placement, following its target), focus kept through table and card redraws                                                                                                                                                                                     |
+| `alerts`                                                | Alerts menu: shown only with push, the form and its rules, save (permission, in flight, timeout, failure), test push, focus                                                                                                                                                                                                                                                                                                                                                      |
+| `eta`, `eta_planner`, `eta_chain`, `eta_expect`         | Block ETA: halt and link cards (countdown, ranges, drift, scenarios, chart, errors, polling, compact view, copy, close); `_planner`: the planner dialog; `_chain`: the ETA chain and tracker stand-in; `_expect`: how a card shows an answer                                                                                                                                                                                                                                     |
+| `reminders`, `reminders_helpers`                        | the ETA card's notify button and popover: save, the 409s, remove, read back, restore on load, a fired reminder                                                                                                                                                                                                                                                                                                                                                                   |
+| `validators`, `validators_helpers`                      | the validators card's Live view: table header and rows (name link and source tag, address, country, provider, voting power and share, SPOF, misses, vote delay, proposals) and their bands, phone cards, both lists' compact switches, sorting (every key, missing values last, English name order), highlights across rows, map and peers, a validator's node found by its address, empty lists, an unknown voting power; `_helpers`: the test networks and their block history |
+| `peers`, `peers_helpers`                                | the peers card: table header and rows (name and its highlight, node id and its popover, country, provider and its IP, peers, the RPC ✓ link and its popover), phone cards (dot, health, values, the RPC line link), card copy, hover border, which peers are listed (validators' nodes, `--hide-sources`, namesakes and nameless peers), sorting (every key, missing values last), markup as text; `_helpers`: the test networks, a peer's RPC test page and the locators        |
+| `timeline`, `timeline_scenario`                         | the validators card's Timeline view: toggle, change kinds, layout, polls, older pages, errors, focus                                                                                                                                                                                                                                                                                                                                                                             |
+| `valpage`, `valpage_helpers`                            | validator page: opening (name, Timeline row, `?val=`), closing, focus, loading and errors, status line, ages, profile and its markdown, link button                                                                                                                                                                                                                                                                                                                              |
+| `valsections`                                           | validator page: stats lines, Timeline, the scored group, popovers, size                                                                                                                                                                                                                                                                                                                                                                                                          |
+| `valcharts`, `valcharts_helpers`, `valcharts_scenarios` | validator page charts: uptime, proposals, recovery, vote delay; phone calendars; day axes; bands; keyboard                                                                                                                                                                                                                                                                                                                                                                       |
+
+Page behaviours left untested by ruling, by area:
+
+- Live data: several render requests in one frame making one drawing: not observable without control over the frames.
+- Live data: no reconnect before 2 s: a negative check needs a barrier the page does not offer (the reconnect at 2 s is tested).
+- Live data: an unknown WebSocket message type: the server sends only `snapshot` and `update`, and a made-up frame would fake the API.
+- Network State: the app hash's `-` for a missing hash: the page fills the hash only from a set `apphash_last`.
+- Network State sync line: a JSON error answer to a read (`res.ok` false): the history's only JSON error is its 503 when disabled, which never follows a shown line; a proxy's error has no JSON body.
+- Network State sync line: stored blocks without `from_time`: the server sets it whenever `from` is above 0.
+- Recent Blocks: a missing validator listed by its address alone: the server names an anonymous validator by its address.
+- Validators table: a missed count that is not a number: the server always sends both counts as numbers.
+- Validators table: Country sorted by country name: its column, narrow on a page at most 1400 px wide, shows and sorts ISO codes.
+- Validators and Peers tables: Space on a sort header leaving the page unscrolled (ledger Ruling A-D7 Space, on both tables' sort headers): a native button does not scroll the page, and no test catches a scroll there without a fixed wait.
+- Timeline view: a change other than genesis adding, removing, repowering and rotating no member: the set hash covers addresses and powers, so it cannot occur.
+- Timeline view: bad JSON in a 200 answer: the server's handlers answer JSON, and a proxy in front answers its errors with their status.
+- Block ETA: `HTTP <status>` for a non-OK JSON answer without `error`: neither gnockpit nor a proxy in front answers one.
+- Block ETA: `still loading` without `back to <day>`: the server sets `history.from` whenever the history is incomplete and has samples.
+- Validator page: `could not load` for a JSON error without `error`: every JSON error the server answers carries one.
+- Validator page: `could not show it: …` (drawing a report throws): no real report reaches it, and a hand-made one would fake the API.
+- Validator page: `openValidator` for the validator the URL already names (no history entry pushed): reached only while a close's `history.back()` is in flight, a race input events cannot time.
+- Validator page: the closing page's own hiding of an open popover: the shared popover code hides it first (target hidden, focus leaving, Escape, a click elsewhere), so no test can tell the two apart.
+- Validator page: a chart day with `in_set` 0: every stored block counts each member of its set absent or voting, so a stored day has `in_set` ≥ 1.
+- Validator page: Timeline entries of an unknown kind: the server sends only its eight kinds.
+- Alerts and reminders: the browser's own notification permission prompt: the tests stub the Push API and `Notification.permission`, which headless Chromium reports denied.
+- Alerts and reminders: web push in Safari: Playwright's WebKit has no `PushManager`, so push runs on Chromium and the phone checks the buttons stay hidden.
+- Reminders: `.eta-remind-pop[hidden]`: it repeats the browser's own `[hidden]` rule, so no test can fail on it.
+- Copy: the text WebKit copies: the Global Constraints read the clipboard on Chromium only, so the phone's copies check their toast.
+- Every area: presentational CSS (paddings, fonts, gaps, cursors, fixed positions, the planner's 85vh, ellipses, hover-only rules): the suite tests behaviour, not pixels.
 
 ## Deployment
 

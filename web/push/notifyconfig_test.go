@@ -10,6 +10,7 @@ import (
 func TestParseLead(t *testing.T) {
 	for in, want := range map[string]Lead{
 		"100 blocks": {Blocks: 100},
+		"1 block":    {Blocks: 1},
 		"1 blocks":   {Blocks: 1},
 		"1h":         {Time: time.Hour},
 		"30m":        {Time: 30 * time.Minute},
@@ -23,9 +24,25 @@ func TestParseLead(t *testing.T) {
 			t.Errorf("ParseLead(%q.String() = %q) = %+v, %v; want it back", in, got.String(), again, err)
 		}
 	}
-	for _, in := range []string{"", "0 blocks", "-5 blocks", "30s", "90s", "ten blocks", "5 minutes", "0m"} {
+	for _, in := range []string{"", "0 blocks", "-5 blocks", "2 block", "0 block", "30s", "90s", "ten blocks", "5 minutes", "0m"} {
 		if got, err := ParseLead(in); err == nil {
 			t.Errorf("ParseLead(%q) = %+v, want an error", in, got)
+		}
+	}
+}
+
+func TestLeadString(t *testing.T) {
+	for _, tc := range []struct {
+		lead Lead
+		want string
+	}{
+		{Lead{Blocks: 1}, "1 block"},
+		{Lead{Blocks: 2}, "2 blocks"},
+		{Lead{Time: time.Hour}, "1h"},
+		{Lead{Time: 90 * time.Minute}, "90m"},
+	} {
+		if got := tc.lead.String(); got != tc.want {
+			t.Errorf("%+v.String() = %q, want %q", tc.lead, got, tc.want)
 		}
 	}
 }

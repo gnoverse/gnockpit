@@ -133,6 +133,8 @@ func TestValidatorOperatorWithARotation(t *testing.T) {
 	edges := blocks.DelayEdges()
 	want := map[string]any{
 		"chain": "onyx-1", "address": valOperator, "operator": valOperator, "moniker": "",
+		// The instant the report is as of, which its windows and ages read.
+		"now": timeOf(valNow),
 		"keys": []any{
 			map[string]any{"address": valOldKey, "from": 0.0, "to": 99.0},
 			map[string]any{"address": valNewKey, "from": 100.0},
@@ -310,6 +312,36 @@ func TestValidatorStatusSince(t *testing.T) {
 	want = map[string]any{"in_set": true, "since_height": 1.0, "since_time": timeOf(at(1)), "signing_address": valLoneKey, "power": 6.0, "share": 1.0}
 	if _, body := getValidator(t, srv, "?val="+valLoneKey); !reflect.DeepEqual(body["status"], want) {
 		t.Errorf("genesis: status = %v, want %v", body["status"], want)
+	}
+}
+
+// TestValidatorStatusUnknownPower checks the status while a member of the
+// node's set has a voting power that reads as no number: the set's total is
+// unknown, so share is null for every validator, and that member's own
+// power is null too.
+func TestValidatorStatusUnknownPower(t *testing.T) {
+	s := newBlocksStore(t)
+	putBlocks(t, s, secondsFrom(valDay()), "S", []blocks.Member{{Address: valLoneKey, Power: 6}, {Address: valNewKey, Power: 4}}, 1, 10, nil)
+	srv := &Server{Blocks: s, BlockFill: fakeFill{ChainID: "onyx-1", From: 1, To: 10, Complete: true}}
+	srv.setSnapshot(&node.Snapshot{Validators: []node.Validator{{Address: valLoneKey, VotingPower: "6"}, {Address: valNewKey, VotingPower: "lots"}}})
+	for _, tc := range []struct {
+		key   string
+		power any
+	}{
+		{valLoneKey, 6.0},
+		{valNewKey, nil},
+	} {
+		_, body := getValidator(t, srv, "?val="+tc.key)
+		st, ok := body["status"].(map[string]any)
+		if !ok {
+			t.Fatalf("%s: status = %v, want one", tc.key, body["status"])
+		}
+		if power, ok := st["power"]; !ok || power != tc.power {
+			t.Errorf("%s: power = %v (present %v), want %v", tc.key, power, ok, tc.power)
+		}
+		if share, ok := st["share"]; !ok || share != nil {
+			t.Errorf("%s: share = %v (present %v), want null", tc.key, share, ok)
+		}
 	}
 }
 

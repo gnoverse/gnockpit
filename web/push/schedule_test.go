@@ -22,7 +22,7 @@ const (
 // device saves a device pushed to http://host/path with alerts.
 func device(t *testing.T, m *Manager, host, path string, alerts ...SubscriptionAlert) string {
 	t.Helper()
-	id, err := m.db.SaveDevice(Subscription{ID: "dev" + path, Endpoint: "http://" + host + path, P256dh: testP256dh, Auth: testAuth}, alerts)
+	id, err := m.db.SaveDevice(Subscription{ID: "dev" + path, Endpoint: "http://" + host + path, P256dh: testP256dh, Auth: testAuth}, alerts, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -234,6 +234,27 @@ func TestEvaluateScheduleFiresAReminderOnceAndDropsIt(t *testing.T) {
 	}
 }
 
+// TestEvaluateScheduleDropsAReminderAsStored checks a reminder whose row
+// holds its lead as "1 blocks", another text for a lead of 1 block: it fires
+// once and is dropped.
+func TestEvaluateScheduleDropsAReminderAsStored(t *testing.T) {
+	host, h := hookServer(t)
+	m := newTestManager(t, false)
+	captureLog(t)
+	id := remind(t, m, host, "/dev", Reminder{Chain: "test-1", Height: 1000, Lead: Lead{Blocks: 1}})
+	if _, err := m.db.db.Exec(`UPDATE push_reminders SET lead = '1 blocks' WHERE subscription_id = ?`, id); err != nil {
+		t.Fatal(err)
+	}
+	m.EvaluateSchedule(at("test-1", 999))
+	m.EvaluateSchedule(at("test-1", 1000))
+	if got := h.got(); !slices.Equal(got, []string{"/dev"}) {
+		t.Errorf("posts = %v, want one at 1 block", got)
+	}
+	if _, ok, _ := m.db.Reminder(id); ok {
+		t.Error("the reminder stays after it fired")
+	}
+}
+
 func TestEvaluateScheduleDropsARemindersOfAnotherChain(t *testing.T) {
 	host, h := hookServer(t)
 	m := newTestManager(t, false)
@@ -293,7 +314,7 @@ func TestSendsGiveUpAfterTheSendTimeout(t *testing.T) {
 	captureLog(t)
 	m.SetSendTimeout(100 * time.Millisecond)
 	if _, err := m.db.SaveDevice(Subscription{ID: "d", Endpoint: hung.URL, P256dh: testP256dh, Auth: testAuth},
-		[]SubscriptionAlert{{AlertType: AlertChainStuck}}); err != nil {
+		[]SubscriptionAlert{{AlertType: AlertChainStuck}}, nil); err != nil {
 		t.Fatal(err)
 	}
 	sent := make(chan struct{})

@@ -1,11 +1,15 @@
 package push
 
 import (
+	"bytes"
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
 	"net/http"
+	"net/url"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -23,6 +27,9 @@ const DefaultSendTimeout = 10 * time.Second
 // use the project URL directly to avoid needing a real email address. Apple
 // APNs rejects "mailto:" with non-routable domains like localhost (403 BadJwtToken).
 const vapidSubject = "https://github.com/gnoverse/gnockpit"
+
+// maxRefusalBody is how much of a push service's refusal an error carries.
+const maxRefusalBody = 1 << 10
 
 // Manager coordinates VAPID key lifecycle, alert detection, and push delivery.
 type Manager struct {
@@ -146,18 +153,29 @@ func (m *Manager) NotifyAlert(a Alert) {
 	m.notifyTargets(a)
 }
 
-// SendTest sends a test notification to a specific subscription.
+var (
+	// ErrSubscriptionNotFound reports a device the server does not know.
+	ErrSubscriptionNotFound = errors.New("subscription not found")
+	// ErrDelivery reports a push its push service did not take.
+	ErrDelivery = errors.New("push delivery failed")
+)
+
+// SendTest sends a test notification to device subID. It returns
+// ErrSubscriptionNotFound for a device the server does not know, and an
+// ErrDelivery error when the device's push service does not take the push.
 func (m *Manager) SendTest(subID string) error {
 	sub, err := m.db.GetSubscription(subID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ErrSubscriptionNotFound
+	}
 	if err != nil {
 		return fmt.Errorf("get subscription: %w", err)
 	}
-	m.sendPush(sub, Alert{
+	return m.deliver(sub, Alert{
 		Firing: true,
 		Title:  "gnockpit test",
 		Body:   "Push notifications are working.",
 	})
-	return nil
 }
 
 type pushPayload struct {
@@ -176,11 +194,21 @@ func payloadOf(chain string, a Alert) pushPayload {
 	return pushPayload{Title: title, Body: a.Body, URL: a.Link}
 }
 
+// sendPush delivers a to sub, logging a failure: an alert goes on to its
+// other devices.
 func (m *Manager) sendPush(sub Subscription, a Alert) {
+	if err := m.deliver(sub, a); err != nil {
+		log.Printf("push: send to %s: %v", sub.ID, err)
+	}
+}
+
+// deliver sends a to sub through its push service. A push the push service
+// does not take is an ErrDelivery error; a subscription it reports expired
+// is removed.
+func (m *Manager) deliver(sub Subscription, a Alert) error {
 	payload, err := json.Marshal(payloadOf(m.ChainName(), a))
 	if err != nil {
-		log.Printf("push: marshal payload: %v", err)
-		return
+		return fmt.Errorf("marshal payload: %w", err)
 	}
 	resp, err := webpush.SendNotification(payload, &webpush.Subscription{
 		Endpoint: sub.Endpoint,
@@ -195,17 +223,17 @@ func (m *Manager) sendPush(sub Subscription, a Alert) {
 		Subscriber:      vapidSubject,
 		TTL:             30,
 	})
+	// A request that reached no push service is a delivery failure, and so
+	// is a malformed stored endpoint, which fails as a *url.Error too; the
+	// other errors come before the request (a malformed key, say).
+	var unreached *url.Error
+	if errors.As(err, &unreached) {
+		return fmt.Errorf("%w: %w", ErrDelivery, err)
+	}
 	if err != nil {
-		log.Printf("push: send to %s: %v", sub.ID, err)
-		return
+		return fmt.Errorf("prepare the push: %w", err)
 	}
 	defer resp.Body.Close()
-
-	log.Printf("push: send to %s: status %d", sub.ID, resp.StatusCode)
-	if resp.StatusCode >= 300 {
-		body, _ := io.ReadAll(resp.Body)
-		log.Printf("push: send to %s: response body: %s", sub.ID, body)
-	}
 
 	// 410 Gone: FCM/standard expired subscription.
 	// 400 Bad Request: WNS (Edge on Windows) uses this for expired channels.
@@ -215,4 +243,15 @@ func (m *Manager) sendPush(sub Subscription, a Alert) {
 			log.Printf("push: delete expired subscription: %v", err)
 		}
 	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		// The answer is the remote endpoint's text: bounded, and quoted so
+		// that it adds no line to the log.
+		body, err := io.ReadAll(io.LimitReader(resp.Body, maxRefusalBody))
+		if err != nil {
+			return fmt.Errorf("%w: status %d, read body: %w", ErrDelivery, resp.StatusCode, err)
+		}
+		return fmt.Errorf("%w: status %d: %q", ErrDelivery, resp.StatusCode, bytes.TrimSpace(body))
+	}
+	log.Printf("push: send to %s: status %d", sub.ID, resp.StatusCode)
+	return nil
 }

@@ -18,10 +18,15 @@ type Reminder struct {
 	Lead   Lead
 }
 
-// DeviceReminder is a reminder and the device it goes to.
+// DeviceReminder is a reminder and the device it goes to, as Reminders read
+// it.
 type DeviceReminder struct {
 	Sub      Subscription
 	Reminder Reminder
+	// lead is the row's lead text, which DropReminder matches: a row can
+	// hold another text than Lead.String for the same lead, such as
+	// "1 blocks".
+	lead string
 }
 
 // SetReminder stores sub as SaveDevice does, its alerts untouched, and
@@ -74,12 +79,11 @@ func (d *DB) Reminders() ([]DeviceReminder, error) {
 	var out []DeviceReminder
 	for rows.Next() {
 		var dr DeviceReminder
-		var lead string
 		if err := rows.Scan(&dr.Sub.ID, &dr.Sub.Endpoint, &dr.Sub.P256dh, &dr.Sub.Auth,
-			&dr.Reminder.Chain, &dr.Reminder.Height, &dr.Reminder.Since, &dr.Reminder.Label, &lead); err != nil {
+			&dr.Reminder.Chain, &dr.Reminder.Height, &dr.Reminder.Since, &dr.Reminder.Label, &dr.lead); err != nil {
 			return nil, fmt.Errorf("reminders: %w", err)
 		}
-		if dr.Reminder.Lead, err = ParseLead(lead); err != nil {
+		if dr.Reminder.Lead, err = ParseLead(dr.lead); err != nil {
 			return nil, fmt.Errorf("reminder of %s: %w", dr.Sub.ID, err)
 		}
 		out = append(out, dr)
@@ -105,14 +109,16 @@ func (d *DB) DeleteReminder(id string) (bool, error) {
 	return kept, tx.Commit()
 }
 
-// DropReminder deletes the reminder of device id if it is still r, keeping
-// the device: a reminder the page replaced meanwhile stays.
-func (d *DB) DropReminder(id string, r Reminder) error {
+// DropReminder deletes the reminder dr, as Reminders read it, if its row
+// still holds it, keeping the device: a reminder the page replaced meanwhile
+// stays.
+func (d *DB) DropReminder(dr DeviceReminder) error {
+	r := dr.Reminder
 	if _, err := d.db.Exec(
 		`DELETE FROM push_reminders WHERE subscription_id = ? AND chain = ? AND height = ? AND since = ? AND label = ? AND lead = ?`,
-		id, r.Chain, r.Height, r.Since, r.Label, r.Lead.String(),
+		dr.Sub.ID, r.Chain, r.Height, r.Since, r.Label, dr.lead,
 	); err != nil {
-		return fmt.Errorf("drop reminder of %s: %w", id, err)
+		return fmt.Errorf("drop reminder of %s: %w", dr.Sub.ID, err)
 	}
 	return nil
 }
@@ -135,7 +141,7 @@ func (m *Manager) evaluateReminders(s Schedule) {
 		default:
 			continue
 		}
-		if err := m.db.DropReminder(dr.Sub.ID, r); err != nil {
+		if err := m.db.DropReminder(dr); err != nil {
 			log.Printf("push: %v", err)
 		}
 	}

@@ -3,6 +3,7 @@ package blocks
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"slices"
 	"time"
@@ -90,6 +91,7 @@ type Rotation struct {
 const (
 	valsetChangesBeforeQuery = `SELECT height FROM blocks_valset_changes WHERE height < ? ORDER BY height DESC LIMIT ?`
 	valsetChangesInQuery     = `SELECT height FROM blocks_valset_changes WHERE height BETWEEN ? AND ? ORDER BY height`
+	valsetChangeBelowQuery   = `SELECT height FROM blocks_valset_changes WHERE height < ? LIMIT 1`
 )
 
 // ValsetChanges returns at most limit validator set changes below height
@@ -128,6 +130,23 @@ func (s *Store) ValsetChangesIn(ctx context.Context, from, to int64) ([]ValsetCh
 		}
 	}
 	return s.valsetChanges(ctx, heights)
+}
+
+// HasValsetChangeBelow tells whether a validator set change lies below
+// height, the genesis set counting once height 1 is stored: whether
+// ValsetChanges(height, …) returns any.
+func (s *Store) HasValsetChangeBelow(ctx context.Context, height int64) (bool, error) {
+	var below int64
+	err := s.db.QueryRowContext(ctx, valsetChangeBelowQuery, height).Scan(&below)
+	switch {
+	case err == nil:
+		return true, nil
+	case !errors.Is(err, sql.ErrNoRows):
+		return false, fmt.Errorf("validator set changes below %d: %w", height, err)
+	case height <= 1:
+		return false, nil
+	}
+	return s.hasGenesis(ctx)
 }
 
 func (s *Store) changeHeights(ctx context.Context, query string, args ...any) ([]int64, error) {

@@ -7,6 +7,7 @@ import (
 	"embed"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"maps"
@@ -101,6 +102,8 @@ type Server struct {
 	HideSources     bool          // hide the configured source nodes from the peers list
 	ChainName       string        // display name for the chain; defaults to the chain-id when empty
 	Analytics       Analytics     // third-party analytics snippet injected into the dashboard (zero value = none)
+
+	clock func() time.Time // time source for the handlers (nil = time.Now)
 }
 
 // NewServer creates a new web server.
@@ -111,6 +114,14 @@ func NewServer(client *node.Client, addr string, interval time.Duration) *Server
 		Interval:  interval,
 		wsClients: make(map[*wsClient]struct{}),
 	}
+}
+
+// now returns the current time from the server's clock.
+func (s *Server) now() time.Time {
+	if s.clock == nil {
+		return time.Now()
+	}
+	return s.clock()
 }
 
 // --- WebSocket client management ---
@@ -176,7 +187,7 @@ type checkData struct {
 	AppHashLast string           `json:"apphash_last,omitempty"`
 	ValAddress  string           `json:"val_address,omitempty"`
 	ValPubKey   string           `json:"val_pubkey,omitempty"`
-	System      *node.SystemInfo `json:"system,omitempty"`
+	System      *node.SystemInfo `json:"system"`
 	HideSources bool             `json:"hide_sources,omitempty"`
 }
 
@@ -267,10 +278,17 @@ func (s *Server) buildVotesReport(snap *node.Snapshot) *node.VotesReport {
 	return report
 }
 
+// buildCheckData builds a message's checks. Their node time is the server's
+// as the message is built, to the millisecond: the page sets its clock by
+// it, whenever the snapshot was fetched.
 func (s *Server) buildCheckData(snap *node.Snapshot) checkData {
+	system := node.SystemInfo{NodeTime: s.now().UTC().Format(historyTime)}
+	if snap.System != nil {
+		system.GenesisTime = snap.System.GenesisTime
+	}
 	cd := checkData{
 		AppHashLast: snap.AppHashLast,
-		System:      snap.System,
+		System:      &system,
 		HideSources: s.HideSources,
 	}
 	if snap.Status != nil {
@@ -280,38 +298,21 @@ func (s *Server) buildCheckData(snap *node.Snapshot) checkData {
 	return cd
 }
 
-// buildSnapshotMsg builds a full snapshot message for initial WS connect.
-func (s *Server) buildSnapshotMsg(snap *node.Snapshot) wsMsg {
-	type snapshotData struct {
-		Time   string            `json:"time"`
-		Status *node.Status      `json:"status,omitempty"`
-		Peers  []node.Peer       `json:"peers,omitempty"`
-		Votes  *node.VotesReport `json:"votes,omitempty"`
-		Checks checkData         `json:"checks"`
-	}
-	sd := snapshotData{
-		Time:   snap.Timestamp.Format("15:04:05"),
-		Status: snap.Status,
-		Peers:  snap.Peers,
-		Votes:  s.buildVotesReport(snap),
-		Checks: s.buildCheckData(snap),
-	}
-	return wsMsg{Type: "snapshot", Data: sd}
+// liveData is the data of the WebSocket messages: the snapshot as the page
+// shows it. The status and the peers are null while every source is down,
+// the votes without a consensus state; the peers are [] when the sources
+// see none. The page empties what they fill.
+type liveData struct {
+	Time    string             `json:"time"`
+	Status  *node.Status       `json:"status"`
+	Peers   []node.Peer        `json:"peers"`
+	Votes   *node.VotesReport  `json:"votes"`
+	Checks  checkData          `json:"checks"`
+	Signing *node.SigningStats `json:"signing,omitempty"`
 }
 
-// buildUpdateMsg builds a batched periodic update message.
-// Sending one message instead of 5-6 individual ones reduces JSON.parse
-// calls and WS event handler invocations on the frontend.
-func (s *Server) buildUpdateMsg(snap *node.Snapshot) wsMsg {
-	type updateData struct {
-		Time    string             `json:"time"`
-		Status  *node.Status       `json:"status,omitempty"`
-		Peers   []node.Peer        `json:"peers,omitempty"`
-		Votes   *node.VotesReport  `json:"votes,omitempty"`
-		Checks  checkData          `json:"checks"`
-		Signing *node.SigningStats `json:"signing,omitempty"`
-	}
-	ud := updateData{
+func (s *Server) buildLiveData(snap *node.Snapshot) liveData {
+	return liveData{
 		Time:    snap.Timestamp.Format("15:04:05"),
 		Status:  snap.Status,
 		Peers:   snap.Peers,
@@ -319,7 +320,17 @@ func (s *Server) buildUpdateMsg(snap *node.Snapshot) wsMsg {
 		Checks:  s.buildCheckData(snap),
 		Signing: snap.Signing,
 	}
-	return wsMsg{Type: "update", Data: ud}
+}
+
+// buildSnapshotMsg builds the message a WebSocket client gets on connecting.
+func (s *Server) buildSnapshotMsg(snap *node.Snapshot) wsMsg {
+	return wsMsg{Type: "snapshot", Data: s.buildLiveData(snap)}
+}
+
+// buildUpdateMsg builds the message each publish broadcasts: one message
+// with every part, which the page parses and handles once.
+func (s *Server) buildUpdateMsg(snap *node.Snapshot) wsMsg {
+	return wsMsg{Type: "update", Data: s.buildLiveData(snap)}
 }
 
 // --- HTTP Handlers ---
@@ -490,9 +501,12 @@ func (s *Server) handleBootStatus(w http.ResponseWriter, r *http.Request) {
 
 // --- System Info ---
 
+// collectSystemInfo returns the snapshot's system info: the node time it is
+// fetched at, which /api's dump shows, and the genesis time. A WebSocket
+// message sends its own node time, as of its building (buildCheckData).
 func (s *Server) collectSystemInfo() *node.SystemInfo {
 	return &node.SystemInfo{
-		NodeTime:    time.Now().UTC().Format("2006-01-02T15:04:05Z"),
+		NodeTime:    s.now().UTC().Format("2006-01-02T15:04:05Z"),
 		GenesisTime: s.Client.Names.GenesisTime,
 	}
 }
@@ -584,22 +598,7 @@ func (s *Server) fetchSnapshot(ctx context.Context) *node.Snapshot {
 	}
 	snap.Peers = enriched
 
-	// Geolocate peers for the network map (best-effort; empty until the
-	// database has been downloaded).
-	if s.GeoIP != nil {
-		for i := range snap.Peers {
-			ip := snap.Peers[i].RemoteIP // public-or-empty after the merge
-			if ip == "" {
-				continue
-			}
-			if lat, lon, city, country, ok := s.GeoIP.Lookup(ip); ok {
-				snap.Peers[i].Lat = lat
-				snap.Peers[i].Lon = lon
-				snap.Peers[i].City = city
-				snap.Peers[i].Country = country
-			}
-		}
-	}
+	s.geolocatePeers(snap.Peers)
 
 	// Resolve each peer's cloud provider from its IP (best-effort; empty until
 	// the ASN database has been downloaded).
@@ -653,6 +652,28 @@ func (s *Server) fetchSnapshot(ctx context.Context) *node.Snapshot {
 	s.ensureValidatorNames(snap)
 
 	return snap
+}
+
+// geolocatePeers gives each peer whose public IP the geolocation database
+// locates its coordinates, city and country, for the network map; a peer it
+// does not locate keeps none. Nothing is located until the database has been
+// downloaded.
+func (s *Server) geolocatePeers(peers []node.Peer) {
+	if s.GeoIP == nil {
+		return
+	}
+	for i := range peers {
+		ip := peers[i].RemoteIP // public-or-empty after the merge
+		if ip == "" {
+			continue
+		}
+		if lat, lon, city, country, ok := s.GeoIP.Lookup(ip); ok {
+			peers[i].Lat = &lat
+			peers[i].Lon = &lon
+			peers[i].City = city
+			peers[i].Country = country
+		}
+	}
 }
 
 // ensureValidatorNames walks every validator address in the snapshot, calls
@@ -737,7 +758,7 @@ func (s *Server) refreshMissed(ctx context.Context) {
 	if s.Blocks == nil {
 		return
 	}
-	rep, err := s.Blocks.MissedByWindows(ctx, []time.Duration{24 * time.Hour}, time.Now())
+	rep, err := s.Blocks.MissedByWindows(ctx, []time.Duration{24 * time.Hour}, s.now())
 	if err != nil {
 		log.Printf("blocks: missed-24h: %v", err)
 		return
@@ -762,41 +783,47 @@ func (s *Server) refreshMissed(ctx context.Context) {
 	s.mu.Unlock()
 }
 
+// publish makes snap the current snapshot: it evaluates push notifications,
+// derives validator health, stores the snapshot, refreshes the schedule and
+// missed-block counts, and broadcasts the update to WebSocket clients.
+func (s *Server) publish(ctx context.Context, snap *node.Snapshot) {
+	if s.PushManager != nil {
+		s.PushManager.ReloadNotifyConfigIfChanged()
+		s.PushManager.EvaluateAndNotify(snap)
+	}
+	// Active-validator count and the down set depend on the detector's
+	// hysteretic state, so derive them after EvaluateAndNotify has updated it.
+	// Both run before setSnapshot so the published snapshot is complete and
+	// immutable when a WebSocket client reads it on connect.
+	s.applyValidatorHealth(snap)
+	s.setSnapshot(snap)
+	s.notifySchedule()
+	s.refreshMissed(ctx)
+
+	// Broadcast to WebSocket clients as a single batched message to reduce
+	// JSON.parse calls and WS message overhead on the frontend.
+	s.broadcastWS(s.buildUpdateMsg(snap))
+}
+
 func (s *Server) publishLoop(ctx context.Context) {
 	ticker := time.NewTicker(s.Interval)
 	defer ticker.Stop()
 
-	publish := func() {
+	fetchAndPublish := func() {
 		if s.Client != nil && s.Client.Names != nil {
 			s.Client.Names.ReloadIfChanged()
 		}
-		snap := s.fetchSnapshot(ctx)
-		if s.PushManager != nil {
-			s.PushManager.ReloadNotifyConfigIfChanged()
-			s.PushManager.EvaluateAndNotify(snap)
-		}
-		// Active-validator count and the down set depend on the detector's
-		// hysteretic state, so derive them after EvaluateAndNotify has updated it.
-		// Both run before setSnapshot so the published snapshot is complete and
-		// immutable when a WebSocket client reads it on connect.
-		s.applyValidatorHealth(snap)
-		s.setSnapshot(snap)
-		s.notifySchedule()
-		s.refreshMissed(ctx)
-
-		// Broadcast to WebSocket clients as a single batched message to reduce
-		// JSON.parse calls and WS message overhead on the frontend.
-		s.broadcastWS(s.buildUpdateMsg(snap))
+		s.publish(ctx, s.fetchSnapshot(ctx))
 	}
 
-	publish()
+	fetchAndPublish()
 
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			publish()
+			fetchAndPublish()
 		}
 	}
 }
@@ -987,10 +1014,14 @@ func (s *Server) handlePushSubscribe(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+	if err := push.ValidateKeep(req.Keep, req.Alerts); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
 	// A device known by its endpoint keeps its id: its reminder and what was
 	// sent to it hang off it.
 	sub := push.Subscription{ID: generateID(), Endpoint: req.Endpoint, P256dh: req.P256dh, Auth: req.Auth}
-	id, err := s.PushManager.DB().SaveDevice(sub, req.Alerts)
+	id, err := s.PushManager.DB().SaveDevice(sub, req.Alerts, req.Keep)
 	if err != nil {
 		log.Printf("push: save device: %v", err)
 		http.Error(w, "save subscription", http.StatusInternalServerError)
@@ -1011,18 +1042,23 @@ func (s *Server) handlePushEntities(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	snap := s.getSnapshot()
+	// Without a consensus state, at start or while the sources fail, the
+	// validators are unread: an empty list would read as a set without any.
+	if snap == nil || snap.Consensus == nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusServiceUnavailable)
+		json.NewEncoder(w).Encode(errorBody{Error: "validator set unread"})
+		return
+	}
 	resp := push.EntitiesResponse{
 		ChainStuckSecs:  s.PushManager.ChainStuckSecs(),
 		MaxMissedInARow: s.PushManager.MaxMissedInARow(),
 	}
-
-	if snap != nil && snap.Consensus != nil {
-		for _, v := range snap.Consensus.Votes {
-			resp.Validators = append(resp.Validators, push.Entity{
-				ValAddress: v.Address,
-				Moniker:    v.Name,
-			})
-		}
+	for _, v := range snap.Consensus.Votes {
+		resp.Validators = append(resp.Validators, push.Entity{
+			ValAddress: v.Address,
+			Moniker:    v.Name,
+		})
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -1045,11 +1081,20 @@ func (s *Server) handlePushTest(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "missing id", http.StatusBadRequest)
 		return
 	}
-	if err := s.PushManager.SendTest(req.ID); err != nil {
+	err := s.PushManager.SendTest(req.ID)
+	switch {
+	case errors.Is(err, push.ErrSubscriptionNotFound):
 		http.Error(w, "subscription not found", http.StatusNotFound)
-		return
+	case errors.Is(err, push.ErrDelivery):
+		// The push service's answer is for the operator: the log has it.
+		log.Printf("push: test to %s: %v", req.ID, err)
+		http.Error(w, "push delivery failed", http.StatusBadGateway)
+	case err != nil:
+		log.Printf("push: test to %s: %v", req.ID, err)
+		http.Error(w, "send test push", http.StatusInternalServerError)
+	default:
+		w.WriteHeader(http.StatusOK)
 	}
-	w.WriteHeader(http.StatusOK)
 }
 
 // --- Notify-test API (opt-in, token-gated) ---
@@ -1135,14 +1180,8 @@ func (s *Server) handleNotifyTest(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// Run starts the web server, publish loop, and log streamer.
-func (s *Server) Run(ctx context.Context) error {
-	go s.publishLoop(ctx)
-	go s.valoperRefreshLoop(ctx)
-	go s.geoIPRefreshLoop(ctx)
-	go s.asnRefreshLoop(ctx)
-	go s.statusLinkRefreshLoop(ctx)
-
+// routes returns the handler serving every dashboard and API path.
+func (s *Server) routes() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", s.handleIndex)
 	mux.HandleFunc("/api", s.handleAPI)
@@ -1169,10 +1208,20 @@ func (s *Server) Run(ctx context.Context) error {
 	mux.HandleFunc("/api/history", s.handleHistory)
 	mux.HandleFunc("/api/validator", s.handleValidator)
 	mux.HandleFunc("/badge.svg", s.handleBadge)
+	return mux
+}
+
+// Run starts the web server, publish loop, and log streamer.
+func (s *Server) Run(ctx context.Context) error {
+	go s.publishLoop(ctx)
+	go s.valoperRefreshLoop(ctx)
+	go s.geoIPRefreshLoop(ctx)
+	go s.asnRefreshLoop(ctx)
+	go s.statusLinkRefreshLoop(ctx)
 
 	srv := &http.Server{
 		Addr:    s.Addr,
-		Handler: mux,
+		Handler: s.routes(),
 	}
 
 	go func() {

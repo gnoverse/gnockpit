@@ -8,6 +8,7 @@ require (
 	github.com/fogleman/gg v1.3.0
 	github.com/gnolang/gno v1.1.0
 	github.com/gorilla/websocket v1.5.3
+	github.com/mxschmitt/playwright-go v0.6401.0
 	github.com/oschwald/maxminddb-golang v1.13.1
 	golang.org/x/image v0.23.0
 	modernc.org/sqlite v1.47.0
@@ -16,9 +17,11 @@ require (
 require (
 	github.com/btcsuite/btcd/btcec/v2 v2.3.6 // indirect
 	github.com/btcsuite/btcd/btcutil v1.1.6 // indirect
+	github.com/deckarep/golang-set/v2 v2.8.0 // indirect
 	github.com/decred/dcrd/dcrec/secp256k1/v4 v4.4.0 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/fatih/color v1.15.0 // indirect
+	github.com/go-stack/stack v1.8.1 // indirect
 	github.com/golang-jwt/jwt/v5 v5.2.1 // indirect
 	github.com/golang/freetype v0.0.0-20170609003504-e2365dfdc4a0 // indirect
 	github.com/google/uuid v1.6.0 // indirect
