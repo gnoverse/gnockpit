@@ -66,7 +66,7 @@ appear for the same peer, the earlier `-rpc` in flag order wins.
 ## Analytics
 
 gnockpit ships with **no analytics and no third-party origins at all**. The
-dashboard is a single self-contained HTML file: nothing about your node, your
+dashboard is one HTML file and its scripts, all served by the binary. Nothing about your node, your
 peers or your visitors leaves the browser unless you turn it on.
 
 `--analytics simple-analytics` injects the [Simple Analytics](https://www.simpleanalytics.com)
@@ -537,7 +537,11 @@ polled its sources, then an `update` at each refresh (`-interval`). Both are
 
 ## Development
 
-`make test` runs the Go tests, which need no browser.
+Requirements: Go, and Node 24 (`web/.nvmrc`), for `make test` and `make typecheck`.
+
+`make test` runs the Go tests, which need no browser. A few check the page's scripts with `node` and fail, naming it, when it is not on `PATH`.
+
+The binary serves the page's modules from `/js/` with `Cache-Control: no-cache` and a content ETag: a browser revalidates each on load, downloads only one that changed, and so runs the scripts of the deploy that served the page.
 
 The page tests drive the dashboard in Chromium at desktop and tablet widths, and in WebKit as an iPhone and at desktop width, against the real server filled with chain data built in Go. They sit behind the `page` build tag. Install the Playwright driver and the two browsers once, at the version `go.mod` pins:
 
@@ -563,6 +567,14 @@ A failed page test leaves a Playwright trace and a screenshot in `$PAGE_ARTIFACT
 
 ```bash
 go run github.com/mxschmitt/playwright-go/cmd/playwright show-trace "${PAGE_ARTIFACTS:-${TMPDIR:-/tmp}/gnockpit-page}/TestPageHead_desktop.zip"
+```
+
+### Type check
+
+The dashboard's script is the ES modules in `web/js/`, with the typedefs of the server's answers in `web/types/`. `make typecheck` checks them with TypeScript 7.0.2, which `web/package-lock.json` pins, with every strict flag. It needs Node 24 (`web/.nvmrc`): `npm ci` refuses an older one, naming the version it requires. It installs `web/node_modules` itself (`npm ci`), prints nothing on success and exits non-zero on a finding. CI runs it as the `typecheck` job.
+
+```bash
+make typecheck
 ```
 
 ## License

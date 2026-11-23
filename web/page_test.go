@@ -439,6 +439,30 @@ func (e *pageEnv) navigateTo(rawURL string) {
 	if _, err := e.Page.Goto(rawURL); err != nil {
 		e.T.Fatalf("open %s: %v", rawURL, err)
 	}
+	e.awaitLoadAnswers(rawURL, from)
+}
+
+// navigateCommitted starts loading path from the server and returns once
+// the browser has the page, without waiting for its load event, which a held
+// script delays. awaitLoad waits for the answers this load gets from the
+// scenario's disabled features: call it once the holds are released.
+func (e *pageEnv) navigateCommitted(path string) (awaitLoad func()) {
+	e.T.Helper()
+	rawURL := e.ts.URL + path
+	from := e.hygiene.mark()
+	if _, err := e.Page.Goto(rawURL, playwright.PageGotoOptions{WaitUntil: playwright.WaitUntilStateCommit}); err != nil {
+		e.T.Fatalf("open %s: %v", rawURL, err)
+	}
+	return func() {
+		e.T.Helper()
+		e.awaitLoadAnswers(rawURL, from)
+	}
+}
+
+// awaitLoadAnswers waits for the answers the load of rawURL, started at the
+// hygiene mark from, gets from the scenario's disabled features.
+func (e *pageEnv) awaitLoadAnswers(rawURL string, from int) {
+	e.T.Helper()
 	var answers []*expectation
 	for _, x := range requiredOf(e.atLoad) {
 		answers = append(answers, since(from, x))

@@ -322,6 +322,37 @@ func TestPageNetworkAverageBlockTime(t *testing.T) {
 	})
 }
 
+// TestPageNetworkCompactBeforeTheScripts checks the first paint of a
+// visitor with no stored choice: the page shows the Network State in its
+// default mode, compact up to 768 px wide with its checkbox ticked, before
+// the Network State's module runs, and keeps it once the module ran.
+func TestPageNetworkCompactBeforeTheScripts(t *testing.T) {
+	onProfiles(t, []profile{desktop, tablet, phone}, func(t *testing.T, p profile) {
+		compact := p.name != desktop.name
+		e := openPage(t, p, healthyNetwork(), noNavigate())
+		networkState := e.hold("/js/network-state.js")
+		awaitLoad := e.navigateCommitted("/")
+		expectDefault := func() {
+			t.Helper()
+			networkExpectCompact(e, compact)
+			if compact {
+				e.must(e.expect("#ns-compact-cb").ToBeChecked())
+			}
+		}
+
+		// The markup is parsed to its end, and the module has not run: it
+		// marks the card with the viewer's choice.
+		e.must(e.expect("#val-modal").ToBeAttached())
+		e.must(e.expect(networkCard).Not().ToHaveClass(regexp.MustCompile(`\bcompact-`)))
+		expectDefault()
+
+		networkState.release()
+		awaitLoad()
+		e.must(e.expect("#ns-consensus").ToContainText("h="))
+		expectDefault()
+	})
+}
+
 // ---- App hash
 
 // TestPageNetworkAppHash checks the app hash: its hex in green, then the

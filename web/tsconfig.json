@@ -1,0 +1,44 @@
+{
+  "compilerOptions": {
+    // Check the page's modules, written in JavaScript; emit nothing.
+    "allowJs": true,
+    "checkJs": true,
+    "noEmit": true,
+
+    // The language and the APIs of the browsers the page supports. dom
+    // holds the DOM's iterators too (for-of over a NodeList): TypeScript 7's
+    // dom.iterable is empty.
+    "target": "es2022",
+    "lib": ["es2022", "dom"],
+
+    // With package.json's "type": "module", nodenext reads every file as an
+    // ES module and, like the browser, resolves a relative import only with
+    // its file extension: './x.js', never './x'.
+    "module": "nodenext",
+    "moduleResolution": "nodenext",
+
+    // How strictly the modules are checked: every strict check. Among them,
+    // null and undefined are values of their own types, so a lookup that can
+    // find nothing, or an answer that can be absent, is checked before use;
+    // and every value has a type, in JSDoc where tsc cannot infer it.
+    "strict": true,
+
+    // Beyond strict: a function returns a value on every path or on none, a
+    // switch case never falls into the next, no local or parameter goes
+    // unused, an indexed read that can find nothing is checked, an optional
+    // property is absent or has its type: it takes undefined only when its type
+    // says so, and code no path reaches and a label nothing breaks to or
+    // continues are errors, not warnings.
+    "noImplicitReturns": true,
+    "noFallthroughCasesInSwitch": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": true,
+    "allowUnreachableCode": false,
+    "allowUnusedLabels": false
+  },
+  // The page's modules, and the typedefs of the server's answers they import:
+  // types/ is checked, never served.
+  "include": ["js/**/*.js", "types/**/*.js"]
+}

@@ -56,7 +56,15 @@ web/                    — Web dashboard + HTTP API
   reminder.go           — /api/push/reminder; schedule(): the head, the scheduled halt and time-left estimates the lead-time alerts check
   push/                 — browser push and Shoutrrr: alert detection, devices (one per push endpoint), the notification config file (notifyconfig.go: parse; notifyroute.go: per-target senders, reload on change), chain alerts and their sent state (schedule.go), ETA reminders (reminders.go)
   analytics.go          — Optional third-party analytics snippet (--analytics), injected before </body>; off by default
-  index.html            — Single-page dashboard (embedded via go:embed, vanilla JS, no framework)
+  index.html            — The dashboard's markup and CSS; its script is the modules in js/ (embedded via go:embed, vanilla JS, no framework)
+  static.go             — GET/HEAD /js/<file>.js from the embedded js/: `Cache-Control: no-cache`, content ETag (304 on a match), 405 for other methods
+  js/                   — the page's ES modules, entry `main.js` (see Module map)
+  types/                — typedefs of the server's answers, named after their Go types (`@typedef` in .js files); type-checked, never served
+  tsconfig.json         — tsc settings: allowJs + checkJs, noEmit, every strict flag
+  package.json          — pins typescript 7.0.2 (`npm ci`); Node 24 (`web/.nvmrc`, CI and local), an older one refused by name (`engines`, `.npmrc`)
+  modules_test.go       — Go tests of the modules (runs `node`): startEach isolation, `$` naming the missing id, no import cycle (imports read as tokens; no subdirectory in `js/`)
+  static_test.go        — the `/js/` handler's tests: ETag, 304, 405
+  server_test.go        — also the modulepreload test (`TestIndexPreloadsEveryModule`), `TestJSSyntax` (runs `node`) and `TestJSHasNoLookbehind`
   page_test.go          — page tests' harness (build tag `page`, playwright-go): TestMain, browser profiles, openPage and its options, traces, the browser clock, which runFor moves with the server's
   page_gate_test.go     — the gate in front of the routes: holds a request until the test releases or drops it
   page_hygiene_test.go  — the hygiene checks: console errors and warnings, page errors, failed requests and error answers, against what a test declares
@@ -79,7 +87,7 @@ web/                    — Web dashboard + HTTP API
 2. Each cycle calls `fetchSnapshot()` which polls every configured source (`node/sources.go: Poll`): global chain data (status, validators, consensus, signing) comes from the freshest reachable source; peers are unioned across all reachable sources and deduped by node ID (`MergePeers`) before their RPCs are probed. All sources down → `snap.Error` drives the "connecting to sources" banner.
    The publish loop also rereads the notification config file when it changed, and, once the snapshot is set, sends the lead-time alerts (`notifySchedule` → `push.Manager.EvaluateSchedule`: a new halt and its approach, once per device or target, recorded in `push_sent`; the reminders whose lead is met, then dropped, their device kept). Every push or webhook send is bounded by `--send-timeout`.
 3. The snapshot is broadcast to every WebSocket client as one `update` message (see WebSocket protocol)
-4. `index.html` handles each message in one pass and updates the DOM in place; the tables, cards and map redraw only when what they show changed
+4. `web/js/live.js` handles each message in one pass and updates the DOM in place; the tables, cards and map redraw only when what they show changed
 5. Each cycle also geolocates peers (`geoip`) and resolves their cloud provider (`asn`) — using each peer's resolved public IP only (peers with no usable public IP are geolocated to nothing and bucketed "Unknown" on the map) — and refreshes the missed-24h counts and the 24 h proposals expected / missed from the `blocks` store (#7, `refreshMissed`). This powers the network map and the Country/Provider columns. Validators inherit the country/provider of their correlated peer (matched via `ValAddress`), so validators no source is peered with have none.
 6. Separately, `eta.Tracker` (started in `main.go`) runs its own loop on the primary source: every minute, and back to back while backfilling, it reads the chain head, drops the stored history if the chain id changed, reads the halt params, and fetches the missing every-100th block times newest-first. `/api/eta` combines its model with the snapshot's newest block; the dashboard's ETA cards poll `/api/eta` every 10 s and tick the countdown locally in between. The link card's target lives in the page link (`?eta=&since=&label=`), or in the device's reminder (`push_reminders`) for a page opened without one; the halt card's comes from the chain params; the "original" estimate is recomputed from the stored history as of `since`.
 7. Separately, `blocks.Tracker` (started in `main.go`) fills the block history from the primary source. Deltas worth knowing:
@@ -149,9 +157,11 @@ Everything is auto-detected or configurable via flags. The tool works on any gno
 
 `rpcGet` returns a `*node.HTTPStatusError` (with `RetryAfter`) for a non-2xx answer; `rpcGetJSON` wraps a `*node.RPCError` for a JSON-RPC `error` envelope, which gno sends with HTTP 200 (e.g. a height out of range). `node.IsRefusal` tells a node refusing a call (JSON-RPC error) from one failing to answer (transport error, HTTP error status). Decode RPC results through `rpcGetJSON` (one call) or `rpcBatch` (a batch: a refusal of the whole batch is a wrapped `*RPCError`, a call's own error is in its answer) so neither passes silently.
 
-### Single HTML file
+### The page: one HTML file, ES modules
 
-`web/index.html` is a complete SPA with no build step. Vanilla JS, CSS variables for dark theme, no external dependencies. It's embedded in the binary via `go:embed`.
+`web/index.html` holds the markup and CSS; its script is the ES modules of `web/js/`. No build step, no bundler, no framework, no runtime dependencies; tsc is a check only (`noEmit`). `index.html`, `service-worker.js` and `js/` are embedded via `go:embed`.
+
+Serving: `/js/<file>.js` has `Cache-Control: no-cache` and a content ETag (`static.go`), 405 for methods but GET and HEAD; `index.html` is `no-store`.
 
 The **only** thing that may add an external origin to that page is `--analytics`
 (`web/analytics.go`), which splices a provider snippet in just above `</body>` as the page is
@@ -159,6 +169,41 @@ served. It is off by default and must stay that way: most gnockpits watch their 
 validator, so the default dashboard has to report to nobody. `--analytics-domain` moves that
 provider's script and pixel to a custom domain and adds no origin of its own. Keep the page
 self-contained otherwise.
+
+#### Module map (`web/js/`)
+
+| Module                                                                                                                                            | Holds                                                                                                                                                                                                                                                                                                     |
+| ------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `main.js`                                                                                                                                         | Entry: imports every feature, calls `startEach([[name, start], …])`                                                                                                                                                                                                                                       |
+| `start.js`                                                                                                                                        | `startEach`: runs each `start` in order; a throw is logged `<name> did not start:` and the rest still run                                                                                                                                                                                                 |
+| `state.js`                                                                                                                                        | `live`: the state features share (last votes, peers, status, recent blocks, clock offset, genesis, `dataSeen`, this device's push id and the push key, …)                                                                                                                                                 |
+| `dom.js`                                                                                                                                          | `$(id)` throws `missing #<id>`, or `#<id> is no HTML element`; `$svg(id)` likewise for an SVG element; `$in(root, selector)` throws `missing <selector>`, or `<selector> is no HTML element`; `setText`, `mkEl`, `mkLink`, `clearChildren`. A lookup that may miss calls `document.getElementById` itself |
+| `present.js`                                                                                                                                      | `present(x)`: an indexed read that cannot miss; throws on `undefined`                                                                                                                                                                                                                                     |
+| `read.js`                                                                                                                                         | `boundedRead(ms, read)` (abort + `TimeoutError`), `failureMessage(e)`, `errorOf(body)` (a JSON body's `error` text or null)                                                                                                                                                                               |
+| `storage.js`, `collate.js`, `format.js`, `countries.js`, `names.js`, `focus.js`, `pointer.js`, `ages.js`                                          | Helpers (`pointer.js` and `ages.js` also have a `start`): refusable `localStorage`, name/column ordering, value formatting, country names and flags, validator naming and links, focus, pointer position, server-clock ages                                                                               |
+| `live.js`, `boot.js`, `sync.js`, `timeline.js`, `eta.js`, `valpage.js`, `alerts.js`, `header-links.js`                                            | Features that talk to the server: `/ws`, `/api/boot`, `/api/history`, `/api/history?changes=`, `/api/eta` and the planner, `/api/validator`, push, `/api/links`                                                                                                                                           |
+| `node-lists.js`, `map.js`, `network-state.js`, `recent-blocks.js`, `sections.js`, `popover.js`, `copy.js`, `highlight.js`, `country-highlight.js` | The cards and the page mechanics: tables and cards, map, Network State, Recent Blocks, folding sections, popover, click to copy, cross-highlights                                                                                                                                                         |
+
+Rules for adding code to the page, each ending with what enforces it:
+
+- Put it in the module of its feature; a helper two features use goes in a helper module. New module: add its `import` and `startEach` entry to `main.js` and a `<link rel="modulepreload" href="/js/<file>.js">` to `index.html` (preload: `TestIndexPreloadsEveryModule`; `main.js` and `startEach`: unenforced).
+- The top level declares and looks up only. Every side effect (listeners, timers, requests, DOM writes) goes in an exported `start()`, which `main.js` calls through `startEach` (unenforced).
+- `main.js` lists the features in the order `startEach` runs them, which is the order their listeners and first draws register: insert a new feature where it must come relative to the others, and never reorder an existing one. A `start` must not rely on another feature having started unless that order guarantees it: eta's reminder awaits `whenPushReady()`, which alerts' `start` sets, so alerts starts before eta (page tests).
+- Look up an element the page needs with `$(id)`, `$svg(id)` (an SVG element) or `$in(root, selector)`, which throw naming it; call `document.getElementById` only where its absence is real and handled. Read an index that cannot miss with `present(x)` (tsc, `TestLookupsNameTheMissingElement`).
+- State two modules share lives on `live` (`state.js`) and is read and written as `live.<name>`. A module-level `let` another module needs is a defect (unenforced).
+- No regex lookbehind, `(?<=` or `(?<!`: Safari before 16.4 cannot parse one, and a module it cannot parse stops every module (`TestJSHasNoLookbehind`).
+- No import cycles (`TestModulesFormNoCycle`). No writes to an imported binding: write through `live` or an exported function (tsc).
+- Types are JSDoc (tsc). A server answer's typedef goes in `web/types/`, named after its Go type, with its JSON tags (`omitempty` or `omitzero` = optional; a pointer, or a slice the server can leave nil, = nullable). No `any`, no `@ts-ignore` / `@ts-expect-error` (unenforced).
+- A default must show as the first paint, before any module runs: a layout in CSS without the class the JS adds, a control's state in the markup (`checked`) (unenforced; `TestPageNetworkCompactBeforeTheScripts` covers the Network State's phone default, `TestPageRecentBlocksCompactBeforeTheScripts` Recent Blocks' compact box).
+- `make typecheck` before any commit touching `web/js/` or `web/types/` (tsc).
+
+#### Dev loop
+
+The binary serves the embedded `js/`: without the dev proxy, stop gnockpit and run it again with `go run .` (and its flags) after each edit, then reload. The dev proxy (local tooling, not in the repo) serves `web/js/` from disk with `no-store`: an edit shows on reload, no rebuild.
+
+#### Type check
+
+`make typecheck`: `npm ci` in `web/` (Node 24 (`web/.nvmrc`)), then tsc 7.0.2 over `web/js` and `web/types` with `strict`, `noImplicitReturns`, `noUnusedLocals`, `noUnusedParameters`, `noFallthroughCasesInSwitch`, `noUncheckedIndexedAccess`, `exactOptionalPropertyTypes`, and `allowUnreachableCode` and `allowUnusedLabels` off. Prints nothing on success, exits non-zero on a finding. CI runs it as the `typecheck` job.
 
 ### WebSocket protocol
 
@@ -176,11 +221,11 @@ self-contained otherwise.
 
 ### Scroll preservation
 
-`renderNodeLists()` (validators and peers tables and cards) redraws only when `nodeListsFingerprint()` changed; it saves `window.scrollY` and the focused cell or card control before the redraw and restores both after.
+`renderNodeLists()` (`web/js/node-lists.js`: validators and peers tables and cards) redraws only when `nodeListsFingerprint()` changed; it saves `window.scrollY` and the focused cell or card control before the redraw and restores both after.
 
 ### Collapsible sections
 
-Each card's `<h2 data-section="name">` holds a `<button>` filling the title that folds the section: `.collapsed` on the h2, `aria-expanded` on the button. Folded keys persist in `localStorage` under `gnockpit-collapsed`, or `gnockpit-collapsed-mobile` when the window was ≤ 768 px wide at load.
+`web/js/sections.js`. Each card's `<h2 data-section="name">` holds a `<button>` filling the title that folds the section: `.collapsed` on the h2, `aria-expanded` on the button. Folded keys persist in `localStorage` under `gnockpit-collapsed`, or `gnockpit-collapsed-mobile` when the window was ≤ 768 px wide at load.
 
 ## Common Tasks
 
@@ -190,14 +235,14 @@ Each card's `<h2 data-section="name">` holds a `<button>` filling the title that
 2. Add types to `node/types.go` (or beside their read, as in `chain.go`)
 3. Call it in `web/server.go: fetchSnapshot()`
 4. Add it to `liveData` (`web/server.go: buildLiveData`), which both WebSocket messages send
-5. Read it in `ws.onmessage` (`web/index.html`)
+5. Type it in `web/types/server.js` (`LiveData`, or the answer's own typedef) and read it in the `message` listener (`web/js/live.js`)
 
 ### Adding a new peer table column
 
-The value comes from a `node.Peer` field (`node/types.go`): the `/ws` `peers` send them all, so a new field needs only filling in `fetchSnapshot` (`web/server.go`). Steps 1–7 edit `web/index.html`.
+The value comes from a `node.Peer` field (`node/types.go`): the `/ws` `peers` send them all, so a new field needs only filling in `fetchSnapshot` (`web/server.go`). Step 1 edits `web/index.html`; steps 2–7 edit `web/js/node-lists.js`; the `node.Peer` field gets its typedef in `web/types/node.js`.
 
 1. Header, in `#peers-card`'s `<thead>`: `<th data-sort="key"><button type="button" class="info-btn" data-popover="…">Label</button></th>` (a plain `<button type="button">` without a popover, as Name). `sortBy` and `updateSortHeaders` take any `th[data-sort]` (`aria-sort`, the arrow). Add its `<col>` to the `<colgroup>` (widths sum to 100 %) and count it in the loading row's `colspan`.
-2. Row: in `renderNodeLists()`, the `otherPeers` loop builds each row (`tr2`): append the cell in column order (`createCell`, or a builder: `peerRPCCell`, `countryCell`, `providerCell`, `midTruncCell`).
+2. Row: in `renderNodeLists()` (`node-lists.js`), the `otherPeers` loop builds each row (`tr2`): append the cell in column order (`createCell`, or a builder: `peerRPCCell`, `countryCell`, `providerCell`, `midTruncCell`).
 3. `emptyRow('no peers', 6)`: the column count.
 4. Sort: a `peerSortKey` branch in the `otherPeers.sort` comparator setting `va`/`vb` for `compareSortValues`: `null` for a missing value (last either way); a value shown as a name joins `peersByName` (`compareNames`); a column that shows a code when narrow sorts by what it shows, as Country (`peerCountryShowsCode`, measured before the cells are cleared). Ties keep `setPeers`' name order.
 5. Card: in `buildPeersCards()`, a `[label, value]` in `makeCard`'s `data.minimal` `fields` and its property in the peers' `makeCard({…})` call; a `copyLines` line if the card copies it.
@@ -211,7 +256,7 @@ The value comes from a `node.Peer` field (`node/types.go`): the `/ws` `peers` se
 go test ./...
 ```
 
-Go tests cover the RPC parsing, the stores, the trackers (fake sources) and the HTTP handlers.
+Go tests cover the RPC parsing, the stores, the trackers (fake sources) and the HTTP handlers. `go test ./...` needs Node on `PATH`: its node-backed tests (`modules_test.go`, `TestJSSyntax`) run `node`, and fail naming it when it is missing.
 
 The page tests drive `web/index.html` in Chromium and WebKit against the real server, filled with chain data built in Go. The push tests stub the browser's Push API in an init script (`page_push_test.go`); every other answer comes from the real handlers, and the test server can hold or drop a request on purpose. They need the browsers, installed once:
 

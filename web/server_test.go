@@ -7,17 +7,22 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"image/png"
 	"io"
 	"log"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"os/exec"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
+
+	"golang.org/x/net/html"
 
 	"github.com/gnoverse/gnockpit/eta"
 	"github.com/gnoverse/gnockpit/node"
@@ -54,21 +59,172 @@ func TestHTMLEmbedded(t *testing.T) {
 	if err != nil {
 		t.Fatal("index.html not embedded:", err)
 	}
-	html := string(data)
-	if !strings.Contains(html, "<title>gnockpit</title>") {
+	page := string(data)
+	if !strings.Contains(page, "<title>gnockpit</title>") {
 		t.Error("missing title in index.html")
 	}
-	if !strings.Contains(html, "<script>") {
-		t.Error("missing script tag")
+	if !strings.Contains(page, `<script type="module" src="/js/main.js"></script>`) {
+		t.Error("missing the module script loading /js/main.js")
 	}
-	if !strings.Contains(html, "</script>") {
-		t.Error("missing closing script tag")
+	if _, err := content.ReadFile("js/main.js"); err != nil {
+		t.Error("the page's entry module is not embedded:", err)
 	}
-	if !strings.Contains(html, `<link rel="manifest"`) {
+	if !strings.Contains(page, `<link rel="manifest"`) {
 		t.Error("missing manifest link in index.html")
 	}
-	if !strings.Contains(html, `<meta name="theme-color"`) {
+	if !strings.Contains(page, `<meta name="theme-color"`) {
 		t.Error("missing theme-color meta in index.html")
+	}
+}
+
+// pageScripts returns the names of the page's modules, the embedded js/*.js
+// files (pageModules).
+func pageScripts(t *testing.T) []string {
+	t.Helper()
+	names, err := pageModules(content)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(names) == 0 {
+		t.Fatal("no js/*.js file embedded")
+	}
+	return names
+}
+
+// anyScriptContains tells whether one of the page's modules holds needle.
+func anyScriptContains(t *testing.T, needle string) bool {
+	t.Helper()
+	for _, name := range pageScripts(t) {
+		js, err := content.ReadFile(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if bytes.Contains(js, []byte(needle)) {
+			return true
+		}
+	}
+	return false
+}
+
+// indexToken is a token of the embedded index.html and the line it starts
+// on.
+type indexToken struct {
+	html.Token
+	line int
+}
+
+// indexTokens returns the tokens of the embedded index.html, as a browser's
+// tokenizer reads them.
+func indexTokens(t *testing.T) []indexToken {
+	t.Helper()
+	data, err := content.ReadFile("index.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	z := html.NewTokenizer(bytes.NewReader(data))
+	var toks []indexToken
+	line := 1
+	for {
+		if z.Next() == html.ErrorToken {
+			if !errors.Is(z.Err(), io.EOF) {
+				t.Fatalf("index.html line %d: %v", line, z.Err())
+			}
+			return toks
+		}
+		raw := bytes.Count(z.Raw(), []byte("\n"))
+		toks = append(toks, indexToken{Token: z.Token(), line: line})
+		line += raw
+	}
+}
+
+// isTag tells whether tok opens an element: a start tag or a self-closing
+// one.
+func (tok indexToken) isTag() bool {
+	return tok.Type == html.StartTagToken || tok.Type == html.SelfClosingTagToken
+}
+
+// TestIndexHasNoInlineHandlers checks that the page's markup wires no event
+// through an attribute (onclick, onload, ...): the page listens with
+// addEventListener, and an inline handler needs a global function.
+func TestIndexHasNoInlineHandlers(t *testing.T) {
+	for _, tok := range indexTokens(t) {
+		if !tok.isTag() {
+			continue
+		}
+		for _, a := range tok.Attr {
+			if strings.HasPrefix(a.Key, "on") {
+				t.Errorf("index.html line %d: <%s> has the inline handler %s", tok.line, tok.Data, a.Key)
+			}
+		}
+	}
+}
+
+// TestIndexHasNoInlineScript checks that the page's one script element loads
+// its entry module: every script of the page is a module under js/.
+func TestIndexHasNoInlineScript(t *testing.T) {
+	const entry = `<script type="module" src="/js/main.js"></script>`
+	toks := indexTokens(t)
+	scripts := 0
+	for i, tok := range toks {
+		if !tok.isTag() || tok.Data != "script" {
+			continue
+		}
+		scripts++
+		code := i+1 < len(toks) && toks[i+1].Type == html.TextToken && strings.TrimSpace(toks[i+1].Data) != ""
+		entryAttrs := []html.Attribute{{Key: "type", Val: "module"}, {Key: "src", Val: "/js/main.js"}}
+		if code || !slices.Equal(tok.Attr, entryAttrs) {
+			t.Errorf("index.html line %d: script %s, want only %s", tok.line, tok, entry)
+		}
+	}
+	if scripts != 1 {
+		t.Errorf("index.html has %d script elements, want 1: %s", scripts, entry)
+	}
+}
+
+// attr returns the value of tok's attribute key, "" when it has none.
+func (tok indexToken) attr(key string) string {
+	for _, a := range tok.Attr {
+		if a.Key == key {
+			return a.Val
+		}
+	}
+	return ""
+}
+
+// TestIndexPreloadsEveryModule checks that the page's head preloads each of
+// its modules, every embedded js/*.js file, once: the browser fetches the
+// module graph in one wave, instead of import after import.
+func TestIndexPreloadsEveryModule(t *testing.T) {
+	// preloaded tells, by href, whether a link preloads each module.
+	preloaded := map[string]bool{}
+	for _, name := range pageScripts(t) {
+		preloaded["/"+name] = false
+	}
+	inHead := false
+	for _, tok := range indexTokens(t) {
+		switch {
+		case (tok.Type == html.StartTagToken || tok.Type == html.EndTagToken) && tok.Data == "head":
+			inHead = tok.Type == html.StartTagToken
+		case tok.isTag() && tok.Data == "link" && tok.attr("rel") == "modulepreload":
+			if !inHead {
+				t.Errorf("index.html line %d: %s outside <head>", tok.line, tok)
+			}
+			href := tok.attr("href")
+			done, module := preloaded[href]
+			switch {
+			case !module:
+				t.Errorf("index.html line %d: modulepreload for %s, which is no embedded module", tok.line, href)
+			case done:
+				t.Errorf("index.html line %d: a second modulepreload for %s", tok.line, href)
+			default:
+				preloaded[href] = true
+			}
+		}
+	}
+	for _, href := range slices.Sorted(maps.Keys(preloaded)) {
+		if !preloaded[href] {
+			t.Errorf("no modulepreload for %s", href)
+		}
 	}
 }
 
@@ -77,31 +233,31 @@ func TestNetworkStateVPFields(t *testing.T) {
 	if err != nil {
 		t.Fatal("index.html not embedded:", err)
 	}
-	html := string(data)
+	page := string(data)
 	// VP-based active voting power field
-	if !strings.Contains(html, `id="ns-active-vp"`) {
+	if !strings.Contains(page, `id="ns-active-vp"`) {
 		t.Error("missing ns-active-vp element for VP-based liveness margin")
 	}
 	// Removed fields (redundant with VP-based approach)
-	if strings.Contains(html, `id="ns-valset"`) {
+	if strings.Contains(page, `id="ns-valset"`) {
 		t.Error("ns-valset should be removed (redundant with active vals)")
 	}
-	if strings.Contains(html, `id="ns-bft"`) {
+	if strings.Contains(page, `id="ns-bft"`) {
 		t.Error("ns-bft should be removed (BFT quorum is VP-based, shown in votes)")
 	}
-	// formatVP utility function
-	if !strings.Contains(html, "function formatVP(") {
+	// formatVP utility function, in one of the page's modules
+	if !anyScriptContains(t, "function formatVP(") {
 		t.Error("missing formatVP utility function")
 	}
 	// Network State has no peers field; peer counts live in the peers table.
-	if strings.Contains(html, `id="ns-peers"`) {
+	if strings.Contains(page, `id="ns-peers"`) {
 		t.Error("ns-peers should be removed from Network State (moved to peers table)")
 	}
 	// The validators table has no Peers column; peer counts belong to the peers
 	// table (whose own Peers column is sortable). Scope the check to the
 	// validators table's header so the peers table's data-sort="peers" is allowed.
-	if vIdx := strings.Index(html, `id="validators-body"`); vIdx != -1 {
-		vHead := html[:vIdx]
+	if vIdx := strings.Index(page, `id="validators-body"`); vIdx != -1 {
+		vHead := page[:vIdx]
 		if ts := strings.LastIndex(vHead, "<thead>"); ts != -1 {
 			if strings.Contains(vHead[ts:], `data-sort="peers"`) {
 				t.Error("validators table should not have a sortable Peers column")
@@ -110,25 +266,47 @@ func TestNetworkStateVPFields(t *testing.T) {
 	}
 }
 
+// TestJSSyntax checks that every script of the page, each embedded js/*.js
+// file, parses as a module.
 func TestJSSyntax(t *testing.T) {
-	// Extract JS from HTML and validate with node --check
-	data, err := content.ReadFile("index.html")
-	if err != nil {
-		t.Fatal(err)
+	for _, name := range pageScripts(t) {
+		data, err := content.ReadFile(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		checkModuleSyntax(t, name, string(data))
 	}
-	html := string(data)
-	start := strings.Index(html, "<script>")
-	end := strings.Index(html, "</script>")
-	if start == -1 || end == -1 {
-		t.Fatal("no script block found")
-	}
-	js := html[start+len("<script>") : end]
+}
 
+// TestJSHasNoLookbehind checks that no script of the page holds a regex
+// lookbehind, (?<= or (?<!: Safari before 16.4 cannot parse one, and a
+// module it cannot parse stops the whole module graph, so the page runs no
+// script at all.
+func TestJSHasNoLookbehind(t *testing.T) {
+	for _, name := range pageScripts(t) {
+		data, err := content.ReadFile(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for i, line := range strings.Split(string(data), "\n") {
+			for _, lookbehind := range []string{"(?<=", "(?<!"} {
+				if strings.Contains(line, lookbehind) {
+					t.Errorf("%s line %d: a regex lookbehind %s, which Safari before 16.4 cannot parse", name, i+1, lookbehind)
+				}
+			}
+		}
+	}
+}
+
+// checkModuleSyntax fails t when node does not parse js, the script named
+// name, as a module.
+func checkModuleSyntax(t *testing.T, name, js string) {
+	t.Helper()
+	requireNode(t)
 	cmd := exec.Command("node", "--check", "--input-type=module")
 	cmd.Stdin = strings.NewReader(js)
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("JS syntax error: %s\n%s", err, out)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Errorf("%s: JS syntax error: %v\n%s", name, err, out)
 	}
 }
 

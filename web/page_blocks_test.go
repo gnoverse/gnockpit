@@ -194,6 +194,26 @@ func TestPageRecentBlocksStoredFull(t *testing.T) {
 	e.must(e.expect(blocksBoxes + " > div").ToHaveText([]string{"4320", "4/4", "4319", "4/4"}))
 }
 
+// TestPageRecentBlocksCompactBeforeTheScripts checks the first paint of a
+// visitor with no stored choice: the compact box of Recent Blocks is ticked
+// before the module that reads the choice runs, and stays ticked once it
+// ran, so the box does not flip as the page loads.
+func TestPageRecentBlocksCompactBeforeTheScripts(t *testing.T) {
+	e := openPage(t, desktop, blocksScenario(), noNavigate())
+	recentBlocks := e.hold("/js/recent-blocks.js")
+	awaitLoad := e.navigateCommitted("/")
+
+	// The markup is parsed to its end, and no module has run: main.js
+	// imports recent-blocks.js.
+	e.must(e.expect("#val-modal").ToBeAttached())
+	e.must(e.expect("#rb-compact").ToBeChecked())
+
+	recentBlocks.release()
+	awaitLoad()
+	e.must(e.expect("#d-block").ToHaveText("4320"))
+	e.must(e.expect("#rb-compact").ToBeChecked())
+}
+
 // blocksNamedScenario registers names for the validators blocksDetailed
 // misses: "Charlie" in capitals sorts before "alpha" only in a case-sensitive
 // order. Every missing validator is registered: the server names an

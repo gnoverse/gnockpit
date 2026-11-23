@@ -7,3 +7,4 @@
 *.md
 Dockerfile
 .dockerignore
+web/node_modules

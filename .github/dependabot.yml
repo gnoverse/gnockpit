@@ -1,7 +1,13 @@
 version: 2
 updates:
-  # Keep the SHA-pinned actions in release.yml and test.yml current.
+  # Keep current what the repository pins: the SHA-pinned actions in
+  # release.yml and test.yml, and the npm packages web/package.json pins
+  # (TypeScript, for the type check).
   - package-ecosystem: github-actions
     directory: /
+    schedule:
+      interval: weekly
+  - package-ecosystem: npm
+    directory: /web
     schedule:
       interval: weekly

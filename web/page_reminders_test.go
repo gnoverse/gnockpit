@@ -441,8 +441,12 @@ func TestPageRemindersLeadMustBeAWholeNumber(t *testing.T) {
 	const notWhole, tooFar = "Enter how far ahead, 1 or more.", "That is too far ahead."
 	e, _ := openPushChainPage(t, desktop, fullView(), cardLink(farHeight, time.Time{}, ""))
 	for _, tc := range []struct{ n, msg string }{
-		{"2.5", notWhole}, {"1e3", notWhole}, {"", notWhole}, {"0", notWhole},
-		{"9007199254740992", tooFar}, {"99999999999999999999", tooFar},
+		{"2.5", notWhole},
+		{"1e3", notWhole},
+		{"", notWhole},
+		{"0", notWhole},
+		{"9007199254740992", tooFar},
+		{"99999999999999999999", tooFar},
 	} {
 		e.openNotify()
 		e.reminderFill(tc.n, "blocks")
@@ -922,6 +926,10 @@ func TestPageRemindersFailedReadKeepsTheSave(t *testing.T) {
 	onProfiles(t, []profile{desktop, desktopWebKit}, func(t *testing.T, p profile) {
 		e, _ := openPushChainPage(t, p, fullView(), cardLink(farHeight, time.Time{}, ""),
 			withInstalledClock(), expectConsole(`^warning: read reminder: TypeError`))
+		// The poll reads the halt, then the link target, and sets its
+		// next timer once the link card shows that second answer: the
+		// clock moves only then, so the next poll comes cardPoll later.
+		e.must(e.expect(linkCard + " .eta-target").ToHaveText(regexp.MustCompile(`^until #` + regexp.QuoteMeta(etaNF(farHeight)) + ` \(`)))
 		saved := e.hold("/api/push/reminder?id=")
 		failed := e.hold("/api/push/reminder?id=")
 		failed.drop()

@@ -38,6 +38,13 @@ jobs:
           go-version-file: go.mod
           cache: true
 
+      # A few Go tests run the page's modules in node: the Node web/.nvmrc
+      # names, as typecheck runs. No npm cache: this job installs no package.
+      - name: Set up Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: web/.nvmrc
+
       - name: go vet
         run: go vet ./...
 
@@ -55,6 +62,31 @@ jobs:
             echo "$unformatted"
             exit 1
           fi
+
+  # tsc checks the page's modules (web/js) as web/tsconfig.json sets it. A job
+  # of its own: it needs Node and the TypeScript web/package-lock.json pins,
+  # which the Go jobs do without.
+  typecheck:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+
+      # web/.nvmrc pins Node's major, web/package.json's engines its floor;
+      # npm's download cache is keyed on the lockfile.
+      - name: Set up Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: web/.nvmrc
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      # make typecheck installs the pinned TypeScript (npm ci), then runs tsc.
+      - name: Type check
+        run: make typecheck
 
   # The page tests drive the dashboard in Chromium and WebKit against the real
   # server. A job of their own: they need the browsers and their system
@@ -77,6 +109,14 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+
+      # make test-page runs the package's Go tests too, a few of which run
+      # node: the Node web/.nvmrc names, as typecheck runs. No npm cache:
+      # this job installs no package.
+      - name: Set up Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: web/.nvmrc
 
       # go.sum pins playwright-go, which pins the driver and the browsers.
       - name: Cache the browsers

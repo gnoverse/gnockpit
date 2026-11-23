@@ -11,6 +11,7 @@ require (
 	github.com/mxschmitt/playwright-go v0.6401.0
 	github.com/oschwald/maxminddb-golang v1.13.1
 	golang.org/x/image v0.23.0
+	golang.org/x/net v0.50.0
 	modernc.org/sqlite v1.47.0
 )
 

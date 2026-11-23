@@ -1,4 +1,4 @@
-.PHONY: install test test-page install-browsers
+.PHONY: install test test-page install-browsers typecheck
 
 install:
 	go install .
@@ -21,3 +21,11 @@ BROWSER_INSTALL_FLAGS ?= --with-deps
 
 install-browsers:
 	go run github.com/mxschmitt/playwright-go/cmd/playwright install $(BROWSER_INSTALL_FLAGS) chromium webkit
+
+# tsc checks the page's modules (web/js) as web/tsconfig.json sets it, with
+# the TypeScript web/package-lock.json pins. A pass prints nothing: npm ci's
+# summary goes to /dev/null, its errors to stderr, and tsc prints findings
+# only.
+typecheck:
+	@npm --prefix web ci --no-audit --no-fund --loglevel=error >/dev/null
+	@npm --prefix web run --silent typecheck

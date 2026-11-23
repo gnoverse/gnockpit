@@ -2,3 +2,4 @@
 gnockpit
 .worktrees/
 .superpowers/
+web/node_modules

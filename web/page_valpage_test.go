@@ -822,6 +822,22 @@ func TestPageValidatorProfileListKeepsItsNumbers(t *testing.T) {
 	})
 }
 
+// TestPageValidatorProfileUnderscoreItalic checks where an _italic_ opens:
+// at the start or after any non-word character, the closing mark of a code
+// or an *italic* included, never after a word character, so the underscores
+// in one_two_ stay text.
+func TestPageValidatorProfileUnderscoreItalic(t *testing.T) {
+	onProfiles(t, []profile{desktop, phone}, func(t *testing.T, p profile) {
+		sc := valPageWithProfile(setChangesNetwork(t, 1), "_start_ one_two_ three, *x*_after_ `y`_code_ and (_paren_)")
+		e := openPage(t, p, sc, withURL("/?val="+opBravo))
+		e.expectValidatorReport("bravo")
+		want := []string{`p(em("start") " one_two_ three, " em("x") em("after") " " code("y") em("code") " and (" em("paren") ")")`}
+		if got := e.valPageMarkdownTree(); !slices.Equal(got, want) {
+			t.Errorf("description = %q, want %q", got, want)
+		}
+	})
+}
+
 // TestPageValidatorProfileURLs checks that a URL links in any case of its
 // scheme and keeps balanced parentheses, a link's and a bare one's alike; a
 // bare one leaves out trailing punctuation and the closing parentheses it

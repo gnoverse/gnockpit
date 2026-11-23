@@ -25,7 +25,7 @@ import (
 	"github.com/gorilla/websocket"
 )
 
-//go:embed index.html service-worker.js
+//go:embed index.html service-worker.js js
 var content embed.FS
 
 const (
@@ -1194,6 +1194,7 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("/icon-512.png", s.handleIconPNG)
 	mux.HandleFunc("/apple-touch-icon.png", s.handleAppleTouchIcon)
 	mux.HandleFunc("/service-worker.js", s.handleServiceWorker)
+	mux.Handle("/js/", newJSHandler(content))
 	mux.HandleFunc("/api/push/vapid-key", s.handlePushVAPIDKey)
 	mux.HandleFunc("/api/push/subscribe", s.handlePushSubscribe)
 	mux.HandleFunc("/api/push/entities", s.handlePushEntities)
