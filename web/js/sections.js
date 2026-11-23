@@ -5,8 +5,9 @@ import { $in } from './dom.js'
 import { storageObject, storageSet } from './storage.js'
 
 export function start() {
-    // isMobile is a page-load snapshot — intentionally not reactive to resize
-    const isMobile = window.innerWidth <= 768
+    // isMobile is a page-load snapshot — intentionally not reactive to resize.
+    // It asks the stylesheet's own query, as network-state.js does.
+    const isMobile = window.matchMedia('(max-width: 768px)').matches
     const storageKey = isMobile
         ? 'gnockpit-collapsed-mobile'
         : 'gnockpit-collapsed'

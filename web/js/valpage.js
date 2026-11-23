@@ -241,6 +241,13 @@ export function start() {
     /** @type {ValidatorReport | null} */
     let chartRep = null // the report the charts draw; null while closed
     let chartWidth = 0 // the window width they were drawn at
+    // phoneQuery is the stylesheet's query for a phone's full-screen
+    // page, as network-state.js asks its own; chartPhone is whether
+    // it matched when the charts were drawn. A fractional width
+    // (browser zoom) can cross 640 px within one whole pixel of
+    // innerWidth.
+    const phoneQuery = window.matchMedia('(max-width: 640px)')
+    let chartPhone = false
 
     // svgEl builds an SVG element of tag with its attributes.
     /**
@@ -968,6 +975,7 @@ export function start() {
         const rep = chartRep
         if (!rep) return
         chartWidth = window.innerWidth
+        chartPhone = phoneQuery.matches
         // A redraw (a zoom changes the width) keeps the
         // keyboard's place.
         const place = chartPlace()
@@ -980,7 +988,7 @@ export function start() {
             })
             return
         }
-        const phone = window.innerWidth <= 640
+        const phone = chartPhone
         const px = Math.max(DAY_PX, present(boxes[0]).clientWidth / days.length)
         boxes.forEach(function (box) {
             // The boxes' selector names the attribute.
@@ -1024,12 +1032,17 @@ export function start() {
         })
     }
     // A width change redraws the charts: the day's width follows
-    // it, and a phone's calendars come and go at 640 px.
+    // it, and a phone's calendars come and go with phoneQuery.
     let redrawTimer = 0
     window.addEventListener('resize', function () {
         clearTimeout(redrawTimer)
         redrawTimer = setTimeout(function () {
-            if (chartRep && window.innerWidth !== chartWidth) drawCharts()
+            if (
+                chartRep &&
+                (window.innerWidth !== chartWidth ||
+                    phoneQuery.matches !== chartPhone)
+            )
+                drawCharts()
         }, 150)
     })
 

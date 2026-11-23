@@ -18,8 +18,6 @@ const (
 	// etaPacelessHistory is too short to measure a pace.
 	etaPacelessHistory int64 = 2_000
 
-	// etaReadBound is how long a read of /api/eta waits for its answer.
-	etaReadBound = 10 * time.Second
 	// etaDebounce is how long the planner waits after a keystroke.
 	etaDebounce = 300 * time.Millisecond
 )

@@ -579,6 +579,38 @@ func mechFocusedName(e *pageEnv) string {
 	return s
 }
 
+// ---- Breakpoints
+
+// TestPageBreakpointsSplitAtTheirPixel checks each pair of the stylesheet's
+// narrow and wide queries on either side of its edge: up to 768 px the node
+// lists show as cards with their compact switches, from 769 px as tables
+// without them; up to 640 px the validators card's header is a row, from
+// 641 px a grid. A fractional width between the two stays untested:
+// Playwright sets a viewport in whole pixels only, its protocol refusing a
+// float.
+func TestPageBreakpointsSplitAtTheirPixel(t *testing.T) {
+	onProfiles(t, []profile{desktop, desktopWebKit}, func(t *testing.T, p profile) {
+		e := openPage(t, p, healthyNetwork())
+		cards, table := e.expect("#validators-card .node-cards"), e.expect("#validators-card .table-wrap")
+		compact := e.expect("#validators-compact-label")
+		header := e.expect("#validators-card > .card-header-row")
+
+		e.must(e.Page.SetViewportSize(768, 1000))
+		e.must(cards.ToBeVisible())
+		e.must(table.ToBeHidden())
+		e.must(compact.ToBeVisible())
+		e.must(e.Page.SetViewportSize(769, 1000))
+		e.must(table.ToBeVisible())
+		e.must(cards.ToBeHidden())
+		e.must(compact.ToBeHidden())
+
+		e.must(e.Page.SetViewportSize(640, 1000))
+		e.must(header.ToHaveCSS("display", "flex"))
+		e.must(e.Page.SetViewportSize(641, 1000))
+		e.must(header.ToHaveCSS("display", "grid"))
+	})
+}
+
 // ---- Hidden attribute
 
 // TestPageHiddenSyncLine checks that the block-history sync line, a flex row

@@ -37,6 +37,21 @@ func seamSnapshot(height string, blockTime time.Time) *node.Snapshot {
 	}
 }
 
+// TestHTTPServerBoundsTheHeaders checks that the HTTP server Run serves with
+// gives a client ReadHeaderTimeout to send a request's headers, and serves
+// the dashboard's routes on Addr.
+func TestHTTPServerBoundsTheHeaders(t *testing.T) {
+	for _, d := range []time.Duration{7 * time.Second, 0} {
+		srv := newSeamServer(t)
+		srv.ReadHeaderTimeout = d
+		hs := srv.httpServer()
+		if hs.ReadHeaderTimeout != d || hs.Addr != srv.Addr || hs.Handler == nil {
+			t.Errorf("ReadHeaderTimeout %s: http.Server has ReadHeaderTimeout %s, Addr %q, Handler %v; want %s, %q and the routes",
+				d, hs.ReadHeaderTimeout, hs.Addr, hs.Handler, d, srv.Addr)
+		}
+	}
+}
+
 func TestRoutesServeEveryPath(t *testing.T) {
 	srv := newSeamServer(t)
 	srv.NotifyTestToken = "seam-token" // the notify routes answer 404 while disabled

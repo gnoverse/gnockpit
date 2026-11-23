@@ -1056,26 +1056,31 @@ export function start() {
         )
         // A poll in flight answers for the old target: drop it,
         // and start the card afresh.
-        pollSeq++
+        pollFloor = pollSeq + 1
         linkCard.hide()
         closeRemind(false)
         renderRemind()
-        pollETA()
+        pollETA().catch(reportPollFailure)
     }
 
     // haltError is why the halt status is unknown, when the last
-    // poll failed; pollSeq changes with the link target, so a
-    // poll in flight for the old one drops its answers.
+    // poll failed.
     let haltError = ''
+    // pollSeq numbers the polls. pollFloor is the oldest poll whose
+    // answers the cards still take: an answer raises it to its own
+    // poll, so an older poll answered later is dropped, and a new
+    // link target raises it past every poll started for the old one.
     let pollSeq = 0
+    let pollFloor = 0
 
     // pollETA refreshes both cards. A failed answer leaves the
     // last good one on screen, marked stale.
     /** @returns {Promise<void>} */
     async function pollETA() {
-        const seq = pollSeq
+        const seq = ++pollSeq
         const h = await getETA('')
-        if (seq !== pollSeq) return
+        if (seq < pollFloor) return
+        pollFloor = seq
         if (failed(h)) {
             haltError = h.error
             // The server names a scheduled halt whose estimate
@@ -1110,19 +1115,28 @@ export function start() {
         if (t.since) p.set('since', t.since)
         // The link's question is a height's.
         const rep = /** @type {HeightAnswer} */ (await getETA(p.toString()))
-        if (seq !== pollSeq) return
+        if (seq < pollFloor) return
         linkCard.show(rep, t.label)
         renderRemind()
-        if (live.vapidKey) loadReminder()
+        if (live.vapidKey) loadReminder().catch(reportReminderReadFailure)
+    }
+    // reportPollFailure reports a poll that threw: getETA turns
+    // every failed read into an answer, so a throw is a fault in
+    // drawing one.
+    /** @param {unknown} e */
+    function reportPollFailure(e) {
+        console.error('ETA poll failed:', e)
     }
 
     const linkEl = $('eta-link-card')
     $in(linkEl, '.eta-copy').addEventListener('click', function (e) {
         copyNotify(location.href, e)
     })
-    $in(linkEl, '.eta-close').addEventListener('click', async function () {
-        // A reminder that cannot be removed keeps its card:
-        // closing it would hide a reminder still due to fire.
+    // closeLinkCard closes the link card. A reminder that cannot be
+    // removed keeps its card: closing it would hide a reminder still
+    // due to fire.
+    /** @returns {Promise<void>} */
+    async function closeLinkCard() {
         if (mine() && !(await removeReminder())) {
             openRemind()
             remindError(
@@ -1131,6 +1145,9 @@ export function start() {
             return
         }
         setLinkTarget(null)
+    }
+    $in(linkEl, '.eta-close').addEventListener('click', function () {
+        closeLinkCard().catch((e) => console.error('ETA card close failed:', e))
     })
 
     // ---- Reminder
@@ -1335,6 +1352,13 @@ export function start() {
         }
         applyReminder(read, next)
     }
+    // reportReminderReadFailure reports a read of the reminder that
+    // threw: loadReminder turns a failed read into no change, so a
+    // throw is a fault in drawing its answer.
+    /** @param {unknown} e */
+    function reportReminderReadFailure(e) {
+        console.error('ETA reminder read failed:', e)
+    }
     // applyReminder makes r the reminder, as the read numbered
     // read gave it, unless a newer read was applied.
     /**
@@ -1497,10 +1521,20 @@ export function start() {
     remindPop.addEventListener('click', function (e) {
         e.stopPropagation()
     })
-    rq('.eta-remind-save').addEventListener('click', saveReminder)
-    rq('.eta-remind-remove').addEventListener('click', async function () {
+    rq('.eta-remind-save').addEventListener('click', function () {
+        saveReminder().catch((e) => console.error('reminder save failed:', e))
+    })
+    // removeFromPopover removes the reminder, closing the popover, or
+    // says why it could not.
+    /** @returns {Promise<void>} */
+    async function removeFromPopover() {
         if (await removeReminder()) closeRemind(true)
         else remindError('Failed to remove. See console for details.')
+    }
+    rq('.eta-remind-remove').addEventListener('click', function () {
+        removeFromPopover().catch((e) =>
+            console.error('reminder removal failed:', e)
+        )
     })
     rq('.eta-remind-cancel').addEventListener('click', function () {
         closeRemind(true)
@@ -1533,9 +1567,11 @@ export function start() {
             lastHalt &&
             lastHalt.height === reminder.height
         )
-            pollETA()
+            pollETA().catch(reportPollFailure)
     }
-    startReminder()
+    startReminder().catch(function (e) {
+        console.error('ETA reminder start failed:', e)
+    })
 
     // ---- Planner modal
     let mode = 'height'
@@ -1737,10 +1773,16 @@ export function start() {
     })
 
     // Each poll is scheduled once the previous one is done, so a
-    // slow answer is shown rather than overtaken.
+    // slow answer is shown rather than overtaken. A poll that threw
+    // is reported, and the next one still comes.
     ;(async function pollLoop() {
-        await pollETA()
-        setTimeout(pollLoop, ETA_POLL_MS)
+        try {
+            await pollETA()
+        } catch (e) {
+            reportPollFailure(e)
+        } finally {
+            setTimeout(pollLoop, ETA_POLL_MS)
+        }
     })()
     setInterval(function () {
         haltCard.tick()

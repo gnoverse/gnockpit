@@ -620,6 +620,17 @@ async function saveAlerts() {
     // of the device's validator alerts: the save keeps them as the
     // server holds them, and the page keeps their boxes' state.
     const keep = _pushEntities ? [] : ['validator_missing_blocks']
+    // With the list, the save names the validators the form shows:
+    // the server keeps the device's alerts on any other, such as a
+    // validator that left the set. Without it, shown is undefined,
+    // which the request's JSON leaves out.
+    const shown = _pushEntities
+        ? // validatorBoxes' selector names data-entity.
+          Array.from(
+              validatorBoxes(false),
+              (cb) => /** @type {string} */ (cb.dataset.entity)
+          )
+        : undefined
     /** @type {SavedAlert[]} */
     const alerts = []
     const boxes = /** @type {NodeListOf<HTMLInputElement>} */ (
@@ -676,6 +687,7 @@ async function saveAlerts() {
                     ...deviceKeys(pushSub),
                     alerts,
                     keep,
+                    shown,
                 }),
                 signal,
             })
@@ -693,10 +705,17 @@ async function saveAlerts() {
         }
         await keepDevice(id)
     }
-    // The boxes the form does not show keep their stored state
-    // while the save keeps their alerts.
+    // The checked boxes the form does not show keep their stored
+    // state, as the server keeps their alerts: every validator's
+    // while the list is unread, and those of the validators that left
+    // the set. An unchecked one is forgotten, so the stored form does
+    // not grow with each validator that leaves.
     /** @type {Record<string, unknown>} */
-    const prefs = keep.length ? storageObject('gnockpitAlertPrefs') : {}
+    const prefs = Object.fromEntries(
+        Object.entries(storageObject('gnockpitAlertPrefs')).filter(
+            ([, v]) => v !== false
+        )
+    )
     const controls =
         /** @type {NodeListOf<HTMLInputElement | HTMLSelectElement>} */ (
             document.querySelectorAll(

@@ -17,34 +17,36 @@ import (
 )
 
 const (
-	defaultRPC      = "http://127.0.0.1:26657"
-	defaultInterval = 5 * time.Second
+	defaultRPC               = "http://127.0.0.1:26657"
+	defaultInterval          = 5 * time.Second
+	defaultReadHeaderTimeout = 10 * time.Second
 )
 
 var (
-	flagRPCs            stringSlice
-	flagVerbose         bool
-	flagInterval        time.Duration
-	flagWebPort         int
-	flagWebAddr         string
-	flagDBPath          string
-	flagHistoryPace     time.Duration
-	flagHistoryBatch    int
-	flagChainStuckSecs  int
-	flagMaxMissedInARow int
-	flagNamesPath       string
-	flagNotifyConfig    string
-	flagSendTimeout     time.Duration
-	flagRedactSecret    bool
-	flagPublicURL       string
-	flagGeoIPPath       string
-	flagASNPath         string
-	flagLinks           stringSlice
-	flagStatusLinks     stringSlice
-	flagHideSources     bool
-	flagChainName       string
-	flagAnalytics       string
-	flagAnalyticsDomain string
+	flagRPCs              stringSlice
+	flagVerbose           bool
+	flagInterval          time.Duration
+	flagWebPort           int
+	flagWebAddr           string
+	flagReadHeaderTimeout time.Duration
+	flagDBPath            string
+	flagHistoryPace       time.Duration
+	flagHistoryBatch      int
+	flagChainStuckSecs    int
+	flagMaxMissedInARow   int
+	flagNamesPath         string
+	flagNotifyConfig      string
+	flagSendTimeout       time.Duration
+	flagRedactSecret      bool
+	flagPublicURL         string
+	flagGeoIPPath         string
+	flagASNPath           string
+	flagLinks             stringSlice
+	flagStatusLinks       stringSlice
+	flagHideSources       bool
+	flagChainName         string
+	flagAnalytics         string
+	flagAnalyticsDomain   string
 )
 
 // stringSlice is a flag.Value that accumulates one entry per occurrence, for
@@ -58,6 +60,37 @@ func (s *stringSlice) Set(v string) error {
 	return nil
 }
 
+// nonNegativeDuration is a flag.Value for a duration of 0 or more: a negative
+// one is refused as the flags are parsed.
+type nonNegativeDuration time.Duration
+
+func (d *nonNegativeDuration) String() string {
+	if d == nil {
+		return ""
+	}
+	return time.Duration(*d).String()
+}
+
+func (d *nonNegativeDuration) Set(v string) error {
+	parsed, err := time.ParseDuration(v)
+	if err != nil {
+		return err
+	}
+	if parsed < 0 {
+		return fmt.Errorf("%s is below 0", parsed)
+	}
+	*d = nonNegativeDuration(parsed)
+	return nil
+}
+
+// nonNegativeDurationVar defines a duration flag on fs as fs.DurationVar does,
+// but one refusing a negative value. A back-quoted word in usage names the
+// value in the flags' help.
+func nonNegativeDurationVar(fs *flag.FlagSet, p *time.Duration, name string, value time.Duration, usage string) {
+	*p = value
+	fs.Var((*nonNegativeDuration)(p), name, usage)
+}
+
 func usage() {
 	fmt.Fprint(flag.CommandLine.Output(), `gnockpit — live web dashboard for gno.land validator nodes.
 
@@ -69,33 +102,39 @@ Flags:
 	flag.PrintDefaults()
 }
 
+// registerFlags defines gnockpit's flags on fs, each setting its flag* variable.
+func registerFlags(fs *flag.FlagSet) {
+	fs.Var(&flagRPCs, "rpc", fmt.Sprintf("Tendermint RPC endpoint to query; repeatable to consolidate several sources. Default %s", defaultRPC))
+	fs.BoolVar(&flagVerbose, "verbose", false, "log HTTP requests to the node")
+	fs.BoolVar(&flagVerbose, "v", false, "log HTTP requests to the node (shorthand)")
+	fs.DurationVar(&flagInterval, "interval", defaultInterval, "dashboard refresh interval")
+	fs.StringVar(&flagNamesPath, "names", "/tmp/gnockpit-names.json", "path to the persistent validator-name registry")
+	fs.StringVar(&flagWebAddr, "addr", "0.0.0.0", "web server bind address")
+	fs.IntVar(&flagWebPort, "port", 8080, "web server port")
+	nonNegativeDurationVar(fs, &flagReadHeaderTimeout, "read-header-timeout", defaultReadHeaderTimeout, "how long a client may take to send a request's headers before its connection is closed unanswered, a `duration` of 0 or more; 0 for none")
+	fs.StringVar(&flagDBPath, "db-path", "/tmp/gnockpit.db", "SQLite path for web-push subscriptions and VAPID keys, the block history and the block-ETA history; use a persistent path so they survive reboots")
+	fs.DurationVar(&flagHistoryPace, "history-pace", blocks.DefaultPace, "wait between the batches that fill the block history from the first -rpc, back to genesis and up to the head after downtime; 0 for none")
+	fs.IntVar(&flagHistoryBatch, "history-batch", blocks.DefaultBatch, "commits asked in one JSON-RPC batch while filling the block history; halved until restart when the first -rpc refuses a batch, for 10 minutes when one times out")
+	fs.IntVar(&flagChainStuckSecs, "chain-stuck-secs", 30, "seconds without a new block before the chain-stuck alert fires")
+	fs.IntVar(&flagMaxMissedInARow, "max-missed-in-a-row", 10, "consecutive blocks a validator must miss to be flagged down (alert fires + counted inactive) and must then sign to recover")
+	fs.DurationVar(&flagSendTimeout, "send-timeout", push.DefaultSendTimeout, "how long a push notification or webhook send may take before it is given up")
+	fs.StringVar(&flagNotifyConfig, "notify-config", "", "notification config file (JSON): the Shoutrrr URLs and the alerts each receives; reread when it changes")
+	fs.BoolVar(&flagRedactSecret, "redact-secret", false, "strip notification URL secrets (tokens, webhook IDs) from logged Shoutrrr errors; off by default: errors are logged verbatim")
+	fs.StringVar(&flagPublicURL, "public-url", "", "public URL of this gnockpit instance, appended to external notification messages")
+	fs.StringVar(&flagGeoIPPath, "geoip-db", "/tmp/gnockpit-geoip.mmdb", "path for the DB-IP City Lite mmdb powering the network map; auto-downloaded and refreshed monthly. Empty disables the map.")
+	fs.StringVar(&flagASNPath, "asn-db", "/tmp/gnockpit-asn.mmdb", "path for the DB-IP ASN Lite mmdb powering cloud-provider detection; auto-downloaded and refreshed monthly. Empty disables it.")
+	fs.Var(&flagLinks, "link", `extra header link button, "Title|URL", repeatable`)
+	fs.Var(&flagStatusLinks, "status-link", `header link with a live status dot, "Title|URL" (BetterStack status pages only for now — the dot reflects <URL>/index.json), repeatable`)
+	fs.BoolVar(&flagHideSources, "hide-sources", false, "hide the configured source nodes from the peers list")
+	fs.StringVar(&flagChainName, "chain-name", "", "display name for the chain in titles and the app icon; defaults to the chain-id (e.g. \"test13\" for chain-id \"test-13\")")
+	fs.StringVar(&flagAnalytics, "analytics", "", "load a third-party analytics script in the dashboard; only \"simple-analytics\" is supported. Off by default: a self-hosted dashboard reports to nobody unless you ask it to.")
+	fs.StringVar(&flagAnalyticsDomain, "analytics-domain", "", "serve the analytics script and its no-JS pixel from this custom domain (e.g. sa.example.com) instead of the provider's own hosts, which ad blockers list; needs --analytics")
+}
+
 func main() {
 	flag.Usage = usage
 
-	flag.Var(&flagRPCs, "rpc", fmt.Sprintf("Tendermint RPC endpoint to query; repeatable to consolidate several sources. Default %s", defaultRPC))
-	flag.BoolVar(&flagVerbose, "verbose", false, "log HTTP requests to the node")
-	flag.BoolVar(&flagVerbose, "v", false, "log HTTP requests to the node (shorthand)")
-	flag.DurationVar(&flagInterval, "interval", defaultInterval, "dashboard refresh interval")
-	flag.StringVar(&flagNamesPath, "names", "/tmp/gnockpit-names.json", "path to the persistent validator-name registry")
-	flag.StringVar(&flagWebAddr, "addr", "0.0.0.0", "web server bind address")
-	flag.IntVar(&flagWebPort, "port", 8080, "web server port")
-	flag.StringVar(&flagDBPath, "db-path", "/tmp/gnockpit.db", "SQLite path for web-push subscriptions and VAPID keys, the block history and the block-ETA history; use a persistent path so they survive reboots")
-	flag.DurationVar(&flagHistoryPace, "history-pace", blocks.DefaultPace, "wait between the batches that fill the block history from the first -rpc, back to genesis and up to the head after downtime; 0 for none")
-	flag.IntVar(&flagHistoryBatch, "history-batch", blocks.DefaultBatch, "commits asked in one JSON-RPC batch while filling the block history; halved until restart when the first -rpc refuses a batch, for 10 minutes when one times out")
-	flag.IntVar(&flagChainStuckSecs, "chain-stuck-secs", 30, "seconds without a new block before the chain-stuck alert fires")
-	flag.IntVar(&flagMaxMissedInARow, "max-missed-in-a-row", 10, "consecutive blocks a validator must miss to be flagged down (alert fires + counted inactive) and must then sign to recover")
-	flag.DurationVar(&flagSendTimeout, "send-timeout", push.DefaultSendTimeout, "how long a push notification or webhook send may take before it is given up")
-	flag.StringVar(&flagNotifyConfig, "notify-config", "", "notification config file (JSON): the Shoutrrr URLs and the alerts each receives; reread when it changes")
-	flag.BoolVar(&flagRedactSecret, "redact-secret", false, "strip notification URL secrets (tokens, webhook IDs) from logged Shoutrrr errors; off by default: errors are logged verbatim")
-	flag.StringVar(&flagPublicURL, "public-url", "", "public URL of this gnockpit instance, appended to external notification messages")
-	flag.StringVar(&flagGeoIPPath, "geoip-db", "/tmp/gnockpit-geoip.mmdb", "path for the DB-IP City Lite mmdb powering the network map; auto-downloaded and refreshed monthly. Empty disables the map.")
-	flag.StringVar(&flagASNPath, "asn-db", "/tmp/gnockpit-asn.mmdb", "path for the DB-IP ASN Lite mmdb powering cloud-provider detection; auto-downloaded and refreshed monthly. Empty disables it.")
-	flag.Var(&flagLinks, "link", `extra header link button, "Title|URL", repeatable`)
-	flag.Var(&flagStatusLinks, "status-link", `header link with a live status dot, "Title|URL" (BetterStack status pages only for now — the dot reflects <URL>/index.json), repeatable`)
-	flag.BoolVar(&flagHideSources, "hide-sources", false, "hide the configured source nodes from the peers list")
-	flag.StringVar(&flagChainName, "chain-name", "", "display name for the chain in titles and the app icon; defaults to the chain-id (e.g. \"test13\" for chain-id \"test-13\")")
-	flag.StringVar(&flagAnalytics, "analytics", "", "load a third-party analytics script in the dashboard; only \"simple-analytics\" is supported. Off by default: a self-hosted dashboard reports to nobody unless you ask it to.")
-	flag.StringVar(&flagAnalyticsDomain, "analytics-domain", "", "serve the analytics script and its no-JS pixel from this custom domain (e.g. sa.example.com) instead of the provider's own hosts, which ad blockers list; needs --analytics")
+	registerFlags(flag.CommandLine)
 
 	flag.Parse()
 	if flag.NArg() > 0 {
@@ -183,6 +222,7 @@ func run() error {
 	srv.HideSources = flagHideSources
 	srv.ChainName = flagChainName
 	srv.Analytics = analytics
+	srv.ReadHeaderTimeout = flagReadHeaderTimeout
 	srv.PushManager = pushMgr
 
 	for _, spec := range flagLinks {

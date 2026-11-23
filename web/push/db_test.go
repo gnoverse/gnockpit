@@ -3,6 +3,7 @@ package push_test
 import (
 	"database/sql"
 	"path/filepath"
+	"slices"
 	"testing"
 
 	"github.com/gnoverse/gnockpit/web/push"
@@ -144,12 +145,12 @@ func openTestDB(t *testing.T) *push.DB {
 func TestSaveDeviceKeepsItsIdAcrossSaves(t *testing.T) {
 	db := openTestDB(t)
 	first, err := db.SaveDevice(push.Subscription{ID: "new1", Endpoint: "https://x.com/e", P256dh: "p", Auth: "a"},
-		[]push.SubscriptionAlert{{AlertType: push.AlertChainStuck}}, nil)
+		[]push.SubscriptionAlert{{AlertType: push.AlertChainStuck}}, nil, nil)
 	if err != nil || first != "new1" {
 		t.Fatalf("first save = %q, %v; want new1", first, err)
 	}
 	second, err := db.SaveDevice(push.Subscription{ID: "new2", Endpoint: "https://x.com/e", P256dh: "p2", Auth: "a2"},
-		[]push.SubscriptionAlert{{AlertType: push.AlertValsetChanged}}, nil)
+		[]push.SubscriptionAlert{{AlertType: push.AlertValsetChanged}}, nil, nil)
 	if err != nil || second != "new1" {
 		t.Fatalf("second save = %q, %v; want new1 kept", second, err)
 	}
@@ -167,10 +168,10 @@ func TestSaveDeviceKeepsItsIdAcrossSaves(t *testing.T) {
 func TestSaveDeviceDeletesADeviceLeftWithNothing(t *testing.T) {
 	db := openTestDB(t)
 	sub := push.Subscription{ID: "d1", Endpoint: "https://x.com/e", P256dh: "p", Auth: "a"}
-	if _, err := db.SaveDevice(sub, []push.SubscriptionAlert{{AlertType: push.AlertChainStuck}}, nil); err != nil {
+	if _, err := db.SaveDevice(sub, []push.SubscriptionAlert{{AlertType: push.AlertChainStuck}}, nil, nil); err != nil {
 		t.Fatal(err)
 	}
-	id, err := db.SaveDevice(sub, nil, nil)
+	id, err := db.SaveDevice(sub, nil, nil, nil)
 	if err != nil || id != "" {
 		t.Errorf("save with no alert = %q, %v; want \"\": the device is gone", id, err)
 	}
@@ -179,10 +180,70 @@ func TestSaveDeviceDeletesADeviceLeftWithNothing(t *testing.T) {
 	}
 }
 
+// TestSaveDeviceKeepsTheAlertsOfAnUnshownValidator checks the validator
+// alerts a save leaves: the device's stored ones on a validator the saving
+// menu did not show stay as stored, unless the save names that validator,
+// whose alert it replaces; one on a validator the menu showed is replaced
+// like any other alert.
+func TestSaveDeviceKeepsTheAlertsOfAnUnshownValidator(t *testing.T) {
+	db := openTestDB(t)
+	sub := push.Subscription{ID: "d1", Endpoint: "https://x.com/e", P256dh: "p", Auth: "a"}
+	val := func(entity string, recovery bool) push.SubscriptionAlert {
+		return push.SubscriptionAlert{AlertType: push.AlertValidatorMissingBlocks, EntityID: entity, RecoveryNotif: recovery}
+	}
+	if _, err := db.SaveDevice(sub, []push.SubscriptionAlert{val("g1shown", false), val("g1unshown", true), val("g1named", false)},
+		nil, []string{"g1shown", "g1unshown", "g1named"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.SaveDevice(sub, []push.SubscriptionAlert{val("g1named", true)}, nil, []string{"g1shown"}); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		entity   string
+		recovery []bool // the recovery of each subscriber
+		why      string
+	}{
+		{"g1shown", nil, "shown and left out, replaced"},
+		{"g1unshown", []bool{true}, "not shown, kept as stored"},
+		{"g1named", []bool{true}, "not shown and named, the save's"},
+	} {
+		subs, err := db.SubscribersForAlert(push.AlertValidatorMissingBlocks, tc.entity)
+		if err != nil {
+			t.Fatalf("%s subscribers: %v", tc.entity, err)
+		}
+		var recovery []bool
+		for _, s := range subs {
+			recovery = append(recovery, s.RecoveryNotif)
+		}
+		if !slices.Equal(recovery, tc.recovery) {
+			t.Errorf("%s subscribers' recovery = %v, want %v: %s", tc.entity, recovery, tc.recovery, tc.why)
+		}
+	}
+}
+
+// TestSaveDeviceWithNothingShownKeepsTheDevice checks a save with no alert
+// from a menu that showed no validator: the device's stored alert on a
+// validator it did not show stays, and so does the device, its id answered.
+func TestSaveDeviceWithNothingShownKeepsTheDevice(t *testing.T) {
+	db := openTestDB(t)
+	sub := push.Subscription{ID: "d1", Endpoint: "https://x.com/e", P256dh: "p", Auth: "a"}
+	departed := push.SubscriptionAlert{AlertType: push.AlertValidatorMissingBlocks, EntityID: "g1gone"}
+	if _, err := db.SaveDevice(sub, []push.SubscriptionAlert{departed}, nil, []string{"g1gone"}); err != nil {
+		t.Fatal(err)
+	}
+	id, err := db.SaveDevice(sub, nil, nil, []string{})
+	if err != nil || id != "d1" {
+		t.Errorf("save with no alert, nothing shown = %q, %v; want d1: the device keeps its alert", id, err)
+	}
+	if subs, err := db.SubscribersForAlert(push.AlertValidatorMissingBlocks, "g1gone"); err != nil || len(subs) != 1 {
+		t.Errorf("g1gone subscribers = %+v, %v; want the device", subs, err)
+	}
+}
+
 func TestSaveDeviceStoresTheHaltLead(t *testing.T) {
 	db := openTestDB(t)
 	if _, err := db.SaveDevice(push.Subscription{ID: "d1", Endpoint: "https://x.com/e", P256dh: "p", Auth: "a"},
-		[]push.SubscriptionAlert{{AlertType: push.AlertHaltApproaching, Lead: "100 blocks"}}, nil); err != nil {
+		[]push.SubscriptionAlert{{AlertType: push.AlertHaltApproaching, Lead: "100 blocks"}}, nil, nil); err != nil {
 		t.Fatal(err)
 	}
 	got, err := db.SubscribersForAlert(push.AlertHaltApproaching, "")
@@ -218,7 +279,7 @@ func TestOpenDBDedupesEndpoints(t *testing.T) {
 		t.Errorf("subscriptions = %v, want the latest row of the endpoint", subs)
 	}
 	if _, err := db.SaveDevice(push.Subscription{ID: "x", Endpoint: "https://x.com/e", P256dh: "p", Auth: "a"},
-		[]push.SubscriptionAlert{{AlertType: push.AlertHaltApproaching, Lead: "1h"}}, nil); err != nil {
+		[]push.SubscriptionAlert{{AlertType: push.AlertHaltApproaching, Lead: "1h"}}, nil, nil); err != nil {
 		t.Errorf("SaveDevice with a lead on the migrated database: %v", err)
 	}
 }
@@ -257,7 +318,7 @@ func TestDeleteReminderDropsADeviceLeftWithNothing(t *testing.T) {
 	if subs, _ := db.AllSubscriptions(); len(subs) != 0 {
 		t.Errorf("subscriptions = %v, want none", subs)
 	}
-	if _, err := db.SaveDevice(reminderDevice, []push.SubscriptionAlert{{AlertType: push.AlertChainStuck}}, nil); err != nil {
+	if _, err := db.SaveDevice(reminderDevice, []push.SubscriptionAlert{{AlertType: push.AlertChainStuck}}, nil, nil); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := db.SetReminder(reminderDevice, testReminder(1000)); err != nil {
@@ -273,7 +334,7 @@ func TestSaveDeviceKeepsADeviceWithAReminder(t *testing.T) {
 	if _, err := db.SetReminder(reminderDevice, testReminder(1000)); err != nil {
 		t.Fatal(err)
 	}
-	if id, err := db.SaveDevice(reminderDevice, nil, nil); err != nil || id != "r1" {
+	if id, err := db.SaveDevice(reminderDevice, nil, nil, nil); err != nil || id != "r1" {
 		t.Errorf("SaveDevice with no alert = %q, %v; want r1 kept for its reminder", id, err)
 	}
 	if _, ok, _ := db.Reminder("r1"); !ok {

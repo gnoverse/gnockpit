@@ -22,7 +22,7 @@ const (
 // device saves a device pushed to http://host/path with alerts.
 func device(t *testing.T, m *Manager, host, path string, alerts ...SubscriptionAlert) string {
 	t.Helper()
-	id, err := m.db.SaveDevice(Subscription{ID: "dev" + path, Endpoint: "http://" + host + path, P256dh: testP256dh, Auth: testAuth}, alerts, nil)
+	id, err := m.db.SaveDevice(Subscription{ID: "dev" + path, Endpoint: "http://" + host + path, P256dh: testP256dh, Auth: testAuth}, alerts, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -314,7 +314,7 @@ func TestSendsGiveUpAfterTheSendTimeout(t *testing.T) {
 	captureLog(t)
 	m.SetSendTimeout(100 * time.Millisecond)
 	if _, err := m.db.SaveDevice(Subscription{ID: "d", Endpoint: hung.URL, P256dh: testP256dh, Auth: testAuth},
-		[]SubscriptionAlert{{AlertType: AlertChainStuck}}, nil); err != nil {
+		[]SubscriptionAlert{{AlertType: AlertChainStuck}}, nil, nil); err != nil {
 		t.Fatal(err)
 	}
 	sent := make(chan struct{})

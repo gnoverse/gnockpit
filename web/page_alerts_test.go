@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/http"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -415,6 +416,104 @@ func TestPageAlertsSaveKeepsValidatorAlertsWithoutConsensus(t *testing.T) {
 	e.savePushMenu()
 	expectDevice(t, e.Srv, id, []push.SubscriptionAlert{
 		{AlertType: push.AlertChainStuck}, bravo, {AlertType: push.AlertValsetChanged},
+	})
+}
+
+// TestPageAlertsSaveFromAnEmptyListKeepsValidatorAlerts checks a save while
+// the server's list of validators is empty, its consensus state holding no
+// vote: the menu shows no validator, and the device's validator alerts stay
+// on the server as they are.
+func TestPageAlertsSaveFromAnEmptyListKeepsValidatorAlerts(t *testing.T) {
+	e := openPage(t, desktop, alertsNetwork())
+	e.openPushMenu()
+	e.setChecked(true, "chk-chain_stuck", alertsValRecoveryID(valBravo))
+	e.savePushMenu()
+	id, _ := e.storage(pushDeviceIDKey)
+	bravo := push.SubscriptionAlert{AlertType: push.AlertValidatorMissingBlocks, EntityID: valBravo.address(), RecoveryNotif: true}
+
+	noVotes := healthySnapshot()
+	noVotes.Consensus.Votes = nil
+	e.publish(noVotes)
+	e.openPushMenu()
+	e.must(e.expect(`#alerts-form input[data-type="validator_missing_blocks"]`).ToHaveCount(0))
+	e.setChecked(true, "chk-valset_changed")
+	e.savePushMenu()
+	expectDevice(t, e.Srv, id, []push.SubscriptionAlert{
+		{AlertType: push.AlertChainStuck}, bravo, {AlertType: push.AlertValsetChanged},
+	})
+}
+
+// TestPageAlertsSaveForgetsUncheckedBoxesItDoesNotShow checks what the page
+// keeps of the form at a save: the boxes it shows as they are, and of those
+// it does not show only the checked ones, whose alerts the server keeps. An
+// unchecked box of a validator that left the set is forgotten.
+func TestPageAlertsSaveForgetsUncheckedBoxesItDoesNotShow(t *testing.T) {
+	e := openPage(t, desktop, alertsNetwork())
+	e.openPushMenu()
+	e.setChecked(true, "chk-chain_stuck")
+	e.savePushMenu()
+
+	e.publish(alertsSetWithout(valBravo))
+	e.openPushMenu()
+	e.savePushMenu()
+	stored, ok := e.storage(alertsPrefsKey)
+	if !ok {
+		t.Fatalf("localStorage %s unset after a save", alertsPrefsKey)
+	}
+	var prefs map[string]any
+	if err := json.Unmarshal([]byte(stored), &prefs); err != nil {
+		t.Fatalf("localStorage %s = %q: %v", alertsPrefsKey, stored, err)
+	}
+	for id, want := range map[string]any{"chk-chain_stuck": true, alertsValBoxID(valAlpha): false, alertsValRecoveryID(valAlpha): false} {
+		if got, ok := prefs[id]; !ok || got != want {
+			t.Errorf("stored %s = %v (set %t), want %v: the form shows it", id, got, ok, want)
+		}
+	}
+	for _, id := range []string{alertsValBoxID(valBravo), alertsValRecoveryID(valBravo)} {
+		if got, ok := prefs[id]; ok {
+			t.Errorf("stored %s = %v, want none: the form does not show it, unchecked", id, got)
+		}
+	}
+}
+
+// alertsSetWithout is the healthy network's live state once v has left the
+// validator set.
+func alertsSetWithout(v pageValidator) *node.Snapshot {
+	snap := healthySnapshot()
+	snap.Consensus.Votes = slices.DeleteFunc(snap.Consensus.Votes, func(vote node.VoteInfo) bool { return vote.Address == v.address() })
+	snap.Validators = slices.DeleteFunc(snap.Validators, func(val node.Validator) bool { return val.Address == v.address() })
+	return snap
+}
+
+// TestPageAlertsSaveKeepsADepartedValidatorsAlert checks the alert on a
+// validator that left the set: the menu does not offer it while it is out,
+// and a save keeps it, on the server and in what the page keeps of the
+// form. Once the validator is back, the menu shows its alert checked;
+// unchecked there, a save removes it.
+func TestPageAlertsSaveKeepsADepartedValidatorsAlert(t *testing.T) {
+	e := openPage(t, desktop, alertsNetwork())
+	e.openPushMenu()
+	e.setChecked(true, "chk-chain_stuck", alertsValRecoveryID(valBravo))
+	e.savePushMenu()
+	id, _ := e.storage(pushDeviceIDKey)
+	bravo := push.SubscriptionAlert{AlertType: push.AlertValidatorMissingBlocks, EntityID: valBravo.address(), RecoveryNotif: true}
+
+	e.publish(alertsSetWithout(valBravo))
+	e.openPushMenu()
+	e.must(e.expect("#" + alertsValBoxID(valBravo)).ToHaveCount(0))
+	e.setChecked(true, "chk-valset_changed")
+	e.savePushMenu()
+	expectDevice(t, e.Srv, id, []push.SubscriptionAlert{
+		{AlertType: push.AlertChainStuck}, bravo, {AlertType: push.AlertValsetChanged},
+	})
+
+	e.publish(healthySnapshot())
+	e.openPushMenu()
+	e.alertsExpectChecked(true, alertsValBoxID(valBravo), alertsValRecoveryID(valBravo))
+	e.setChecked(false, alertsValBoxID(valBravo))
+	e.savePushMenu()
+	expectDevice(t, e.Srv, id, []push.SubscriptionAlert{
+		{AlertType: push.AlertChainStuck}, {AlertType: push.AlertValsetChanged},
 	})
 }
 

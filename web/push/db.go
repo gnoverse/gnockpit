@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 
 	_ "modernc.org/sqlite"
@@ -169,10 +170,12 @@ func (d *DB) GetSubscription(id string) (Subscription, error) {
 // ---- Subscription alerts
 
 // SaveDevice stores sub, keeping its id when its endpoint is known, and
-// replaces its alerts with alerts, but for its stored alerts of the types
-// keep names, which stay. It returns the device's id, or "" when the device
-// has no alert and no reminder left and was deleted.
-func (d *DB) SaveDevice(sub Subscription, alerts []SubscriptionAlert, keep []AlertType) (string, error) {
+// replaces its alerts with alerts, but for the stored alerts that stay: those
+// of the types keep names, and those on a validator that shown, the addresses
+// of the validators the saving menu showed, does not list and alerts does not
+// name. It returns the device's id, or "" when the device has no alert and no
+// reminder left and was deleted.
+func (d *DB) SaveDevice(sub Subscription, alerts []SubscriptionAlert, keep []AlertType, shown []string) (string, error) {
 	tx, err := d.db.Begin()
 	if err != nil {
 		return "", err
@@ -182,7 +185,14 @@ func (d *DB) SaveDevice(sub Subscription, alerts []SubscriptionAlert, keep []Ale
 	if err != nil {
 		return "", err
 	}
-	if err := replaceAlerts(tx, id, alerts, keep); err != nil {
+	// Kept whole, the validator alerts need no list of the unshown ones.
+	var unshown []string
+	if !slices.Contains(keep, AlertValidatorMissingBlocks) {
+		if unshown, err = unshownValidators(tx, id, alerts, shown); err != nil {
+			return "", err
+		}
+	}
+	if err := replaceAlerts(tx, id, alerts, keep, unshown); err != nil {
 		return "", err
 	}
 	kept, err := keepDevice(tx, id)
@@ -212,6 +222,36 @@ func upsertDevice(tx *sql.Tx, sub Subscription) (string, error) {
 	return id, nil
 }
 
+// unshownValidators returns the validators device id has a stored alert on
+// that shown does not list and alerts does not name.
+func unshownValidators(tx *sql.Tx, id string, alerts []SubscriptionAlert, shown []string) ([]string, error) {
+	rows, err := tx.Query(
+		`SELECT entity_id FROM subscription_alerts WHERE subscription_id = ? AND alert_type = ?`,
+		id, string(AlertValidatorMissingBlocks),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("read validator alerts: %w", err)
+	}
+	defer rows.Close()
+	var unshown []string
+	for rows.Next() {
+		var v string
+		if err := rows.Scan(&v); err != nil {
+			return nil, fmt.Errorf("read validator alerts: %w", err)
+		}
+		named := slices.ContainsFunc(alerts, func(a SubscriptionAlert) bool {
+			return a.AlertType == AlertValidatorMissingBlocks && a.EntityID == v
+		})
+		if !named && !slices.Contains(shown, v) {
+			unshown = append(unshown, v)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("read validator alerts: %w", err)
+	}
+	return unshown, nil
+}
+
 // keepDevice deletes the device id when it has no alert and no reminder
 // left, and reports whether it stays.
 func keepDevice(tx *sql.Tx, id string) (bool, error) {
@@ -238,19 +278,29 @@ func (d *DB) SaveSubscriptionAlerts(subscriptionID string, alerts []Subscription
 		return err
 	}
 	defer tx.Rollback()
-	if err := replaceAlerts(tx, subscriptionID, alerts, nil); err != nil {
+	if err := replaceAlerts(tx, subscriptionID, alerts, nil, nil); err != nil {
 		return err
 	}
 	return tx.Commit()
 }
 
-func replaceAlerts(tx *sql.Tx, subscriptionID string, alerts []SubscriptionAlert, keep []AlertType) error {
+// replaceAlerts replaces the alerts of subscriptionID with alerts, but for its
+// stored alerts of the types keep names and its validator alerts on the
+// validators unshown lists, which stay.
+func replaceAlerts(tx *sql.Tx, subscriptionID string, alerts []SubscriptionAlert, keep []AlertType, unshown []string) error {
 	drop := `DELETE FROM subscription_alerts WHERE subscription_id = ?`
 	args := []any{subscriptionID}
 	if len(keep) > 0 {
-		drop += ` AND alert_type NOT IN (?` + strings.Repeat(`, ?`, len(keep)-1) + `)`
+		drop += ` AND alert_type NOT IN (` + placeholders(len(keep)) + `)`
 		for _, t := range keep {
 			args = append(args, string(t))
+		}
+	}
+	if len(unshown) > 0 {
+		drop += ` AND NOT (alert_type = ? AND entity_id IN (` + placeholders(len(unshown)) + `))`
+		args = append(args, string(AlertValidatorMissingBlocks))
+		for _, v := range unshown {
+			args = append(args, v)
 		}
 	}
 	if _, err := tx.Exec(drop, args...); err != nil {
@@ -269,6 +319,11 @@ func replaceAlerts(tx *sql.Tx, subscriptionID string, alerts []SubscriptionAlert
 		}
 	}
 	return nil
+}
+
+// placeholders is the list of n query parameters an IN clause takes, n ≥ 1.
+func placeholders(n int) string {
+	return `?` + strings.Repeat(`, ?`, n-1)
 }
 
 // migrateDevices keeps one subscription per push endpoint (the latest row,

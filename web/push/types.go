@@ -1,6 +1,9 @@
 package push
 
-import "fmt"
+import (
+	"fmt"
+	"slices"
+)
 
 // AlertType identifies a category of push notification alert.
 type AlertType string
@@ -104,4 +107,23 @@ type SubscribeRequest struct {
 	// are, as a page sends for alerts it could not show: Alerts has none of
 	// them.
 	Keep []AlertType `json:"keep,omitempty"`
+	// Shown lists, by address, the validators whose alerts the page's menu
+	// showed: the device's stored alerts on any other validator, such as one
+	// that left the set, stay as they are unless Alerts names it.
+	Shown []string `json:"shown,omitempty"`
+}
+
+// ValidateShown checks the validators a save says its menu showed: each an
+// address, and none while the save keeps the validator alerts, as a menu that
+// could show no validator does.
+func ValidateShown(shown []string, keep []AlertType) error {
+	if len(shown) > 0 && slices.Contains(keep, AlertValidatorMissingBlocks) {
+		return fmt.Errorf("%s is kept and shown at once", AlertValidatorMissingBlocks)
+	}
+	for _, v := range shown {
+		if v == "" {
+			return fmt.Errorf("shown: %q is no validator address", v)
+		}
+	}
+	return nil
 }

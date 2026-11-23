@@ -102,6 +102,9 @@ type Server struct {
 	HideSources     bool          // hide the configured source nodes from the peers list
 	ChainName       string        // display name for the chain; defaults to the chain-id when empty
 	Analytics       Analytics     // third-party analytics snippet injected into the dashboard (zero value = none)
+	// ReadHeaderTimeout is how long a client may take to send a request's
+	// headers before its connection is closed unanswered (0 = no limit).
+	ReadHeaderTimeout time.Duration
 
 	clock func() time.Time // time source for the handlers (nil = time.Now)
 }
@@ -1018,10 +1021,14 @@ func (s *Server) handlePushSubscribe(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+	if err := push.ValidateShown(req.Shown, req.Keep); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
 	// A device known by its endpoint keeps its id: its reminder and what was
 	// sent to it hang off it.
 	sub := push.Subscription{ID: generateID(), Endpoint: req.Endpoint, P256dh: req.P256dh, Auth: req.Auth}
-	id, err := s.PushManager.DB().SaveDevice(sub, req.Alerts, req.Keep)
+	id, err := s.PushManager.DB().SaveDevice(sub, req.Alerts, req.Keep, req.Shown)
 	if err != nil {
 		log.Printf("push: save device: %v", err)
 		http.Error(w, "save subscription", http.StatusInternalServerError)
@@ -1212,6 +1219,16 @@ func (s *Server) routes() http.Handler {
 	return mux
 }
 
+// httpServer returns the HTTP server Run serves the dashboard with: on Addr,
+// a client's request headers bounded by ReadHeaderTimeout.
+func (s *Server) httpServer() *http.Server {
+	return &http.Server{
+		Addr:              s.Addr,
+		Handler:           s.routes(),
+		ReadHeaderTimeout: s.ReadHeaderTimeout,
+	}
+}
+
 // Run starts the web server, publish loop, and log streamer.
 func (s *Server) Run(ctx context.Context) error {
 	go s.publishLoop(ctx)
@@ -1220,10 +1237,7 @@ func (s *Server) Run(ctx context.Context) error {
 	go s.asnRefreshLoop(ctx)
 	go s.statusLinkRefreshLoop(ctx)
 
-	srv := &http.Server{
-		Addr:    s.Addr,
-		Handler: s.routes(),
-	}
+	srv := s.httpServer()
 
 	go func() {
 		<-ctx.Done()

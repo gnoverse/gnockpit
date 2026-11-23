@@ -530,7 +530,7 @@ func TestPageETAPollingSurvivesAnUnansweredRead(t *testing.T) {
 		stuck := e.hold("/api/eta")
 		e.runFor(cardPoll)
 		e.must(e.gate.awaitHeld("/api/eta", 1))
-		e.runFor(etaReadBound)
+		e.runFor(cardReadWithin)
 		stuck.awaitAbandoned()
 		e.etaAssertCard(haltCard, etaCard(t, halt, etaCardSpec{kind: "halt", elapsed: 20, stale: "no answer in 10 s"}))
 

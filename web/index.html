@@ -624,8 +624,14 @@
                 background: var(--bg);
             }
             /* The Live / Timeline toggle sits centred in the validators
-               card's header on a wide screen. */
-            @media (min-width: 641px) {
+               card's header on a screen wider than a phone's 640 px.
+               A wide screen's query is the negation of the narrow one's,
+               `not all and (max-width: …)`: one of the two meets every
+               width, the fractional ones browser zoom makes included;
+               `min-width: 641px` would leave 640–641 px to neither. The
+               range syntax, `(width > 640px)`, says the same, but Safari
+               before 16.4 cannot read it. */
+            @media not all and (max-width: 640px) {
                 #validators-card > .card-header-row {
                     display: grid;
                     grid-template-columns: 1fr auto 1fr;
@@ -1095,7 +1101,10 @@
                     margin-bottom: 6px;
                 }
             }
-            @media (min-width: 769px) {
+            /* Wider than 768 px: the negation of `(max-width: 768px)`, so
+               that one of the two meets every width (see the validators
+               card's header). */
+            @media not all and (max-width: 768px) {
                 .compact-label {
                     display: none;
                 }

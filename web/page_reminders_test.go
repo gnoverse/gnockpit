@@ -810,6 +810,40 @@ func TestPageRemindersAtTheHaltHeight(t *testing.T) {
 	e.must(e.expect("#eta-halt-card").ToBeVisible())
 }
 
+// TestPageRemindersOlderPollAnsweredLateDropped checks two polls of the cards
+// in flight at once for the same target: the one the reminder starts, on a
+// link to the scheduled halt's height, and the regular poll after it, which
+// is answered first. The older poll's answer, coming last, is dropped: here
+// its read, given up after 10 s, which would mark the halt card's answer
+// stale though a newer poll brought a good one. It runs on WebKit, Safari's
+// engine and the iOS Home Screen app's: Chromium holds a read of an address
+// while another read of it is out, so a newer poll cannot overtake there.
+func TestPageRemindersOlderPollAnsweredLateDropped(t *testing.T) {
+	path := cardLink(haltHeight, pageNow.Add(-time.Hour), "upgrade")
+	e, tr := openPushChainPage(t, desktopWebKit, fullView(), path, withInstalledClock())
+	e.reminderSave("30", "m")
+	tr.set(haltedView())
+	const haltCard, haltTarget = "#eta-halt-card", "until halt #1,250,000 · min v1.8.0 (5,758 blocks to go)"
+
+	read := e.hold("/api/push/reminder?id=")
+	e.navigate(path)
+	e.must(e.expect(haltCard + " .eta-target").ToHaveText(haltTarget))
+	e.must(e.expect(linkCard).ToBeHidden())
+
+	// The reminder, read 9 s in, starts its poll 1 s before the regular one.
+	e.runFor(cardPoll - time.Second)
+	older := e.hold("/api/eta")
+	read.release()
+	e.must(e.gate.awaitHeld("/api/eta", 1))
+	e.runFor(time.Second)
+	e.must(e.expect(linkCard + " .eta-target").ToHaveText("until #1,250,000 · upgrade (5,758 blocks to go)"))
+
+	e.runFor(cardReadWithin - time.Second)
+	older.awaitAbandoned()
+	e.must(e.expect(haltCard + " .eta-target").ToHaveText(haltTarget))
+	e.must(e.expect(haltCard + " .eta-inline .warn").ToHaveCount(0))
+}
+
 // TestPageRemindersPopoverFollowsTheReminder checks an open popover while
 // the device's reminder changes, read at each poll: once the reminder fired
 // it offers a new one; once another tab of this browser set one for another

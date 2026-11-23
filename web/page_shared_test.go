@@ -175,13 +175,15 @@ func expectValue(e *pageEnv, selector, text, class string) {
 
 // How often the page reads: the boot status, which a read may take
 // readBootWithin to answer; the header links; the block history's fill; the
-// ETA cards' estimates.
+// ETA cards' estimates, which a read of /api/eta may take cardReadWithin to
+// answer.
 const (
 	readBootEvery  = 5 * time.Second
 	readBootWithin = 4 * time.Second
 	readLinksEvery = 30 * time.Second
 	syncPoll       = 10 * time.Second
 	cardPoll       = 10 * time.Second
+	cardReadWithin = 10 * time.Second
 )
 
 // ---- Reading the page

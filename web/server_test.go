@@ -476,6 +476,16 @@ func newSrvWithPush(t *testing.T) (*Server, *push.Manager) {
 	return srv, mgr
 }
 
+// setValidatorSet makes addrs the validators of srv's consensus state: the
+// set /api/push/entities lists.
+func setValidatorSet(srv *Server, addrs ...string) {
+	cs := &node.ConsensusState{}
+	for _, a := range addrs {
+		cs.Votes = append(cs.Votes, node.VoteInfo{Address: a})
+	}
+	srv.setSnapshot(&node.Snapshot{Consensus: cs, Timestamp: time.Now()})
+}
+
 func TestHandlePushVAPIDKey(t *testing.T) {
 	srv, mgr := newSrvWithPush(t)
 
@@ -864,6 +874,149 @@ func TestSubscribeRejectsABadKeep(t *testing.T) {
 	}
 }
 
+// subscribeShown POSTs a device saving alerts from a menu that showed the
+// validators shown, and returns the answer's code and the device id.
+func subscribeShown(t *testing.T, srv *Server, endpoint string, shown []string, alerts ...push.SubscriptionAlert) (int, string) {
+	t.Helper()
+	b, err := json.Marshal(map[string]any{"endpoint": endpoint, "p256dh": "p", "auth": "a", "alerts": alerts, "shown": shown})
+	if err != nil {
+		t.Fatal(err)
+	}
+	code, id, text := subscribeJSON(t, srv, string(b))
+	if text != "" {
+		t.Logf("save showing %q: %d %s", shown, code, text)
+	}
+	return code, id
+}
+
+// valAlert is a missing-blocks alert on validator v.
+func valAlert(v string, recovery bool) push.SubscriptionAlert {
+	return push.SubscriptionAlert{AlertType: push.AlertValidatorMissingBlocks, EntityID: v, RecoveryNotif: recovery}
+}
+
+// TestSubscribeKeepsTheAlertsOfADepartedValidator checks a save from a menu
+// that does not show a validator the device has an alert on, as for one that
+// left the set: its alert stays as stored though the save does not name it,
+// while the alerts on the validators the menu shows are replaced. Once the
+// menu shows the validator again, a save that leaves it out removes its
+// alert.
+func TestSubscribeKeepsTheAlertsOfADepartedValidator(t *testing.T) {
+	srv, mgr := newSrvWithPush(t)
+	const endpoint = "https://example.com/push"
+	subscribers := func(typ push.AlertType, entity string) []push.Subscriber {
+		t.Helper()
+		got, err := mgr.DB().SubscribersForAlert(typ, entity)
+		if err != nil {
+			t.Fatalf("%s %q subscribers: %v", typ, entity, err)
+		}
+		return got
+	}
+	_, first := subscribeShown(t, srv, endpoint, []string{"g1stay", "g1gone"}, valAlert("g1stay", false), valAlert("g1gone", true))
+
+	code, id := subscribeShown(t, srv, endpoint, []string{"g1stay"}, push.SubscriptionAlert{AlertType: push.AlertChainStuck})
+	if code != http.StatusOK || id != first {
+		t.Fatalf("save without g1gone, not shown = %d %q, want 200 %q", code, id, first)
+	}
+	if kept := subscribers(push.AlertValidatorMissingBlocks, "g1gone"); len(kept) != 1 || !kept[0].RecoveryNotif {
+		t.Errorf("g1gone subscribers = %+v, want the device, its recovery kept: the menu did not show g1gone", kept)
+	}
+	if got := subscribers(push.AlertValidatorMissingBlocks, "g1stay"); len(got) != 0 {
+		t.Errorf("g1stay subscribers = %+v, want none: the menu showed g1stay and the save leaves it out", got)
+	}
+	if got := subscribers(push.AlertChainStuck, ""); len(got) != 1 {
+		t.Errorf("chain_stuck subscribers = %+v, want the device", got)
+	}
+
+	code, id = subscribeShown(t, srv, endpoint, []string{"g1stay", "g1gone"}, push.SubscriptionAlert{AlertType: push.AlertChainStuck})
+	if code != http.StatusOK || id != first {
+		t.Fatalf("save without g1gone, shown = %d %q, want 200 %q", code, id, first)
+	}
+	if got := subscribers(push.AlertValidatorMissingBlocks, "g1gone"); len(got) != 0 {
+		t.Errorf("g1gone subscribers = %+v, want none: the menu showed g1gone and the save leaves it out", got)
+	}
+}
+
+// TestSubscribeShowingNoValidatorLeavesTheirAlerts checks a save that shows no
+// validator, its shown empty or left out with no keep: the device's stored
+// validator alerts it does not name stay as they are.
+func TestSubscribeShowingNoValidatorLeavesTheirAlerts(t *testing.T) {
+	for _, tc := range []struct{ name, scope string }{
+		{"shown empty", `,"keep":[],"shown":[]`},
+		{"neither shown nor keep", ``},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			srv, mgr := newSrvWithPush(t)
+			const device = `"endpoint":"https://example.com/push","p256dh":"p","auth":"a"`
+			_, first, _ := subscribeJSON(t, srv, `{`+device+`,"alerts":[{"alert_type":"validator_missing_blocks","entity_id":"g1a"}],"shown":["g1a"]}`)
+			code, id, _ := subscribeJSON(t, srv, `{`+device+`,"alerts":[{"alert_type":"chain_stuck"}]`+tc.scope+`}`)
+			if code != http.StatusOK || id != first {
+				t.Fatalf("save = %d %q, want 200 %q", code, id, first)
+			}
+			if got, err := mgr.DB().SubscribersForAlert(push.AlertValidatorMissingBlocks, "g1a"); err != nil || len(got) != 1 {
+				t.Errorf("g1a subscribers = %+v, %v; want the device: the save showed no validator", got, err)
+			}
+		})
+	}
+}
+
+// TestSubscribeGoesByTheValidatorsShown checks that a save goes by the
+// validators its menu showed, not by the server's set, which can change while
+// the menu is open: a validator that joined after the menu read the set keeps
+// its alert though the server's set holds it, and one that left after loses
+// its alert, shown and left unchecked, though the server's set does not
+// hold it.
+func TestSubscribeGoesByTheValidatorsShown(t *testing.T) {
+	srv, mgr := newSrvWithPush(t)
+	const endpoint = "https://example.com/push"
+	subscribers := func(entity string) int {
+		t.Helper()
+		got, err := mgr.DB().SubscribersForAlert(push.AlertValidatorMissingBlocks, entity)
+		if err != nil {
+			t.Fatalf("%s subscribers: %v", entity, err)
+		}
+		return len(got)
+	}
+	setValidatorSet(srv, "g1a", "g1b")
+	subscribeShown(t, srv, endpoint, []string{"g1a", "g1b"}, valAlert("g1a", false), valAlert("g1b", false))
+
+	subscribeShown(t, srv, endpoint, []string{"g1b"}, push.SubscriptionAlert{AlertType: push.AlertChainStuck})
+	if n := subscribers("g1a"); n != 1 {
+		t.Errorf("g1a subscribers = %d, want the device: the menu did not show g1a, though the server's set holds it", n)
+	}
+	if n := subscribers("g1b"); n != 0 {
+		t.Errorf("g1b subscribers = %d, want none: the menu showed g1b and the save leaves it out", n)
+	}
+
+	setValidatorSet(srv, "g1b")
+	subscribeShown(t, srv, endpoint, []string{"g1a", "g1b"}, push.SubscriptionAlert{AlertType: push.AlertChainStuck})
+	if n := subscribers("g1a"); n != 0 {
+		t.Errorf("g1a subscribers = %d, want none: the menu showed g1a and the save leaves it out, though the server's set does not hold it", n)
+	}
+}
+
+// TestSubscribeRejectsABadShown checks the validators a save says its menu
+// showed: each an address, and none while the save keeps the validator
+// alerts, which a menu that could show no validator does; each refusal named
+// as README says.
+func TestSubscribeRejectsABadShown(t *testing.T) {
+	srv, mgr := newSrvWithPush(t)
+	for _, tc := range []struct{ body, want string }{
+		{`"alerts":[],"shown":["g1a",""]`, `shown: "" is no validator address`},
+		{
+			`"alerts":[{"alert_type":"chain_stuck"}],"keep":["validator_missing_blocks"],"shown":["g1a"]`,
+			"validator_missing_blocks is kept and shown at once",
+		},
+	} {
+		code, _, text := subscribeJSON(t, srv, `{"endpoint":"https://example.com/push","p256dh":"p","auth":"a",`+tc.body+`}`)
+		if code != http.StatusBadRequest || text != tc.want {
+			t.Errorf("%s: answer %d %q, want 400 %q", tc.body, code, text, tc.want)
+		}
+	}
+	if subs, err := mgr.DB().AllSubscriptions(); err != nil || len(subs) != 0 {
+		t.Errorf("devices after the refused saves = %+v, %v; want none", subs, err)
+	}
+}
+
 // reminderServer serves the ETA test chain with push on.
 func reminderServer(t *testing.T) *Server {
 	t.Helper()
@@ -1126,7 +1279,7 @@ func TestNotifyScheduleSendsTheHaltAlerts(t *testing.T) {
 		ID: "d1", Endpoint: pushSrv.URL,
 		P256dh: "BNNL5ZaTfK81qhXOx23-wewhigUeFb632jN6LvRWCFH1ubQr77FE_9qV1FuojuRmHP42zmf34rXgW80OvUVDgTk", Auth: "zqbxT6JKstKSY9JKibZLSQ",
 	},
-		[]push.SubscriptionAlert{{AlertType: push.AlertHaltScheduled}}, nil); err != nil {
+		[]push.SubscriptionAlert{{AlertType: push.AlertHaltScheduled}}, nil, nil); err != nil {
 		t.Fatal(err)
 	}
 	quietLog(t)

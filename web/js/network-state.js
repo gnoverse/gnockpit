@@ -192,8 +192,11 @@ export function start() {
         $in(document, '[data-section="network-state"]').closest('.card')
     )
     const cb = /** @type {HTMLInputElement} */ ($('ns-compact-cb'))
-    // isMobile is a page-load snapshot — intentionally not reactive to resize
-    const isMobile = window.innerWidth <= 768
+    // isMobile is a page-load snapshot — intentionally not reactive to resize.
+    // It asks the stylesheet's own query, which a fractional width (browser
+    // zoom) meets or not as the stylesheet does; innerWidth counts whole
+    // pixels.
+    const isMobile = window.matchMedia('(max-width: 768px)').matches
     // Default compact ON on mobile: null (first visit) !== '0' → true
     const on = isMobile ? storageGet('ns-compact') !== '0' : false
     // compact-off overrides the stylesheet's compact default up to 768 px,
