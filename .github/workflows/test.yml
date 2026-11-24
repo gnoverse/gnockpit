@@ -89,14 +89,17 @@ jobs:
         run: make typecheck
 
   # The page tests drive the dashboard in Chromium and WebKit against the real
-  # server. A job of their own: they need the browsers and their system
-  # libraries, which `test` does without, and they run beside it rather than
-  # after it.
+  # server. A job of their own: they need the browsers, which `test` does
+  # without, and they run beside it rather than after it.
   page:
-    runs-on: ubuntu-24.04
+    # macOS: Linux's WebKit turns a tap into a click only where an element,
+    # not the document, listens to clicks, and the page listens on the
+    # document. An iPhone's WebKit and macOS's turn such a tap into a click;
+    # on Linux, the phone profile's taps fail.
+    runs-on: macos-26
     # make test-page's own 30-minute timeout, then 10 minutes for the setup
-    # (Go, the browsers and their system libraries): a hung test fails with
-    # Go's goroutine dump before the job is cancelled.
+    # (Go, Node and the browsers): a hung test fails with Go's goroutine dump
+    # before the job is cancelled.
     timeout-minutes: 40
     steps:
       - name: Checkout
@@ -118,17 +121,18 @@ jobs:
         with:
           node-version-file: web/.nvmrc
 
-      # go.sum pins playwright-go, which pins the driver and the browsers.
+      # go.sum pins playwright-go, which pins the driver and the browsers;
+      # both sit in macOS's cache directory.
       - name: Cache the browsers
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
-            ~/.cache/ms-playwright
-            ~/.cache/ms-playwright-go
+            ~/Library/Caches/ms-playwright
+            ~/Library/Caches/ms-playwright-go
           key: playwright-${{ runner.os }}-${{ hashFiles('go.sum') }}
 
-      # The Makefile's install runs with --with-deps: it installs the
-      # browsers' system libraries, which the cache does not hold.
+      # Downloads what the cache does not hold. The Makefile's --with-deps
+      # installs system packages on Linux only: on macOS, none.
       - name: Install the browsers
         run: make install-browsers
 

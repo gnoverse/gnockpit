@@ -564,6 +564,8 @@ make test-page
 
 It runs the whole suite every time: Go's test cache knows nothing of the browsers, so it never reports a cached pass.
 
+CI runs the suite on macOS (the `page` job, on `macos-26`). On Linux, the phone profile's tap tests fail: Linux's WebKit turns a tap into a click only where an element, not the document, listens to clicks, and the page listens on the document. An iPhone's WebKit and macOS's turn such a tap into a click.
+
 A failed page test leaves a Playwright trace and a screenshot in `$PAGE_ARTIFACTS`, or in `gnockpit-page` under the system's temporary directory (`$TMPDIR`, else `/tmp`) when it is unset. Open a trace with the Playwright CLI:
 
 ```bash
