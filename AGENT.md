@@ -268,7 +268,12 @@ make test-page
 
 `make install-browsers BROWSER_INSTALL_FLAGS=` installs the browsers without their system packages (`--with-deps`). `make test-page` runs with `-count=1`: never a cached pass.
 
-The full page suite takes about 11 minutes: from an agent's shell, run it in the background. One test, on one profile:
+CI runs the suite on macOS (`page` job, `macos-26`). NEVER move the `page` job to Linux: Linux's WebKit makes no click of a tap unless an element, not the document, listens to clicks, so the phone profile's tap tests fail there; iPhones and macOS's WebKit turn such a tap into a click.
+
+- A page test MUST NOT depend on font metrics (how many rows fit a box): Linux's fonts fit more than macOS's.
+- A page test MUST NOT assume one platform's browser default for a modifier key: branch on `runtime.GOOS` where it differs.
+
+The full page suite takes about 13 minutes on an M4 Pro (23 on CI's macOS runner): from an agent's shell, run it in the background. One test, on one profile:
 
 ```bash
 go test -tags page -count=1 -run 'TestPageX/desktop' ./web/

@@ -525,11 +525,26 @@ func mapManyCountries() []node.Peer {
 		cc       string
 		lat, lon float64
 	}{
-		{"AR", -34.60, -58.38}, {"AU", -33.87, 151.21}, {"BR", -23.55, -46.63}, {"CA", 43.65, -79.38},
-		{"CL", -33.45, -70.67}, {"DE", 50.11, 8.68}, {"EG", 30.04, 31.24}, {"ES", 40.42, -3.70},
-		{"IN", 19.08, 72.88}, {"JP", 35.68, 139.69}, {"KE", -1.29, 36.82}, {"MX", 19.43, -99.13},
-		{"NG", 6.52, 3.38}, {"NZ", -36.85, 174.76}, {"RU", 55.76, 37.62}, {"SE", 59.33, 18.07},
-		{"SG", 1.35, 103.82}, {"TH", 13.76, 100.50}, {"US", 39.04, -77.49}, {"ZA", -26.20, 28.05},
+		{"AR", -34.60, -58.38},
+		{"AU", -33.87, 151.21},
+		{"BR", -23.55, -46.63},
+		{"CA", 43.65, -79.38},
+		{"CL", -33.45, -70.67},
+		{"DE", 50.11, 8.68},
+		{"EG", 30.04, 31.24},
+		{"ES", 40.42, -3.70},
+		{"IN", 19.08, 72.88},
+		{"JP", 35.68, 139.69},
+		{"KE", -1.29, 36.82},
+		{"MX", 19.43, -99.13},
+		{"NG", 6.52, 3.38},
+		{"NZ", -36.85, 174.76},
+		{"RU", 55.76, 37.62},
+		{"SE", 59.33, 18.07},
+		{"SG", 1.35, 103.82},
+		{"TH", 13.76, 100.50},
+		{"US", 39.04, -77.49},
+		{"ZA", -26.20, 28.05},
 	}
 	peers := make([]node.Peer, len(cities))
 	for i, c := range cities {
@@ -544,19 +559,24 @@ func mapManyCountries() []node.Peer {
 func TestPageMapHoverScrollsList(t *testing.T) {
 	e := openPage(t, desktop, mapScenario(mapManyCountries()...))
 	e.must(e.expect(mapRows).ToHaveCount(20))
-	za := e.Expect.Locator(e.Page.Locator(mapRows + `[data-cc="ZA"]`))
-	e.must(za.Not().ToBeInViewport())
+	// Thailand and the United States, the list's last two rows, start below
+	// its fold. The font sets how many rows fit: 17 of the 20 with Linux's,
+	// fewer with macOS's.
+	th := e.expect(mapRows + `[data-cc="TH"]`)
+	us := e.expect(mapRows + `[data-cc="US"]`)
+	e.must(th.Not().ToBeInViewport())
+	e.must(us.Not().ToBeInViewport())
 
-	e.must(e.Page.Locator(`#peers-body td.country-cell[data-cc="ZA"]`).Hover())
-	expectMapHighlighted(e, "data-cc", "ZA")
+	e.must(e.Page.Locator(`#peers-body td.country-cell[data-cc="TH"]`).Hover())
+	expectMapHighlighted(e, "data-cc", "TH")
 	// A scroll would be under way by the next hover, which waits for two
 	// still animation frames first.
 	e.must(e.Page.Locator(`#peers-body td.country-cell[data-cc="US"]`).Hover())
 	expectMapHighlighted(e, "data-cc", "US")
 	e.must(e.expect("#map-country-list").ToHaveJSProperty("scrollTop", 0))
 
-	e.must(e.Page.Locator(mapDots + `[data-cc="ZA"]`).Hover())
-	e.must(za.ToBeInViewport())
+	e.must(e.Page.Locator(mapDots + `[data-cc="TH"]`).Hover())
+	e.must(th.ToBeInViewport())
 }
 
 // TestPageMapHighlightSurvivesUpdate checks that an update redrawing the map
