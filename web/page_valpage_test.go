@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"regexp"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -66,38 +67,70 @@ func TestPageValidatorOpensFromTheTimelineView(t *testing.T) {
 
 // TestPageValidatorModifiedClickFollowsTheLink checks that a click with a
 // modifier key or another button leaves the page as it is and lets the
-// browser follow the link: a new tab or window opens the validator's page.
+// browser follow the link: a new tab or window opens the validator's page,
+// or, for a Meta click on Linux, this tab loads it.
 func TestPageValidatorModifiedClickFollowsTheLink(t *testing.T) {
+	// Where the browser follows the link a click asks for.
+	type target int
+	const (
+		nowhere target = iota // the page and its URL stay as they are
+		newPage               // a new tab or window
+		thisTab               // this tab loads the link
+	)
+	// Meta is the new-tab key on macOS. On Linux, the browser follows a Meta
+	// click's link as a plain click's, in this tab; the test takes any other
+	// platform for Linux.
+	meta := thisTab
+	if runtime.GOOS == "darwin" {
+		meta = newPage
+	}
 	for _, tc := range []struct {
 		name    string
 		click   playwright.LocatorClickOptions
-		newPage bool // the browser opens the link in a new tab or window on every platform
+		follows target
 	}{
-		{name: "meta", click: playwright.LocatorClickOptions{Modifiers: []playwright.KeyboardModifier{*playwright.KeyboardModifierMeta}}},
-		{name: "alt", click: playwright.LocatorClickOptions{Modifiers: []playwright.KeyboardModifier{*playwright.KeyboardModifierAlt}}},
+		{name: "meta", click: playwright.LocatorClickOptions{Modifiers: []playwright.KeyboardModifier{*playwright.KeyboardModifierMeta}}, follows: meta},
+		{name: "alt", click: playwright.LocatorClickOptions{Modifiers: []playwright.KeyboardModifier{*playwright.KeyboardModifierAlt}}, follows: nowhere},
 		// Control on Linux and Windows, Meta on macOS, where a Control click
 		// is a right click.
-		{name: "new tab", click: playwright.LocatorClickOptions{Modifiers: []playwright.KeyboardModifier{*playwright.KeyboardModifierControlOrMeta}}, newPage: true},
-		{name: "shift", click: playwright.LocatorClickOptions{Modifiers: []playwright.KeyboardModifier{*playwright.KeyboardModifierShift}}, newPage: true},
-		{name: "middle button", click: playwright.LocatorClickOptions{Button: playwright.MouseButtonMiddle}, newPage: true},
+		{name: "new tab", click: playwright.LocatorClickOptions{Modifiers: []playwright.KeyboardModifier{*playwright.KeyboardModifierControlOrMeta}}, follows: newPage},
+		{name: "shift", click: playwright.LocatorClickOptions{Modifiers: []playwright.KeyboardModifier{*playwright.KeyboardModifierShift}}, follows: newPage},
+		{name: "middle button", click: playwright.LocatorClickOptions{Button: playwright.MouseButtonMiddle}, follows: newPage},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			e := openPage(t, desktop, setChangesNetwork(t, 1))
 			link := e.validatorNameLink("bravo")
 			e.must(e.Expect.Locator(link).ToBeVisible())
 			click := func() error { return link.Click(tc.click) }
-			if tc.newPage {
+			// The dashboard stays as it was: no validator's page, no ?val=.
+			stays := func() {
+				e.expectValidatorPageClosed()
+				e.valPageExpectURL("/")
+			}
+			switch tc.follows {
+			case newPage:
 				opened, err := e.Ctx.ExpectPage(click)
 				if err != nil {
 					t.Fatalf("click with %s: %v", tc.name, err)
 				}
 				e.must(e.Expect.Page(opened).ToHaveURL(e.ts.URL + "/?val=" + opBravo))
 				e.must(e.Expect.Locator(opened.Locator("#val-title")).ToHaveText("bravo"))
-			} else {
+				stays()
+			case thisTab:
+				loads := e.valPageDocumentLoads()
 				e.must(click())
+				// The loaded page opens the validator's from its URL.
+				e.expectValidatorReport("bravo")
+				e.valPageExpectURL("/?val=" + opBravo)
+				if n := loads(); n != 1 {
+					t.Errorf("%d documents loaded, want 1: the browser loads the link in this tab", n)
+				}
+			case nowhere:
+				e.must(click())
+				stays()
+			default:
+				t.Fatalf("follows = %d, a target the test does not know", tc.follows)
 			}
-			e.expectValidatorPageClosed()
-			e.valPageExpectURL("/")
 		})
 	}
 }
