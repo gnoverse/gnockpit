@@ -273,7 +273,7 @@ CI runs the suite on macOS (`page` job, `macos-26`). NEVER move the `page` job t
 - A page test MUST NOT depend on font metrics (how many rows fit a box): Linux's fonts fit more than macOS's.
 - A page test MUST NOT assume one platform's browser default for a modifier key: branch on `runtime.GOOS` where it differs.
 
-The full page suite takes about 11 minutes: from an agent's shell, run it in the background. One test, on one profile:
+The full page suite takes about 13 minutes on an M4 Pro (23 on CI's macOS runner): from an agent's shell, run it in the background. One test, on one profile:
 
 ```bash
 go test -tags page -count=1 -run 'TestPageX/desktop' ./web/
