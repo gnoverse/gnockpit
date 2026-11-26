@@ -139,6 +139,16 @@ type placement struct {
 
 // ---- Values
 
+// thousands is n with thousands separators, as the page writes heights and
+// counts.
+func thousands(n int64) string {
+	s := strconv.FormatInt(n, 10)
+	for i := len(s) - 3; i > 0; i -= 3 {
+		s = s[:i] + "," + s[i:]
+	}
+	return s
+}
+
 // Colours of the page, as the browser computes them.
 const (
 	fgColor     = "rgb(201, 209, 217)" // --fg: a value outside any band

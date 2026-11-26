@@ -119,8 +119,11 @@ func TestIncrementCentresOnTheFlooredAverage(t *testing.T) {
 }
 
 func TestNewPrioSetRejectsABadAddress(t *testing.T) {
-	if _, err := newPrioSet(setOf(m{"not-an-address", 1, 0})); err == nil {
-		t.Error("newPrioSet() accepted a malformed address")
+	// The second is a g bech32 string of 32 bytes, not an address's 20.
+	for _, addr := range []string{"not-an-address", "g1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqemfmay"} {
+		if _, err := newPrioSet(setOf(m{addr, 1, 0})); err == nil {
+			t.Errorf("newPrioSet() accepted %q", addr)
+		}
 	}
 }
 

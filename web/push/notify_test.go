@@ -1,6 +1,9 @@
 package push
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestFormatAlert(t *testing.T) {
 	tests := []struct {
@@ -49,5 +52,21 @@ func TestFormatAlert(t *testing.T) {
 				t.Errorf("FormatAlert() = %q, want %q", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestFormatAlertAppendsTheLink(t *testing.T) {
+	a := Alert{Notice: true, Title: "Validator ranking", Body: "#1 A 99.0", Link: "/?view=ranking"}
+	got := FormatAlert("test4", "https://x/", a)
+	if want := "🔔 test4 — Validator ranking\n#1 A 99.0\nhttps://x/?view=ranking"; got != want {
+		t.Errorf("FormatAlert(link) = %q, want %q", got, want)
+	}
+	if got := FormatAlert("test4", "", a); strings.Contains(got, "view=ranking") {
+		t.Errorf("FormatAlert(no public URL) = %q, want no link", got)
+	}
+	a.Link = ""
+	want := "🔔 test4 — Validator ranking\n#1 A 99.0\nhttps://x/"
+	if got := FormatAlert("test4", "https://x/", a); got != want {
+		t.Errorf("FormatAlert(no link) = %q, want %q", got, want)
 	}
 }

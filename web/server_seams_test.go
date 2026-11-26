@@ -83,6 +83,23 @@ func TestRoutesServeEveryPath(t *testing.T) {
 		})
 	}
 
+	// With the ranking off the route answers its own 404, which the mux's
+	// differs from by its JSON body.
+	t.Run("/api/ranking", func(t *testing.T) {
+		resp, err := http.Get(ts.URL + "/api/ranking")
+		if err != nil {
+			t.Fatalf("GET /api/ranking: %v", err)
+		}
+		defer resp.Body.Close()
+		body, err := io.ReadAll(resp.Body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if resp.StatusCode != http.StatusNotFound || !strings.Contains(string(body), "ranking disabled") {
+			t.Errorf("GET /api/ranking = %d %q, want 404 saying ranking disabled", resp.StatusCode, body)
+		}
+	})
+
 	t.Run("/ws", func(t *testing.T) {
 		resp, err := http.Get(ts.URL + "/ws")
 		if err != nil {

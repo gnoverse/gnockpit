@@ -97,9 +97,13 @@ func (r NotifyRoute) Wants(a Alert) bool {
 	return true
 }
 
-// routableAlerts are the alerts a target can receive; the ETA reminder goes
-// only to the device that set it.
+// routableAlerts are the alerts a device can save and a target can receive;
+// the ETA reminder goes only to the device that set it.
 var routableAlerts = []AlertType{AlertChainStuck, AlertValidatorMissingBlocks, AlertValsetChanged, AlertHaltScheduled, AlertHaltApproaching}
+
+// targetAlerts are the alerts a target can list: the routable alerts and the
+// daily ranking, which goes to targets only.
+var targetAlerts = append(slices.Clone(routableAlerts), AlertRanking)
 
 // ParseNotifyConfig reads a notification config file:
 //
@@ -156,7 +160,7 @@ func parseRoute(url string, alerts []json.RawMessage) (NotifyRoute, error) {
 func parseAlert(raw json.RawMessage) (AlertType, AlertOptions, error) {
 	var name string
 	if err := json.Unmarshal(raw, &name); err == nil {
-		typ, err := routable(name)
+		typ, err := targetAlert(name)
 		if err == nil && typ == AlertHaltApproaching {
 			err = errors.New(`halt_approaching needs a lead, such as {"halt_approaching": "1h"}`)
 		}
@@ -169,7 +173,7 @@ func parseAlert(raw json.RawMessage) (AlertType, AlertOptions, error) {
 	var value json.RawMessage
 	for name, value = range entry {
 	}
-	typ, err := routable(name)
+	typ, err := targetAlert(name)
 	if err != nil {
 		return "", AlertOptions{}, err
 	}
@@ -200,7 +204,15 @@ func parseOptions(typ AlertType, value json.RawMessage) (AlertOptions, error) {
 }
 
 func routable(name string) (AlertType, error) {
-	if !slices.Contains(routableAlerts, AlertType(name)) {
+	return knownAlert(routableAlerts, name)
+}
+
+func targetAlert(name string) (AlertType, error) {
+	return knownAlert(targetAlerts, name)
+}
+
+func knownAlert(known []AlertType, name string) (AlertType, error) {
+	if !slices.Contains(known, AlertType(name)) {
 		return "", fmt.Errorf("unknown alert %q", name)
 	}
 	return AlertType(name), nil

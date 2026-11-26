@@ -15,6 +15,7 @@ const (
 	AlertHaltScheduled          AlertType = "halt_scheduled"
 	AlertHaltApproaching        AlertType = "halt_approaching"
 	AlertETAReminder            AlertType = "eta_reminder" // devices only, never routed to a target
+	AlertRanking                AlertType = "ranking"      // targets only, never sent to a device
 )
 
 // EntityIDLocal is the sentinel entity ID for the locally monitored node.

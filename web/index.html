@@ -33,6 +33,8 @@
         <link rel="modulepreload" href="/js/pointer.js" />
         <link rel="modulepreload" href="/js/popover.js" />
         <link rel="modulepreload" href="/js/present.js" />
+        <link rel="modulepreload" href="/js/ranking.js" />
+        <link rel="modulepreload" href="/js/ranking-help.js" />
         <link rel="modulepreload" href="/js/read.js" />
         <link rel="modulepreload" href="/js/recent-blocks.js" />
         <link rel="modulepreload" href="/js/sections.js" />
@@ -354,7 +356,8 @@
             }
             /* A sortable header's button sorts by its column; it looks like
                the header and fills it. */
-            th[data-sort] > button {
+            th[data-sort] > button,
+            .rk-wrap th > button {
                 display: block;
                 width: 100%;
                 margin: 0;
@@ -367,7 +370,8 @@
                 cursor: pointer;
                 user-select: none;
             }
-            th[data-sort] > button.info-btn {
+            th[data-sort] > button.info-btn,
+            .rk-wrap th > button.info-btn {
                 font-size: 11px;
             }
             th.sorted-col {
@@ -748,6 +752,222 @@
                     grid-row: 3;
                     font-size: 12px;
                 }
+            }
+            /* ---- Validators card: the Ranking view. Its table and its
+               cards are a node list's: the cards show up to 768 px, the
+               table wider. */
+            #validators-ranking {
+                display: none;
+                font-size: 13px;
+            }
+            #validators-card.view-ranking #validators-ranking {
+                display: block;
+            }
+            #validators-card.view-ranking .section-body > .table-wrap,
+            #validators-card.view-ranking #validators-cards {
+                display: none !important;
+            }
+            #validators-card.view-ranking #validators-compact-label {
+                visibility: hidden;
+            }
+            .rk-meta {
+                display: flex;
+                flex-wrap: wrap;
+                gap: 2px 14px;
+                align-items: baseline;
+                margin: 0 0 8px;
+                color: var(--fg2);
+                font-size: 12px;
+            }
+            .rk-how {
+                font: inherit;
+                color: var(--blue);
+                background: none;
+                border: none;
+                padding: 0;
+                cursor: pointer;
+                text-decoration: underline dotted;
+                text-underline-offset: 3px;
+            }
+            .rk-wrap th.num,
+            .rk-wrap td.num {
+                text-align: right;
+                font-variant-numeric: tabular-nums;
+            }
+            .rk-wrap td.rank {
+                width: 3ch;
+                color: var(--fg2);
+                font-variant-numeric: tabular-nums;
+            }
+            .rk-wrap td.score {
+                font-weight: 600;
+            }
+            .rk-wrap tr.rk-excluded td.score {
+                color: var(--fg2);
+                font-weight: normal;
+            }
+            .rk-wrap tr.rk-sep td {
+                padding-top: 12px;
+                border-bottom: 1px solid var(--border);
+                color: var(--fg2);
+                font-size: 11px;
+            }
+            .rk-pts {
+                color: var(--fg2);
+                font-size: 11px;
+            }
+            #validators-ranking .rk-wait {
+                color: var(--fg2);
+                font-style: italic;
+            }
+            /* A card: one value a line, its points beside it. It copies
+               nothing on a click, as a Live card does. */
+            #validators-ranking .peer-card-kv {
+                grid-template-columns: auto minmax(0, 1fr);
+            }
+            .rk-cards .peer-card {
+                cursor: auto;
+            }
+            .rk-cards .rk-sep {
+                grid-column: 1 / -1;
+                padding-top: 4px;
+                color: var(--fg2);
+                font-size: 11px;
+            }
+            .rk-cards .rk-rank {
+                margin-right: 6px;
+                color: var(--fg2);
+                font-variant-numeric: tabular-nums;
+            }
+            .rk-cards .rk-score {
+                font-weight: 600;
+                font-variant-numeric: tabular-nums;
+            }
+            .rk-cards .rk-excluded .rk-score {
+                color: var(--fg2);
+                font-weight: normal;
+            }
+            .rk-state {
+                padding: 12px 0;
+                color: var(--fg2);
+                line-height: 1.6;
+            }
+            .rk-err {
+                padding: 0 0 8px;
+                color: var(--red);
+            }
+            .rk-bar {
+                display: inline-block;
+                width: 160px;
+                height: 6px;
+                margin: 0 2px;
+                border-radius: 3px;
+                background: var(--border);
+                vertical-align: middle;
+                overflow: hidden;
+            }
+            .rk-bar i {
+                display: block;
+                height: 100%;
+                background: var(--blue);
+            }
+            /* A value, a score or the hidden count has a popover. */
+            #validators-ranking [data-pop-rows] {
+                cursor: help;
+            }
+            /* The hidden count, a card's rank and its values' labels are
+               buttons that show a popover as an ⓘ does, and read as the text
+               they are. */
+            .rk-meta .info-btn,
+            .rk-cards .info-btn {
+                appearance: none;
+                margin: 0;
+                padding: 0;
+                border: 0;
+                background: none;
+                font-family: inherit;
+                font-weight: inherit;
+                line-height: inherit;
+                text-align: start;
+                opacity: 1;
+            }
+            .rk-cards .peer-card-k.info-btn {
+                align-self: start;
+                padding-top: 1px;
+            }
+            .rk-meta .info-btn,
+            .rk-cards .rk-rank.info-btn {
+                font-size: inherit;
+            }
+            .rk-cards .rk-rank.info-btn {
+                margin-right: 6px;
+            }
+            .rk-meta .info-btn {
+                text-decoration: underline dotted;
+                text-underline-offset: 3px;
+            }
+            /* ---- The Ranking view's dialog: how the ranking works, in the
+               planner's modal (.eta-modal), wider */
+            #ranking-modal .eta-modal-inner {
+                width: min(760px, 94vw);
+                max-height: 90vh;
+            }
+            .rk-doc {
+                font-size: 13px;
+                line-height: 1.55;
+            }
+            .rk-doc h3 {
+                margin: 18px 0 6px;
+                color: var(--blue);
+                font-size: 13px;
+                text-transform: uppercase;
+                letter-spacing: 1px;
+            }
+            .rk-doc p {
+                margin: 6px 0;
+            }
+            .rk-doc ul {
+                margin: 6px 0;
+                padding-left: 18px;
+            }
+            .rk-doc li {
+                margin: 3px 0;
+            }
+            .rk-doc .lead {
+                font-size: 14px;
+            }
+            .rk-doc code,
+            .rk-doc pre {
+                font-family: inherit;
+                background: var(--bg);
+                border: 1px solid var(--border);
+                border-radius: 4px;
+            }
+            .rk-doc code {
+                padding: 0 4px;
+            }
+            .rk-doc pre {
+                margin: 6px 0;
+                padding: 8px 10px;
+                overflow-x: auto;
+                white-space: pre;
+                font-size: 12px;
+            }
+            .rk-doc table {
+                margin: 6px 0;
+            }
+            .rk-doc th,
+            .rk-doc td {
+                padding: 4px 10px 4px 0;
+                vertical-align: top;
+                border-bottom: 1px solid var(--border);
+            }
+            .rk-doc th {
+                font-weight: normal;
+            }
+            .rk-doc td.w {
+                white-space: nowrap;
+                font-variant-numeric: tabular-nums;
             }
             /* ---- Network map */
             .map-layout {
@@ -2470,6 +2690,9 @@
                         <button data-view="timeline" aria-pressed="false">
                             Timeline
                         </button>
+                        <button data-view="ranking" aria-pressed="false" hidden>
+                            Ranking
+                        </button>
                     </span>
                     <label class="compact-label" id="validators-compact-label"
                         ><input
@@ -2596,6 +2819,9 @@
                     </div>
                     <div id="validators-timeline">
                         <div class="vt-foot">loading…</div>
+                    </div>
+                    <div id="validators-ranking">
+                        <div class="rk-state">loading…</div>
                     </div>
                 </div>
             </div>
@@ -2775,6 +3001,309 @@
                     estimate kept for comparison.
                 </div>
                 <div class="eta-halt-row" id="eta-halt-row"></div>
+            </div>
+        </div>
+        <div id="ranking-modal" class="eta-modal">
+            <div
+                class="eta-modal-inner"
+                role="dialog"
+                aria-modal="true"
+                aria-labelledby="ranking-title"
+            >
+                <div class="eta-modal-head">
+                    <h2 id="ranking-title">How the ranking works</h2>
+                    <button type="button" id="ranking-close" aria-label="Close">
+                        &times;
+                    </button>
+                </div>
+                <div class="rk-doc">
+                    <p class="lead">
+                        The ranking is computed from the chain's own records,
+                        with a fixed formula, over a fixed window. Anyone
+                        reading the same chain state with the same exclusion
+                        list gets the same ranks, number for number.
+                    </p>
+
+                    <h3>Anyone can recompute it</h3>
+                    <ul>
+                        <li>
+                            <b>Chain data only.</b> Each block's time and commit
+                            (which validators' precommits it holds), its
+                            proposer and round, the validator sets, the
+                            validator set's events (added, removed, key rotated)
+                            and the valoper profiles. Nothing this dashboard
+                            observes on its own, such as when a vote reached it
+                            or where a node sits, enters the ranking.
+                        </li>
+                        <li>
+                            <b>Community validators only.</b> Validators run by
+                            the gno.land team and its close partners are left
+                            out of the order, on a list this dashboard
+                            publishes: <code>/api/ranking</code> names each one,
+                            so the ranks stay recomputable. Their scores are
+                            computed the same way and shown after the ranked
+                            operators, unless this dashboard hides them.
+                        </li>
+                        <li>
+                            <b>A fixed formula.</b> Every weight and threshold
+                            is fixed in gnockpit's code, never a setting. This
+                            is formula v<span id="ranking-formula"></span>; any
+                            change raises the version.
+                        </li>
+                        <li>
+                            <b>A fixed window.</b> The 30 complete UTC days
+                            before today; for this ranking,
+                            <span id="ranking-window"></span
+                            ><span id="ranking-heights"></span>. A block counts
+                            on the UTC day of its header time. The ranking is
+                            recomputed daily, as soon as the first block after
+                            00:00 UTC is stored.
+                        </li>
+                        <li>
+                            <b>Complete data only.</b> The ranking waits until
+                            this dashboard stores every block of the last 180
+                            days, back to genesis on a younger chain, and the
+                            validator set's events among them: recovery looks
+                            back that far, and a ranking from part of that
+                            history would keep wrong recovery times and key
+                            links. It also waits for a whole read of the valoper
+                            profiles, which link genesis keys to their
+                            operators.
+                        </li>
+                        <li>
+                            <b>The same result everywhere.</b> Two dashboards
+                            reading the same chain, with the same exclusion
+                            list, publish the same ranks and scores, unless a
+                            valoper profile or a key link changed between their
+                            computations.
+                        </li>
+                        <li>
+                            <b>The raw data.</b> <code>/api/ranking</code>
+                            returns, for every operator, the counts behind each
+                            value (blocks in the set and signed, each outage of
+                            10 or more missed blocks and the longest absence,
+                            each restart sample, proposals due and missed), its
+                            sub-scores and points, with the window, the formula
+                            version and the exclusion list:
+                            <pre>curl -s <span id="ranking-origin"></span>/api/ranking</pre>
+                            Every count can be checked against any node's RPC:
+                            <code>/block</code>, <code>/commit</code>,
+                            <code>/validators</code>,
+                            <code>/block_results</code> and, for the valoper
+                            profiles, <code>/abci_query</code>. The README
+                            documents the formula.
+                        </li>
+                    </ul>
+
+                    <h3>What is measured</h3>
+                    <p>
+                        Four metrics make the score, each scored from 0 to 1
+                        between its thresholds and weighted:
+                    </p>
+                    <table>
+                        <tr>
+                            <th>Metric</th>
+                            <th>Weight</th>
+                            <th>What it counts</th>
+                        </tr>
+                        <tr>
+                            <td>Uptime</td>
+                            <td class="w">50 %</td>
+                            <td>
+                                Blocks it signed, of the blocks it was in the
+                                set for; a nil vote counts as signed, and the
+                                blocks missed around a restart are left out. 95
+                                % scores 0, 99.9 % scores 1.
+                            </td>
+                        </tr>
+                        <tr>
+                            <td>Outages</td>
+                            <td class="w">20 %</td>
+                            <td>
+                                Times it missed 10 or more blocks in a row. None
+                                scores 1, 10 score 0.
+                            </td>
+                        </tr>
+                        <tr>
+                            <td>Recovery</td>
+                            <td class="w">20 %</td>
+                            <td>
+                                How long it took to sign again after a chain
+                                restart (two consecutive blocks more than 2
+                                minutes apart: a halt, an upgrade or a stall),
+                                the median of its last 3 within 180 days. 10 min
+                                scores 1, 1 h 0.66, 6 h 0.33, 24 h 0.
+                            </td>
+                        </tr>
+                        <tr>
+                            <td>Proposals</td>
+                            <td class="w">10 %</td>
+                            <td>
+                                Rounds it was due to propose and did not, of
+                                those it was due to propose, on the heights it
+                                signed. 0 % scores 1, 5 % scores 0.
+                            </td>
+                        </tr>
+                    </table>
+                    <p>
+                        The score is 100 times the weighted sum, shown to one
+                        decimal, rounded down; a value between two thresholds
+                        scores in proportion. A metric with no data (such as no
+                        restart sample, no proposal due, or proposals disabled)
+                        passes its weight to the others in proportion to theirs.
+                        An operator is ranked once it has 168 hours (7 days) of
+                        block time in the set within the window.
+                    </p>
+                    <p>
+                        <b>Proposals are checked.</b> Who was due to propose
+                        each round is recomputed from the validator sets'
+                        proposer priorities. A block whose header names none of
+                        its rounds' recomputed proposers disables the proposals
+                        metric for every validator, in every window holding that
+                        block, and <code>/api/ranking</code> lists those
+                        heights: a missing number rather than a wrong one.
+                    </p>
+                    <p>
+                        <b>Ties</b> are broken by the measures themselves, in
+                        the order of their weights: the higher uptime, then the
+                        shorter longest absence (its longest run of missed
+                        blocks in the window, recovery runs left out), then the
+                        faster recovery (no restart sample comes last), then the
+                        lower missed-proposal share (skipped while proposals are
+                        disabled), each compared unrounded, as the score is.
+                        Operators equal on all of these share a rank (1, 1, 3):
+                        nothing else, such as an address or a name, decides
+                        between them; the operator address only orders their
+                        listing.
+                    </p>
+
+                    <h3>Why these, and why they are fair</h3>
+                    <ul>
+                        <li>
+                            <b>Signing blocks is the job,</b> so uptime weighs
+                            most. Most validators are expected to sit between 99
+                            % and 100 %, so the 95 to 99.9 % scale makes small
+                            differences count.
+                        </li>
+                        <li>
+                            <b>Outages tell a flaky setup from one bad day,</b>
+                            so they count on top of Uptime. Twenty 1-minute
+                            outages and one 20-minute outage miss the same
+                            blocks; the first is a setup to fix.
+                        </li>
+                        <li>
+                            <b
+                                >Recovery measures responsiveness when operators
+                                must act together,</b
+                            >
+                            which uptime averages away. The median of 3 keeps
+                            one bad restart from deciding alone.
+                        </li>
+                        <li>
+                            <b
+                                >Proposals catch a validator that signs but
+                                fails to propose:</b
+                            >
+                            a slow or broken proposer.
+                        </li>
+                        <li>
+                            <b
+                                >Recovery and Proposals never count a miss
+                                twice.</b
+                            >
+                            Blocks missed around a restart, its run of misses
+                            through or just before it, leave Uptime and Outages
+                            within 24 h of it, Recovery timing the restart
+                            instead; past that, they count in Uptime and
+                            Outages. Proposals count only on heights the
+                            validator signed, restart heights left out: one that
+                            is down already loses those blocks through Uptime.
+                        </li>
+                        <li>
+                            <b>Judged on its own blocks.</b> Uptime and
+                            Proposals are per block the validator was in the set
+                            for; voting power and set size do not tilt the
+                            score.
+                        </li>
+                        <li>
+                            <b>Ranked by operator, not by signing key.</b>
+                            Rotating a key, good security practice, keeps the
+                            record and cannot wipe a bad one. Keys are linked to
+                            operators by chain records only, the operator's
+                            valoper profile and the validator set's events,
+                            never by name; a key no record links is ranked on
+                            its own.
+                        </li>
+                        <li>
+                            <b>Ranked while in the set.</b> Only operators in
+                            the validator set at the window's last height are
+                            ranked; one that left keeps its record on its
+                            validator page.
+                        </li>
+                        <li>
+                            <b>A nil vote counts as signed.</b> It usually comes
+                            from the network or the proposer, not from the
+                            voter.
+                        </li>
+                    </ul>
+
+                    <h3>What the ranking does not score</h3>
+                    <ul>
+                        <li>
+                            <b>Vote delay and vote times:</b> each validator's
+                            own clock sets them, so they are self-reported.
+                        </li>
+                        <li>
+                            <b>When votes, proposals and blocks arrive:</b> that
+                            depends on where the observer sits; another observer
+                            would see other times.
+                        </li>
+                        <li>
+                            <b>Votes no block keeps</b> (prevotes, votes of
+                            failed rounds): no observer can prove it saw them
+                            all, so validators would be scored unequally by
+                            chance.
+                        </li>
+                        <li>
+                            <b>The nil-vote rate:</b> shown on each validator's
+                            page, not scored, as a nil vote is rarely the
+                            voter's fault.
+                        </li>
+                        <li>
+                            <b>Voting power and time in the set:</b> how much
+                            and how long a validator counts, not how well it
+                            runs; time in the set only decides who is ranked.
+                        </li>
+                        <li>
+                            <b>Key rotations and profile data:</b> shown on each
+                            validator's page; the ranking reads them only to
+                            link keys to operators, so a rotation keeps the
+                            operator's record.
+                        </li>
+                        <li>
+                            <b>Country and provider:</b> they depend on the
+                            observer's view of the network, and are not
+                            performance.
+                        </li>
+                        <li>
+                            <b>Double-signing:</b> the chain does not record it
+                            (tm2 blocks carry no evidence of it), so the
+                            dashboard neither scores nor shows it.
+                        </li>
+                        <li>
+                            <b>Anything from the transaction indexer:</b>
+                            monitoring data only.
+                        </li>
+                    </ul>
+
+                    <h3>Calibration</h3>
+                    <p>
+                        The thresholds were set before any calibration on
+                        mainnet's data; production's first 30 days are their
+                        first check. A change to any of them is a new formula
+                        version, shown on the meta line.
+                    </p>
+                </div>
             </div>
         </div>
         <div id="val-modal" class="eta-modal">

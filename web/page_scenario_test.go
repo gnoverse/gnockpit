@@ -17,6 +17,7 @@ import (
 
 	"github.com/gnoverse/gnockpit/blocks"
 	"github.com/gnoverse/gnockpit/node"
+	"github.com/gnoverse/gnockpit/ranking"
 )
 
 // scenario is the state the server under test starts from. The chain is the
@@ -39,9 +40,19 @@ type scenario struct {
 	chainName   string // --chain-name
 	hideSources bool   // --hide-sources
 	push        bool   // a push manager, the push subscription stub and service workers
+	// ranking turns the daily ranking on over the block history; nil leaves
+	// it off.
+	ranking *pageRanking
 	// chainStuckSecs and maxMissedInARow are --chain-stuck-secs and
 	// --max-missed-in-a-row; main.go's defaults when zero.
 	chainStuckSecs, maxMissedInARow int
+}
+
+// pageRanking is the ranking's configuration: --ranking-exclude and
+// --ranking-hide-excluded.
+type pageRanking struct {
+	exclude      []string
+	hideExcluded bool
 }
 
 // clock returns the scenario's instant.
@@ -95,6 +106,10 @@ func newPageServer(t *testing.T, sc *scenario, clock *serverClock) *Server {
 			srv.BlockFill = sc.fillFrom
 		}
 	}
+	if sc.ranking != nil {
+		srv.Ranking = newPagePublisher(t, sc, srv, clock)
+		srv.RankingHideExcluded = sc.ranking.hideExcluded
+	}
 	if sc.push {
 		srv.PushManager = newPushManager(t, srv.ChainStuckSecs, srv.MaxMissedInARow)
 	}
@@ -102,6 +117,35 @@ func newPageServer(t *testing.T, sc *scenario, clock *serverClock) *Server {
 		publishSnapshot(t.Context(), srv, sc.snap)
 	}
 	return srv
+}
+
+// newPagePublisher builds the ranking's publisher as main.go does, on the
+// scenario's block history and clock. Its profiles are the scenario's
+// valopers, read from the start: the server under test runs no valoper
+// refresh. It runs one pass, as the publisher's loop does at once; a test
+// runs another with Refresh.
+func newPagePublisher(t *testing.T, sc *scenario, srv *Server, clock *serverClock) *ranking.Publisher {
+	t.Helper()
+	if srv.Blocks == nil {
+		t.Fatal("newPagePublisher: the ranking reads the block history, which the scenario leaves disabled: set seed")
+	}
+	days, err := ranking.NewDayStore(t.Context(), openRankingDB(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	pub := &ranking.Publisher{
+		Blocks:   srv.Blocks,
+		Fill:     srv.BlockFill,
+		Days:     days,
+		Profiles: func() (ranking.Profiles, bool) { return ranking.Profiles(sc.valopers), true },
+		Names:    srv.Moniker,
+		Exclude:  sc.ranking.exclude,
+		Now:      clock.now,
+	}
+	if err := pub.Refresh(t.Context()); err != nil {
+		t.Fatalf("the ranking's first pass: %v", err)
+	}
+	return pub
 }
 
 // publishSnapshot publishes snap as the publish loop does after a fetch: the

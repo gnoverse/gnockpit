@@ -1,7 +1,12 @@
-// How the page writes values: numbers, hashes, dates, times and ages,
-// scores, vote delays and voting powers.
+// How the page writes values: numbers and percentages, hashes, dates,
+// times, durations and ages, scores, vote delays and voting powers. A
+// figure the ranking scores is never written better than its value:
+// one where higher is better (an uptime, a sub-score, points, a score)
+// rounded down, one where lower is better (a missed share, a recovery
+// time) rounded up.
 
 /** @import { VoteInfo } from '../types/node.js' */
+/** @import { Part } from '../types/server.js' */
 
 import { live } from './state.js'
 
@@ -87,6 +92,138 @@ export const MONTHS = [
  */
 export function utcMinute(iso) {
     return iso.slice(0, 16).replace('T', ' ') + ' UTC'
+}
+
+// durationText writes a duration: seconds kept under an hour, days
+// from 48 h.
+/**
+ * @param {number} ms
+ * @returns {string}
+ */
+export function durationText(ms) {
+    const s = Math.round(ms / 1000)
+    if (s < 60) return s + ' s'
+    if (s < 3600) return Math.floor(s / 60) + ' min ' + twoDigits(s % 60) + ' s'
+    const h = Math.floor(s / 3600)
+    if (h >= 48) return Math.round(h / 24) + ' d'
+    return h + ' h ' + twoDigits(Math.floor((s % 3600) / 60)) + ' min'
+}
+
+// durationUpText writes a duration rounded up at the last unit
+// written: a time where shorter is better, such as a recovery, never
+// reads shorter than it was. Seconds under an hour, as durationText
+// writes them, so 600.4 s is written 10 min 01 s, past the 10 minutes
+// of full marks; minutes to 48 h; days and hours from 48 h, so 48 h
+// and 1 ms is written 2 d 01 h.
+/**
+ * @param {number} ms
+ * @returns {string}
+ */
+export function durationUpText(ms) {
+    const s = Math.ceil(ms / 1000)
+    if (s < 3600) return durationText(s * 1000)
+    const m = Math.ceil(s / 60)
+    if (m < 48 * 60)
+        return Math.floor(m / 60) + ' h ' + twoDigits(m % 60) + ' min'
+    const h = Math.ceil(m / 60)
+    return Math.floor(h / 24) + ' d ' + twoDigits(h % 24) + ' h'
+}
+
+// pctDown is n of total as a percentage rounded down to digits
+// decimals, from the exact counts: a figure reaches a threshold
+// only when the counts do, so 99.895 % is written 99.89 %.
+/**
+ * @param {number} n
+ * @param {number} total
+ * @param {number} digits
+ * @returns {number}
+ */
+export function pctDown(n, total, digits) {
+    const scale = 10 ** digits
+    return Math.floor((n * 100 * scale) / total) / scale
+}
+
+// pctUp is n of total as a percentage rounded up to digits
+// decimals, from the exact counts: a miss never reads none, so 1 of
+// 26,000 is written 0.01 %.
+/**
+ * @param {number} n
+ * @param {number} total
+ * @param {number} digits
+ * @returns {number}
+ */
+export function pctUp(n, total, digits) {
+    const scale = 10 ** digits
+    return Math.ceil((n * 100 * scale) / total) / scale
+}
+
+// floorNudged rounds x, a scaled share, down to a whole number, a
+// nudge far below one block of any chain absorbing the float error
+// of the scaling: 0.29 × 100 is 28.999999999999996, rounded to 29.
+/**
+ * @param {number} x
+ * @returns {number}
+ */
+function floorNudged(x) {
+    return Math.floor(x + 1e-9)
+}
+
+// sharePctDown is a share of 1 as a whole percentage, rounded down
+// (floorNudged): 0.29 is written 29, and a share one block short of
+// whole stays under 100.
+/**
+ * @param {number} share
+ * @returns {number}
+ */
+export function sharePctDown(share) {
+    return floorNudged(share * 100)
+}
+
+// subScoreText writes a ranking's sub-score, 0 to 1, to 3 decimals,
+// rounded down (floorNudged), so it reads 1.000 only at full marks.
+/**
+ * @param {number} sub
+ * @returns {string}
+ */
+export function subScoreText(sub) {
+    return (floorNudged(sub * 1000) / 1000).toFixed(3)
+}
+
+// scoreText writes a ranking's score to one decimal, rounded down
+// (floorNudged), so 99.96 reads 99.9, never 100.0: the daily alert
+// writes a score the same way (ranking/digest.go).
+/**
+ * @param {number} score
+ * @returns {string}
+ */
+export function scoreText(score) {
+    return (floorNudged(score * 10) / 10).toFixed(1)
+}
+
+// weightText writes a part's weight, the points of its full marks, to
+// one decimal, a tie rounded up: 200 / 9 reads 22.2, 500 / 9 55.6.
+/**
+ * @param {number} weight
+ * @returns {string}
+ */
+export function weightText(weight) {
+    return weight.toFixed(1)
+}
+
+// pointsText writes a part's points to one decimal: at full marks, its
+// weight's text; below them, rounded down (floorNudged) and never its
+// weight's text, one tenth less where rounding down reaches it, so
+// 22.22 points of 22.222… read 22.1.
+/**
+ * @param {Part} part
+ * @returns {string}
+ */
+export function pointsText(part) {
+    const full = weightText(part.weight)
+    if (part.sub !== null && part.sub >= 1) return full
+    const tenths = floorNudged(part.points * 10)
+    const text = (tenths / 10).toFixed(1)
+    return text === full ? ((tenths - 1) / 10).toFixed(1) : text
 }
 
 /** @typedef {'ok' | 'warn' | 'err'} Band */

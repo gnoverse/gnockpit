@@ -15,6 +15,8 @@ import * as networkState from './network-state.js'
 import * as nodeLists from './node-lists.js'
 import * as pointer from './pointer.js'
 import * as popover from './popover.js'
+import * as ranking from './ranking.js'
+import * as rankingHelp from './ranking-help.js'
 import * as recentBlocks from './recent-blocks.js'
 import * as sections from './sections.js'
 import { startEach } from './start.js'
@@ -41,5 +43,7 @@ startEach([
     ['eta', eta.start],
     ['sync', sync.start],
     ['timeline', timeline.start],
+    ['ranking', ranking.start],
+    ['ranking-help', rankingHelp.start],
     ['valpage', valpage.start],
 ])

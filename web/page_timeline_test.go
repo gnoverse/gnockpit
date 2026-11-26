@@ -30,16 +30,10 @@ const (
 	timelineRead = "/api/history?changes=50"
 	// timelineOlderRead starts the URI of an older page's read.
 	timelineOlderRead = timelineRead + "&before="
-	// timelineViewKey is the localStorage key of the validators card's view.
-	timelineViewKey = "gnockpit-validators-view"
 
-	// timelineLiveToggle and timelineToggle are the toggle's Live and
-	// Timeline buttons.
-	timelineLiveToggle = `#validators-view button[data-view="live"]`
-	timelineToggle     = `#validators-view button[data-view="timeline"]`
-	timelineList       = "#validators-timeline"
-	timelineRows       = timelineList + " .vt-row"
-	timelineAges       = timelineRows + " .h"
+	timelineList = "#validators-timeline"
+	timelineRows = timelineList + " .vt-row"
+	timelineAges = timelineRows + " .h"
 	// timelineFooter is the footer, after the rows or the empty-history line.
 	timelineFooter = timelineList + " .vt-foot:last-child"
 	timelineOlder  = timelineList + " .vt-older"
@@ -60,7 +54,7 @@ const (
 
 // timelineShown opens the validators card on its Timeline view.
 func timelineShown() pageOption {
-	return withStorage(map[string]string{timelineViewKey: "timeline"})
+	return withStorage(map[string]string{validatorsViewKey: "timeline"})
 }
 
 // ---- Helpers
@@ -240,7 +234,7 @@ func (e *pageEnv) timelineHeights() []int64 {
 func TestPageTimelineView(t *testing.T) {
 	onProfiles(t, []profile{desktop, tablet, phone}, func(t *testing.T, p profile) {
 		e := timelineOpen(t, p, timelineRich())
-		live, tl := e.expect(timelineLiveToggle), e.expect(timelineToggle)
+		live, tl := e.expect(validatorsLiveToggle), e.expect(validatorsTimelineToggle)
 		liveList := "#validators-card .table-wrap"
 		if p != desktop {
 			liveList = "#validators-cards"
@@ -255,7 +249,7 @@ func TestPageTimelineView(t *testing.T) {
 			e.must(e.expect("#validators-compact-label").ToBeVisible())
 		}
 
-		timelineActivate(e, timelineToggle)
+		timelineActivate(e, validatorsTimelineToggle)
 		e.must(tl.ToHaveAttribute("aria-pressed", "true"))
 		e.must(live.ToHaveAttribute("aria-pressed", "false"))
 		e.must(e.expect("#validators-card").ToContainClass("view-timeline"))
@@ -264,11 +258,11 @@ func TestPageTimelineView(t *testing.T) {
 		e.must(e.expect("#validators-card .table-wrap").ToBeHidden())
 		e.must(e.expect("#validators-cards").ToBeHidden())
 		e.must(e.expect("#validators-compact-label").ToHaveCSS("visibility", "hidden"))
-		if got, _ := e.storage(timelineViewKey); got != "timeline" {
-			t.Errorf("localStorage %s = %q after Timeline, want timeline", timelineViewKey, got)
+		if got, _ := e.storage(validatorsViewKey); got != "timeline" {
+			t.Errorf("localStorage %s = %q after Timeline, want timeline", validatorsViewKey, got)
 		}
 
-		timelineActivate(e, timelineLiveToggle)
+		timelineActivate(e, validatorsLiveToggle)
 		e.must(live.ToHaveAttribute("aria-pressed", "true"))
 		e.must(tl.ToHaveAttribute("aria-pressed", "false"))
 		e.must(e.expect("#validators-card").Not().ToContainClass("view-timeline"))
@@ -277,15 +271,15 @@ func TestPageTimelineView(t *testing.T) {
 		if p == tablet {
 			e.must(e.expect("#validators-compact-label").ToBeVisible())
 		}
-		if got, _ := e.storage(timelineViewKey); got != "live" {
-			t.Errorf("localStorage %s = %q after Live, want live", timelineViewKey, got)
+		if got, _ := e.storage(validatorsViewKey); got != "live" {
+			t.Errorf("localStorage %s = %q after Live, want live", validatorsViewKey, got)
 		}
 	})
 }
 
 // TestPageTimelineViewPersisted checks that the view saved opens the card:
 // "timeline" opens the Timeline, through a reload too; anything else opens
-// Live, which is saved.
+// Live. Opening saves nothing: only a click on the switch saves a view.
 func TestPageTimelineViewPersisted(t *testing.T) {
 	for _, tc := range []struct {
 		name, stored string // stored "" leaves the key unset
@@ -299,7 +293,7 @@ func TestPageTimelineViewPersisted(t *testing.T) {
 			onProfiles(t, []profile{desktop, phone}, func(t *testing.T, p profile) {
 				var opts []pageOption
 				if tc.stored != "" {
-					opts = append(opts, withStorage(map[string]string{timelineViewKey: tc.stored}))
+					opts = append(opts, withStorage(map[string]string{validatorsViewKey: tc.stored}))
 				}
 				e := timelineOpen(t, p, timelineRich(), opts...)
 				for load := range 2 {
@@ -312,8 +306,8 @@ func TestPageTimelineViewPersisted(t *testing.T) {
 					} else {
 						e.must(e.expect(timelineList).ToBeHidden())
 					}
-					if got, _ := e.storage(timelineViewKey); got != tc.want {
-						t.Errorf("load %d: localStorage %s = %q, want %q", load+1, timelineViewKey, got, tc.want)
+					if got, set := e.storage(validatorsViewKey); got != tc.stored || set != (tc.stored != "") {
+						t.Errorf("load %d: localStorage %s = %q (set %v), want %q, as stored", load+1, validatorsViewKey, got, set, tc.stored)
 					}
 				}
 			})
@@ -329,15 +323,15 @@ func TestPageTimelineViewWithoutStorage(t *testing.T) {
 		e := timelineOpenUnloaded(t, p, timelineRich())
 		e.must(e.Ctx.AddInitScript(playwright.Script{Content: playwright.String(storageBlocked)}))
 		e.navigate("/")
-		live, tl := e.expect(timelineLiveToggle), e.expect(timelineToggle)
+		live, tl := e.expect(validatorsLiveToggle), e.expect(validatorsTimelineToggle)
 		e.must(live.ToHaveAttribute("aria-pressed", "true"))
 		e.must(e.expect(timelineList).ToBeHidden())
 
-		timelineActivate(e, timelineToggle)
+		timelineActivate(e, validatorsTimelineToggle)
 		e.must(tl.ToHaveAttribute("aria-pressed", "true"))
 		e.must(timelineTopAge(e).ToHaveText("#4,320 · just now"))
 
-		timelineActivate(e, timelineLiveToggle)
+		timelineActivate(e, validatorsLiveToggle)
 		e.must(live.ToHaveAttribute("aria-pressed", "true"))
 		e.must(e.expect(timelineList).ToBeHidden())
 	})
@@ -376,26 +370,26 @@ func TestPageTimelineToggleLayout(t *testing.T) {
 func TestPageTimelineToggleKeyboard(t *testing.T) {
 	onProfiles(t, []profile{desktop, phone}, func(t *testing.T, p profile) {
 		e := timelineOpen(t, p, timelineRich())
-		live, tl := e.Page.Locator(timelineLiveToggle), e.Page.Locator(timelineToggle)
+		live, tl := e.Page.Locator(validatorsLiveToggle), e.Page.Locator(validatorsTimelineToggle)
 
 		e.must(tl.Press("Enter"))
-		e.must(e.expect(timelineToggle).ToHaveAttribute("aria-pressed", "true"))
+		e.must(e.expect(validatorsTimelineToggle).ToHaveAttribute("aria-pressed", "true"))
 		e.must(e.expect(timelineList).ToBeVisible())
-		ring := e.expect(timelineToggle)
+		ring := e.expect(validatorsTimelineToggle)
 		e.must(ring.ToBeFocused())
 		e.must(ring.ToHaveCSS("outline-style", "solid"))
 		e.must(ring.ToHaveCSS("outline-width", "2px"))
 		e.must(ring.ToHaveCSS("outline-color", timelineColorBlue))
 		e.must(ring.ToHaveCSS("color", timelineColorFG))
 		e.must(ring.ToHaveCSS("background-color", timelineColorBG))
-		e.must(e.expect(timelineLiveToggle).ToHaveCSS("color", timelineColorFG2))
-		e.must(e.expect(timelineLiveToggle).ToHaveCSS("background-color", "rgba(0, 0, 0, 0)"))
+		e.must(e.expect(validatorsLiveToggle).ToHaveCSS("color", timelineColorFG2))
+		e.must(e.expect(validatorsLiveToggle).ToHaveCSS("background-color", "rgba(0, 0, 0, 0)"))
 
 		e.must(live.Press("Space"))
-		e.must(e.expect(timelineLiveToggle).ToHaveAttribute("aria-pressed", "true"))
+		e.must(e.expect(validatorsLiveToggle).ToHaveAttribute("aria-pressed", "true"))
 		e.must(e.expect(timelineList).ToBeHidden())
-		e.must(e.expect(timelineLiveToggle).ToHaveCSS("color", timelineColorFG))
-		e.must(e.expect(timelineToggle).ToHaveCSS("color", timelineColorFG2))
+		e.must(e.expect(validatorsLiveToggle).ToHaveCSS("color", timelineColorFG))
+		e.must(e.expect(validatorsTimelineToggle).ToHaveCSS("color", timelineColorFG2))
 	})
 }
 
@@ -671,21 +665,21 @@ func TestPageTimelinePolls(t *testing.T) {
 		timelineActivate(e, timelineSectionToggle)
 		e.must(top.ToHaveText(timelineHeightRow(4322)))
 
-		timelineActivate(e, timelineLiveToggle)
+		timelineActivate(e, validatorsLiveToggle)
 		e.must(e.expect(timelineList).ToBeHidden())
 		change(4323, withKilo)
 		for range 3 {
 			e.runFor(timelinePoll)
 		}
 		read := e.hold(timelineRead)
-		timelineActivate(e, timelineToggle)
+		timelineActivate(e, validatorsTimelineToggle)
 		e.must(e.expect(timelineList).ToBeVisible())
 		e.must(top.ToHaveText(timelineHeightRow(4322)))
 		read.release()
 		e.must(top.ToHaveText(timelineHeightRow(4323)))
 
 		change(4324, withoutKilo)
-		timelineActivate(e, timelineToggle)
+		timelineActivate(e, validatorsTimelineToggle)
 		e.must(top.ToHaveText(timelineHeightRow(4324)))
 	})
 }
@@ -722,10 +716,10 @@ func TestPageTimelineLiveEndsTheQueuedPoll(t *testing.T) {
 				}
 			}
 		})
-		timelineActivate(e, timelineLiveToggle)
+		timelineActivate(e, validatorsLiveToggle)
 		read.release()
 		e.must(e.expect(timelineRows).ToHaveCount(100))
-		timelineActivate(e, timelineToggle)
+		timelineActivate(e, validatorsTimelineToggle)
 		timelineActivate(e, timelineOlder)
 		select {
 		case n := <-firstsBeforeOlder:
@@ -771,11 +765,11 @@ func TestPageTimelineLiveStopsAPollMidway(t *testing.T) {
 				}
 			}
 		})
-		timelineActivate(e, timelineLiveToggle)
+		timelineActivate(e, validatorsLiveToggle)
 		e.must(e.expect(timelineList).ToBeHidden())
 		second.release()
 		e.runFor(time.Second)
-		timelineActivate(e, timelineToggle)
+		timelineActivate(e, validatorsTimelineToggle)
 		select {
 		case n := <-thirdsBeforeNext:
 			if n != 0 {
@@ -981,7 +975,7 @@ func TestPageTimelineLoadingUntilFirstAnswer(t *testing.T) {
 				read := e.hold(timelineRead)
 				e.navigate("/")
 				if !tc.saved {
-					timelineActivate(e, timelineToggle)
+					timelineActivate(e, validatorsTimelineToggle)
 				}
 				e.must(e.expect(timelineList).ToBeVisible())
 				e.must(e.expect(timelineList).ToHaveText("loading…"))
@@ -1020,7 +1014,7 @@ func TestPageTimelineShowsTheStatusWithoutAReason(t *testing.T) {
 				front := e.behindProxy("/api/history", status)
 				e.navigateTo(front + "/")
 				e.hold(timelineRead)
-				timelineActivate(e, timelineToggle)
+				timelineActivate(e, validatorsTimelineToggle)
 				e.must(e.expect(timelineFooter).ToHaveText(fmt.Sprintf("Could not read the set changes (HTTP %d): trying again shortly.", status)))
 				e.must(e.expect(timelineRows).ToHaveCount(0))
 			})
@@ -1164,9 +1158,9 @@ func TestPageTimelineKeepsFocusOnAName(t *testing.T) {
 		poll(pageHeight+2, withoutKilo)
 		e.must(e.Expect.Locator(rows.Nth(11).Locator("a.val-link").Nth(1)).ToBeFocused())
 
-		e.must(e.Page.Locator(timelineLiveToggle).Focus())
+		e.must(e.Page.Locator(validatorsLiveToggle).Focus())
 		poll(pageHeight+3, withKilo)
-		e.must(e.expect(timelineLiveToggle).ToBeFocused())
+		e.must(e.expect(validatorsLiveToggle).ToBeFocused())
 	})
 }
 
@@ -1215,10 +1209,10 @@ func TestPageTimelineOlderLeavesTheFocusMoved(t *testing.T) {
 	read := e.hold(timelineOlderRead + "4271")
 	e.must(e.Page.Locator(timelineOlder).Press("Enter"))
 	e.must(e.expect(timelineOlder).ToBeDisabled())
-	e.must(e.Page.Locator(timelineLiveToggle).Focus())
+	e.must(e.Page.Locator(validatorsLiveToggle).Focus())
 	read.release()
 	e.must(e.expect(timelineRows).ToHaveCount(100))
-	e.must(e.expect(timelineLiveToggle).ToBeFocused())
+	e.must(e.expect(validatorsLiveToggle).ToBeFocused())
 }
 
 // TestPageTimelineOlderDisabledWhileLoading checks that "older" is disabled,

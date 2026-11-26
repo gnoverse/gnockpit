@@ -669,6 +669,9 @@ func TestFetchValopers(t *testing.T) {
 	if len(read.Unread) != 2 || !strings.Contains(read.Unread["g1opc"], "render failed") || read.Unread["g1opd"] == "" {
 		t.Errorf("unread = %v, want g1opc (the node's reason) and g1opd", read.Unread)
 	}
+	if read.ListError != nil {
+		t.Errorf("list error = %v, want none: every page of the list was read", read.ListError)
+	}
 	if alice.Moniker != "Alice" || alice.SigningAddress != "g1signa" || alice.Description != "Alice's node." || alice.ServerType != "cloud" {
 		t.Errorf("Alice = %+v", alice)
 	}
@@ -677,6 +680,57 @@ func TestFetchValopers(t *testing.T) {
 	}
 	if bob.State != nil || !strings.Contains(bob.StateError, "valoper does not exist") {
 		t.Errorf("Bob state = %+v, error %q; want none and the node's reason", bob.State, bob.StateError)
+	}
+}
+
+// valopersListRPC answers the valopers realm's home page 1, listing Alice
+// and a page 2, the node failing page 2; Alice's profile, with no state.
+func valopersListRPC(t *testing.T, detail func()) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		raw, _ := base64.StdEncoding.DecodeString(strings.Trim(r.URL.Query().Get("data"), `"`))
+		arg := string(raw)
+		var md string
+		switch {
+		case strings.Contains(r.URL.Query().Get("path"), "qeval"):
+			fmt.Fprint(w, `{"jsonrpc":"2.0","result":{"response":{"ResponseBase":{"Error":{"@type":"/abci.StringError","value":"no state"},"Data":null}}}}`)
+			return
+		case strings.HasSuffix(arg, "valopers:"):
+			md = " * [Alice](/r/gnops/valopers:g1opa) - [profile](/r/demo/profile:u/g1opa)\n**1** | [2](?page=2)"
+		case strings.HasSuffix(arg, "?page=2"):
+			fmt.Fprint(w, `{"jsonrpc":"2.0","result":{"response":{"ResponseBase":{"Error":{"@type":"/abci.StringError","value":"page render failed"},"Data":null}}}}`)
+			return
+		case strings.HasSuffix(arg, ":g1opa"):
+			detail()
+			md = "## Alice\n- Operator Address: g1opa\n- Signing Address: g1signa\n"
+		}
+		fmt.Fprintf(w, `{"jsonrpc":"2.0","result":{"response":{"ResponseBase":{"Error":null,"Data":%q}}}}`, base64.StdEncoding.EncodeToString([]byte(md)))
+	}))
+}
+
+func TestFetchValopersReportsAListPageItCouldNotRead(t *testing.T) {
+	srv := valopersListRPC(t, func() {})
+	defer srv.Close()
+	read, err := NewClient(srv.URL, 5*time.Second).FetchValopers(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(read.Profiles) != 1 || read.Profiles[0].Operator != "g1opa" {
+		t.Errorf("profiles = %+v, want Alice's, from page 1", read.Profiles)
+	}
+	if read.ListError == nil || !strings.Contains(read.ListError.Error(), "page render failed") {
+		t.Errorf("list error = %v, want the node's reason for page 2: the operators it lists are unknown", read.ListError)
+	}
+}
+
+func TestFetchValopersFailsWhenItsContextEnds(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	srv := valopersListRPC(t, cancel)
+	defer srv.Close()
+	read, err := NewClient(srv.URL, 5*time.Second).FetchValopers(ctx)
+	if !errors.Is(err, context.Canceled) {
+		t.Errorf("FetchValopers ended while reading Alice's profile = %+v, %v; want context.Canceled, not a read missing her", read, err)
 	}
 }
 

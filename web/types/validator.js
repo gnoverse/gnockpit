@@ -102,6 +102,9 @@
  *     first_day: string,
  *     last_day: string,
  *     outages: number,
+ *     recovering: number,
+ *     longest_absence: number,
+ *     in_set_ms: number,
  *     recovery: ValidatorRecoverySummary,
  * }} ValidatorSummary
  */

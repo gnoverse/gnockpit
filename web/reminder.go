@@ -2,6 +2,7 @@ package web
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -86,12 +87,12 @@ func (s *Server) putReminder(w http.ResponseWriter, r *http.Request) {
 	lead, err := push.ParseLead(req.Lead)
 	switch {
 	case req.Endpoint == "" || req.P256dh == "" || req.Auth == "":
-		err = fmt.Errorf("endpoint, p256dh and auth are required")
+		err = errors.New("endpoint, p256dh and auth are required")
 	case req.Height < 1:
-		err = fmt.Errorf("height must be a block height")
+		err = errors.New("height must be a block height")
 	case err == nil:
 		if _, perr := time.Parse(time.RFC3339, req.Since); perr != nil {
-			err = fmt.Errorf("since must be an RFC 3339 time")
+			err = errors.New("since must be an RFC 3339 time")
 		}
 	}
 	if err != nil {

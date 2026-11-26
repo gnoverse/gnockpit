@@ -35,7 +35,7 @@ func valChartsBravoUptime(t *testing.T) []string {
 		fills[i] = greenColor
 	}
 	for day, fill := range map[string]string{
-		"2026-10-21": yellowColor, // 96.81 % signed
+		"2026-10-21": yellowColor, // 96.80 % signed
 		"2026-10-22": yellowColor, // 95.83 %
 		"2026-10-23": redColor,    // 93.61 %
 		"2026-10-24": borderColor, // no block: not in the set
@@ -43,7 +43,7 @@ func valChartsBravoUptime(t *testing.T) []string {
 		"2026-11-03": yellowColor, // 99.72 %
 		"2026-11-04": redColor,    // 0.00 %
 		"2026-11-10": yellowColor, // 98.94 %
-		"2026-11-18": redColor,    // 90.61 %
+		"2026-11-18": redColor,    // 90.60 %
 	} {
 		fills[valChartsDayIndex(t, day)] = fill
 	}

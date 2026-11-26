@@ -218,7 +218,7 @@ func newTestTracker(t *testing.T, c *fakeChain) *testTracker {
 // the testTracker, on a clock a second further at each reading.
 func newTestTrackerOn(t *testing.T, c *fakeChain, s *Store, cfg Config) *testTracker {
 	t.Helper()
-	tr, err := NewTracker(s, c, cfg)
+	tr, err := NewTracker(context.Background(), s, c, cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -238,7 +238,7 @@ func newTestTrackerOn(t *testing.T, c *fakeChain, s *Store, cfg Config) *testTra
 
 func TestNewTrackerRejectsABadConfig(t *testing.T) {
 	for _, cfg := range []Config{{Pace: time.Second, Batch: 0}, {Pace: -time.Second, Batch: 100}} {
-		if _, err := NewTracker(newTestStore(t), newFakeChain(10), cfg); err == nil {
+		if _, err := NewTracker(context.Background(), newTestStore(t), newFakeChain(10), cfg); err == nil {
 			t.Errorf("NewTracker(%+v) accepted it", cfg)
 		}
 	}
@@ -346,6 +346,24 @@ func TestPassCompletesAtGenesis(t *testing.T) {
 	if want := (Progress{ChainID: "gnoland-1", From: 1, To: 119, FromTime: c.timeOf(1), Complete: true}); p != want {
 		t.Errorf("Progress() = %+v, want %+v", p, want)
 	}
+	if !tt.logged("history complete from #1") {
+		t.Errorf("logs = %q, want the completion", tt.logs)
+	}
+}
+
+func TestNewTrackerReadsTheStoredHistory(t *testing.T) {
+	// A restart: a first tracker filled the history to genesis; a second,
+	// built over it, has its progress before its first pass, and that pass
+	// still logs the completion.
+	c := newFakeChain(120)
+	first := newTestTracker(t, c)
+	for mustPass(t, first) {
+	}
+	tt := newTestTrackerOn(t, c, first.store, DefaultConfig())
+	if want := (Progress{ChainID: "gnoland-1", From: 1, To: 119, FromTime: c.timeOf(1), Complete: true}); tt.Progress() != want {
+		t.Errorf("Progress() before the first pass = %+v, want %+v", tt.Progress(), want)
+	}
+	mustPass(t, tt)
 	if !tt.logged("history complete from #1") {
 		t.Errorf("logs = %q, want the completion", tt.logs)
 	}

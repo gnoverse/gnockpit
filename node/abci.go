@@ -210,6 +210,8 @@ func (c *Client) valoperState(ctx context.Context, operator string) (*ValoperSta
 // state: three queries per valoper, so call it on a slow timer, never in the
 // snapshot hot path. A profile whose render fails or does not parse is left
 // out, its operator in Unread; a profile is the operator's the registry lists.
+// A list page that fails after an earlier one was read ends the list, its
+// error in ListError. It fails when no list page is read, or when ctx ends.
 func (c *Client) FetchValopers(ctx context.Context) (ValoperRead, error) {
 	// 1. Page the home render → operator addresses.
 	operators := map[string]string{}
@@ -221,8 +223,8 @@ func (c *Client) FetchValopers(ctx context.Context) (ValoperRead, error) {
 		}
 		md, err := c.qrender(ctx, valopersRealm, renderPath)
 		if err != nil {
-			pageErr = err
-			break // keep whatever earlier pages yielded (best-effort)
+			pageErr = fmt.Errorf("valopers list page %d: %w", page, err)
+			break
 		}
 		got := parseValoperList(md)
 		if len(got) == 0 {
@@ -232,8 +234,8 @@ func (c *Client) FetchValopers(ctx context.Context) (ValoperRead, error) {
 			operators[op] = mon
 		}
 	}
-	// Surface an error only if nothing was collected; a partial result from one
-	// flaky page is still useful.
+	// A list read in part still gives the operators of its pages: ListError
+	// says it is partial.
 	if len(operators) == 0 && pageErr != nil {
 		return ValoperRead{}, pageErr
 	}
@@ -279,7 +281,7 @@ func (c *Client) FetchValopers(ctx context.Context) (ValoperRead, error) {
 	}
 	go func() { wg.Wait(); close(out) }()
 
-	read := ValoperRead{Unread: map[string]string{}}
+	read := ValoperRead{Unread: map[string]string{}, ListError: pageErr}
 	for res := range out {
 		if res.why != "" {
 			read.Unread[res.op] = res.why
@@ -287,12 +289,19 @@ func (c *Client) FetchValopers(ctx context.Context) (ValoperRead, error) {
 		}
 		read.Profiles = append(read.Profiles, res.v)
 	}
+	// An operator whose read ctx ended is neither read nor unread.
+	if err := ctx.Err(); err != nil {
+		return ValoperRead{}, err
+	}
 	return read, nil
 }
 
 // ValoperRead is a read of the valopers registry: the profiles read, and the
-// operators it lists whose profile was not, with why.
+// operators it lists whose profile was not, with why. ListError is why a page
+// of the registry's list was not read, after an earlier page was: the
+// operators of that page and the later ones are unknown.
 type ValoperRead struct {
-	Profiles []Valoper
-	Unread   map[string]string
+	Profiles  []Valoper
+	Unread    map[string]string
+	ListError error
 }

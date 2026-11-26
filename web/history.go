@@ -278,10 +278,10 @@ func (s *Server) historyChange(c blocks.ValsetChange) historyChange {
 		Events: historyEvents(c.Events), EventsPending: c.EventsPending,
 	}
 	for _, p := range c.Repowered {
-		out.Repowered = append(out.Repowered, historyPowerChange{Address: p.Address, Moniker: s.moniker(p.Address), Before: p.Before, After: p.After})
+		out.Repowered = append(out.Repowered, historyPowerChange{Address: p.Address, Moniker: s.Moniker(p.Address), Before: p.Before, After: p.After})
 	}
 	for _, r := range c.Rotated {
-		out.Rotated = append(out.Rotated, historyRotation{Operator: r.Operator, OldAddress: r.OldAddress, NewAddress: r.NewAddress, Moniker: s.moniker(r.NewAddress), Power: r.Power})
+		out.Rotated = append(out.Rotated, historyRotation{Operator: r.Operator, OldAddress: r.OldAddress, NewAddress: r.NewAddress, Moniker: s.Moniker(r.NewAddress), Power: r.Power})
 	}
 	return out
 }
@@ -289,7 +289,7 @@ func (s *Server) historyChange(c blocks.ValsetChange) historyChange {
 func (s *Server) changeMembers(members []blocks.Member) []historyChangeMember {
 	out := make([]historyChangeMember, 0, len(members))
 	for _, m := range members {
-		out = append(out, historyChangeMember{Address: m.Address, Moniker: s.moniker(m.Address), Power: m.Power})
+		out = append(out, historyChangeMember{Address: m.Address, Moniker: s.Moniker(m.Address), Power: m.Power})
 	}
 	return out
 }
@@ -305,8 +305,8 @@ func historyEvents(events []blocks.Event) []historyEvent {
 	return out
 }
 
-// moniker returns the name the registry knows for addr, or "".
-func (s *Server) moniker(addr string) string {
+// Moniker returns the name the registry knows for addr, or "".
+func (s *Server) Moniker(addr string) string {
 	if s.Client == nil || s.Client.Names == nil {
 		return ""
 	}

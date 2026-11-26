@@ -115,8 +115,11 @@ type validatorSummary struct {
 	FirstDay string `json:"first_day"`
 	LastDay  string `json:"last_day"`
 	signingCounts
-	Outages  int64                    `json:"outages"`
-	Recovery validatorRecoverySummary `json:"recovery"`
+	Outages        int64                    `json:"outages"`
+	Recovering     int64                    `json:"recovering"`      // heights of recovery runs: left out of uptime and of outages
+	LongestAbsence int64                    `json:"longest_absence"` // the longest run of absences, recovery runs left out
+	InSetMs        int64                    `json:"in_set_ms"`       // block time in the set
+	Recovery       validatorRecoverySummary `json:"recovery"`
 }
 
 type validatorRecoverySummary struct {
@@ -157,7 +160,7 @@ func (s *Server) validatorReport(ctx context.Context, val string, now time.Time)
 	if s.Blocks == nil || s.BlockFill == nil {
 		return validatorReport{}, http.StatusServiceUnavailable, errors.New("block history disabled")
 	}
-	if _, err := crypto.AddressFromBech32(val); err != nil {
+	if _, err := crypto.AddressFromString(val); err != nil {
 		return validatorReport{}, http.StatusBadRequest, errors.New("val must be a g1 address")
 	}
 	src := reportSources{snap: s.getSnapshot()}
@@ -262,7 +265,7 @@ func (s *Server) buildValidatorReport(ctx context.Context, val string, ref valid
 	if p, ok := src.valopers[ref.operator]; ok && ref.operator != "" {
 		rep.Profile, rep.Moniker = profileOf(p), p.Moniker
 	} else {
-		rep.Moniker = s.moniker(liveKey)
+		rep.Moniker = s.Moniker(liveKey)
 	}
 	if src.snap != nil {
 		if p, ok := peersByValAddr(src.snap.Peers)[liveKey]; ok {
@@ -326,7 +329,7 @@ func (s *Server) buildValidatorReport(ctx context.Context, val string, ref valid
 			ProposalsExpected: sm.ProposalsExpected, ProposalsMissed: sm.ProposalsMissed,
 			Votes: sm.Votes, VoteDelayMeanMs: sm.DelaySumMs / max(sm.Votes, 1),
 		},
-		Outages: sm.Outages,
+		Outages: sm.Outages, Recovering: sm.Recovering, LongestAbsence: sm.LongestAbsence, InSetMs: sm.InSetMs,
 		Recovery: validatorRecoverySummary{
 			Samples: sm.RecoverySamples, MedianMs: sm.RecoveryMedian.Milliseconds(), SlowestMs: sm.RecoverySlowest.Milliseconds(),
 		},

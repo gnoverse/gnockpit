@@ -38,31 +38,35 @@ appear for the same peer, the earlier `-rpc` in flag order wins.
 
 ## Flags
 
-| Flag                    | Default                    | Description                                                                                                                                                                                                                                           |
-| ----------------------- | -------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `-rpc`                  | `http://127.0.0.1:26657`   | Tendermint RPC endpoint; repeatable to consolidate several sources (flag order = precedence)                                                                                                                                                          |
-| `-names`                | `/tmp/gnockpit-names.json` | Persistent name registry                                                                                                                                                                                                                              |
-| `-port`                 | `8080`                     | Web server port                                                                                                                                                                                                                                       |
-| `-addr`                 | `0.0.0.0`                  | Bind address                                                                                                                                                                                                                                          |
-| `--read-header-timeout` | `10s`                      | How long a client may take to send a request's headers before gnockpit closes its connection unanswered; `0` for none, a negative value refused                                                                                                       |
-| `-interval`             | `5s`                       | Dashboard refresh interval                                                                                                                                                                                                                            |
-| `-v`                    | false                      | Verbose HTTP logging                                                                                                                                                                                                                                  |
-| `--db-path`             | `/tmp/gnockpit.db`         | SQLite database for push notifications, the block history and block-ETA history; keep it on a persistent path (see Push Notifications, Block history, Block ETA)                                                                                      |
-| `--history-pace`        | `1s`                       | Wait between the batches that fill the block history, back to genesis and up to the head after downtime; `0` for none (see Block history)                                                                                                             |
-| `--history-batch`       | `100`                      | Commits asked in one JSON-RPC batch while filling the block history; halved until restart when the first `-rpc` refuses a batch, for 10 minutes when one times out; at `1`, the backfill never completes at a node's oldest block (see Block history) |
-| `--chain-stuck-secs`    | `30`                       | Seconds without a new block before the chain-stuck alert fires                                                                                                                                                                                        |
-| `--notify-config`       | (none)                     | Notification config file (JSON): the Shoutrrr URLs and the alerts each receives, reread when it changes; see External Notifications                                                                                                                   |
-| `--send-timeout`        | `10s`                      | How long a push notification or webhook send may take before it is given up                                                                                                                                                                           |
-| `--redact-secret`       | false                      | Strip notification URL secrets from logged Shoutrrr errors; see External Notifications                                                                                                                                                                |
-| `--max-missed-in-a-row` | `10`                       | Consecutive blocks a validator must miss to be flagged down (alert fires + counted inactive); it recovers after signing that many in a row                                                                                                            |
-| `--geoip-db`            | `/tmp/gnockpit-geoip.mmdb` | DB-IP City Lite mmdb powering the network map + country columns; auto-downloaded and refreshed monthly. Empty disables it.                                                                                                                            |
-| `--asn-db`              | `/tmp/gnockpit-asn.mmdb`   | DB-IP ASN Lite mmdb powering cloud-provider detection; auto-downloaded and refreshed monthly. Empty disables it.                                                                                                                                      |
-| `--hide-sources`        | false                      | Hide the configured source nodes from the peers list                                                                                                                                                                                                  |
-| `--chain-name`          | (chain-id)                 | Display name for the chain in titles and the app icon; defaults to the chain-id (e.g. `test13` for chain-id `test-13`)                                                                                                                                |
-| `--link`                | (none)                     | Extra header link button, `"Title\|URL"`; repeatable                                                                                                                                                                                                  |
-| `--status-link`         | (none)                     | Header link with a live status dot, `"Title\|URL"`; repeatable. BetterStack status pages only: the dot reflects `<URL>/index.json`                                                                                                                    |
-| `--analytics`           | (off)                      | Load a third-party analytics script in the dashboard; only `simple-analytics` is supported. See Analytics.                                                                                                                                            |
-| `--analytics-domain`    | (none)                     | Serve the analytics script and its no-JS pixel from a custom domain (e.g. `sa.example.com`) instead of the provider's own hosts; needs `--analytics`. See Analytics.                                                                                  |
+| Flag                      | Default                    | Description                                                                                                                                                                                                                                                                                                                                                               |
+| ------------------------- | -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `-rpc`                    | `http://127.0.0.1:26657`   | Tendermint RPC endpoint; repeatable to consolidate several sources (flag order = precedence)                                                                                                                                                                                                                                                                              |
+| `-names`                  | `/tmp/gnockpit-names.json` | Persistent name registry                                                                                                                                                                                                                                                                                                                                                  |
+| `-port`                   | `8080`                     | Web server port                                                                                                                                                                                                                                                                                                                                                           |
+| `-addr`                   | `0.0.0.0`                  | Bind address                                                                                                                                                                                                                                                                                                                                                              |
+| `--read-header-timeout`   | `10s`                      | How long a client may take to send a request's headers before gnockpit closes its connection unanswered; `0` for none, a negative value refused                                                                                                                                                                                                                           |
+| `-interval`               | `5s`                       | Dashboard refresh interval                                                                                                                                                                                                                                                                                                                                                |
+| `-v`, `--verbose`         | false                      | Verbose HTTP logging: each request to the node                                                                                                                                                                                                                                                                                                                            |
+| `--db-path`               | `/tmp/gnockpit.db`         | SQLite database for push notifications, the block history, block-ETA history and the published rankings; keep it on a persistent path (see Push Notifications, Block history, Block ETA, Ranking)                                                                                                                                                                         |
+| `--history-pace`          | `1s`                       | Wait between the batches that fill the block history, back to genesis and up to the head after downtime; `0` for none (see Block history)                                                                                                                                                                                                                                 |
+| `--history-batch`         | `100`                      | Commits asked in one JSON-RPC batch while filling the block history; halved until restart when the first `-rpc` refuses a batch, for 10 minutes when one times out; at `1`, the backfill never completes at a node's oldest block (see Block history)                                                                                                                     |
+| `--chain-stuck-secs`      | `30`                       | Seconds without a new block before the chain-stuck alert fires                                                                                                                                                                                                                                                                                                            |
+| `--notify-config`         | (none)                     | Notification config file (JSON): the Shoutrrr URLs and the alerts each receives, reread when it changes; see External Notifications                                                                                                                                                                                                                                       |
+| `--send-timeout`          | `10s`                      | How long a push notification or webhook send may take before it is given up                                                                                                                                                                                                                                                                                               |
+| `--redact-secret`         | false                      | Strip notification URL secrets from logged Shoutrrr errors; see External Notifications                                                                                                                                                                                                                                                                                    |
+| `--public-url`            | (none)                     | This gnockpit's public URL, appended to each external notification; the ranking alert links `<URL>/?view=ranking`                                                                                                                                                                                                                                                         |
+| `--max-missed-in-a-row`   | `10`                       | Consecutive blocks a validator must miss to be flagged down (alert fires + counted inactive); it recovers after signing that many in a row                                                                                                                                                                                                                                |
+| `--geoip-db`              | `/tmp/gnockpit-geoip.mmdb` | DB-IP City Lite mmdb powering the network map + country columns; auto-downloaded and refreshed monthly. Empty disables it.                                                                                                                                                                                                                                                |
+| `--asn-db`                | `/tmp/gnockpit-asn.mmdb`   | DB-IP ASN Lite mmdb powering cloud-provider detection; auto-downloaded and refreshed monthly. Empty disables it.                                                                                                                                                                                                                                                          |
+| `--hide-sources`          | false                      | Hide the configured source nodes from the peers list                                                                                                                                                                                                                                                                                                                      |
+| `--chain-name`            | (chain-id)                 | Display name for the chain in titles and the app icon; defaults to the chain-id (e.g. `test13` for chain-id `test-13`)                                                                                                                                                                                                                                                    |
+| `--link`                  | (none)                     | Extra header link button, `"Title\|URL"`; repeatable                                                                                                                                                                                                                                                                                                                      |
+| `--status-link`           | (none)                     | Header link with a live status dot, `"Title\|URL"`; repeatable. BetterStack status pages only: the dot reflects `<URL>/index.json`                                                                                                                                                                                                                                        |
+| `--analytics`             | (off)                      | Load a third-party analytics script in the dashboard; only `simple-analytics` is supported. See Analytics.                                                                                                                                                                                                                                                                |
+| `--analytics-domain`      | (none)                     | Serve the analytics script and its no-JS pixel from a custom domain (e.g. `sa.example.com`) instead of the provider's own hosts; needs `--analytics`. See Analytics.                                                                                                                                                                                                      |
+| `--ranking`               | false                      | Compute and serve the daily validator ranking at `/api/ranking`, from the block history; see Ranking                                                                                                                                                                                                                                                                      |
+| `--ranking-exclude`       | (none)                     | Operators left out of the ranking's order: operator addresses as the chain writes them (lowercase, their bech32 checksum checked), comma-separated; repeatable, each occurrence adding entries; spaces around an entry are trimmed; a malformed or empty entry stops start-up. The list is published in `/api/ranking`. Needs `--ranking`: set without it, start-up stops |
+| `--ranking-hide-excluded` | false                      | Tell the ranking's readers to hide the excluded operators; `/api/ranking` lists them either way. Needs `--ranking`: set without it, start-up stops                                                                                                                                                                                                                        |
 
 ## Analytics
 
@@ -184,9 +188,32 @@ the alerts it lists. They are set in a JSON file passed with `--notify-config`:
 ```
 
 - `alerts` names each alert the target receives, at least one: `chain_stuck`,
-  `validator_missing_blocks`, `valset_changed`, `halt_scheduled` and
-  `halt_approaching` (see Push Notifications). A target receives a listed
-  alert's recovery too.
+  `validator_missing_blocks`, `valset_changed`, `halt_scheduled`,
+  `halt_approaching` (see Push Notifications) and `ranking`. A target receives
+  the recovery of `chain_stuck` and `validator_missing_blocks` too; the
+  others, `ranking` included, are one-off events with none.
+- `ranking` is sent once a day, after the day's ranking is published (needs
+  `--ranking`; see Ranking), once per target and day: a restart sends nothing
+  again. After a restart, today's day, once stored, is served as stored when
+  its formula and exclusion list match; with another list or formula,
+  today's ranking is computed again and replaces it, with no second alert that
+  day. It is for targets only: a
+  browser device refuses it (400 `unknown alert "ranking"`), and it takes no
+  options. The message holds:
+    - the title: the ranking's window and formula version;
+    - one line per ranked operator: its rank (operators sharing a rank repeat
+      the number), name (its short address without one), score to one
+      decimal, rounded down as the Ranking view writes it, and change since
+      the previous published ranking: `▲n` or `▼n` places, `=`, or `new` for
+      an operator not ranked in it;
+    - `Not ranked yet: <n>` when n is above 0; excluded operators are neither
+      listed nor counted;
+    - `Rank changes not shown: <reason>` instead of the changes, when there is
+      no earlier ranking (`no earlier ranking`), the formula version differs
+      (`formula v<N> since the previous ranking`) or the exclusion list differs
+      (`exclusion list changed since the previous ranking`);
+    - with `--public-url`, a last line linking the ranking view:
+      `--public-url` followed by `/?view=ranking`.
 - `halt_approaching` needs a lead: whole minutes (`"30m"`, `"1h"`, `"1h30m"`)
   or blocks (`"1 block"`, `"100 blocks"`; `"1 blocks"` reads too).
 - `halt_scheduled` and `halt_approaching` are sent once per target and halt. A
@@ -203,6 +230,23 @@ the alerts it lists. They are set in a JSON file passed with `--notify-config`:
 - A send that takes longer than `--send-timeout` (10 s by default) is given up
   and logged, for webhooks and browser pushes alike.
 - The file holds the webhooks' secrets: keep it readable by gnockpit only.
+- A message's text has a zero-width space after each `@` and `<`, its link
+  aside: a name a peer, the genesis or a profile gives, such as `@everyone`,
+  `<@id>` or `<!channel>`, mentions no one.
+
+The `ranking` message holds at most 2,000 characters (Unicode code points, the
+zero-width spaces counted), so a longer ranking goes as several messages, split
+at line breaks. For example:
+
+```text
+🔔 gnoland-1 — Validator ranking, 2026-10-27 – 2026-11-25 UTC (formula v1)
+#1 Alice 99.0 ▲1
+#1 Bob 99.0 =
+#3 Carol 97.5 ▼2
+#4 Dave 90.0 new
+Not ranked yet: 2
+https://gnockpit.example.com/?view=ranking
+```
 
 A failed send is logged with Shoutrrr's error, which can hold the URL's secrets: a network failure quotes the service's request URL (Discord: `https://discord.com/api/webhooks/<id>/<token>`), and some services echo a malformed token. `--redact-secret` strips them before they are logged or returned. Each target's URL becomes `<scheme>:<fingerprint>`, as in `/api/notify/targets` (which also lists each target's alerts), and every other URL keeps only its scheme. Every piece of 6+ characters of a target's URL becomes `[redacted]` wherever it appears. That also blanks the URL's hostnames in DNS errors, and any word that matches a piece, e.g. `telegram` in `invalid [redacted] token`. It is off by default, which keeps errors verbatim.
 
@@ -285,36 +329,39 @@ about 100 bytes a block on onyx (56 validators): about 130 MB for 1.25M blocks.
   nil as signed; the validators card's **Timeline** (beside **Live**): every
   validator set change, newest first, with who joined, left, changed power or
   rotated its key, read back to genesis as the history fills; the set-change
-  alerts; the [validator page](#validator-page); and
-  [`/api/history`](#apihistory). While the history fills,
+  alerts; the [validator page](#validator-page); the ranking (see
+  [Ranking](#ranking)); and [`/api/history`](#apihistory). While the history fills,
   Network State's header shows how much is filled and, once the server has
   measured the fill rate, the time left.
 
 ## Validator page
 
-A click on a validator's name (the validators card's Live or Timeline view, or
-a phone card) opens its page over the dashboard; `/?val=<operator or signing
-address>` opens it directly. Back, Esc, × or the backdrop close it, and
+A click on a validator's name (the validators card's Live, Timeline or Ranking
+view, or a phone card) opens its page over the dashboard; `/?val=<operator or
+signing address>` opens it directly. Back, Esc, × or the backdrop close it, and
 **⧉ link** copies its link, which names the operator once gnockpit knows it.
 The page reads [`/api/validator`](#apivalidator).
 
-| Section    | What                                                                                                                                                                                                         | Source                                                                                   | Scored                                                                                           |
-| ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
-| Status     | in the set since (a key rotation is no break once its events are read) or not in it since, "since before" the history's first day when its join is older; power and share; country, with its flag · provider | the node's current set; the block history's set changes for since; its matched peer      | no                                                                                               |
-| Profile    | description (its markdown rendered, links opening in a new tab), server type, operator, signing address and key, keep running, last rotation                                                                 | the valopers realm, read every 15 min; keep running and last rotation through `vm/qeval` | no                                                                                               |
-| Uptime     | per UTC day, of the blocks it was in the set for: signed (a nil vote signs), absent, other block; outages (10+ in a row absent or for another block, recovery runs left out)                                 | every block's commit                                                                     | signed ÷ blocks in the set (50 %) and outages (20 %), over the 30 complete UTC days before today |
-| Proposals  | per UTC day: the rounds it was the expected proposer of until the block was made, and those it missed                                                                                                        | block headers and each round's expected proposer                                         | missed ÷ expected (10 %), over the same window                                                   |
-| Recovery   | after a restart, how long it took to sign again; a sample only when it was in the set and signing before, and signs again; one still absent shows as pending                                                 | restarts and absences                                                                    | the median of its last 3 samples within the 180 complete UTC days before today (20 %)            |
-| Vote delay | its precommits' delay from each commit's voting-power-weighted median time                                                                                                                                   | the daily vote-delay histograms; the live window for the last 100 blocks                 | no                                                                                               |
-| Timeline   | joins, leaves, power changes, key rotations, outages, recoveries and a pending one, newest first                                                                                                             | set changes and their events, absences, restarts                                         | its outages and recoveries                                                                       |
+| Section    | What                                                                                                                                                                                                         | Source                                                                                   | Scored                                                                                                                            |
+| ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| Status     | in the set since (a key rotation is no break once its events are read) or not in it since, "since before" the history's first day when its join is older; power and share; country, with its flag · provider | the node's current set; the block history's set changes for since; its matched peer      | no                                                                                                                                |
+| Profile    | description (its markdown rendered, links opening in a new tab), server type, operator, signing address and key, keep running, last rotation                                                                 | the valopers realm, read every 15 min; keep running and last rotation through `vm/qeval` | no                                                                                                                                |
+| Uptime     | per UTC day, of the blocks it was in the set for: signed (a nil vote signs), absent, other block; outages (10+ in a row absent or for another block, recovery runs left out)                                 | every block's commit                                                                     | signed ÷ blocks in the set, recovery runs left out of both (50 %), and outages (20 %), over the 30 complete UTC days before today |
+| Proposals  | per UTC day: the rounds it was the expected proposer of until the block was made, and those it missed                                                                                                        | block headers and each round's expected proposer                                         | missed ÷ expected on the heights it signed, restart heights left out (10 %), over the same window                                 |
+| Recovery   | after a restart, how long it took to sign again; a sample only when it was in the set and signing before, and signs again; one still absent shows as pending                                                 | restarts and absences                                                                    | the median of its last 3 samples within the 180 complete UTC days before today (20 %)                                             |
+| Vote delay | its precommits' delay from each commit's voting-power-weighted median time                                                                                                                                   | the daily vote-delay histograms; the live window for the last 100 blocks                 | no                                                                                                                                |
+| Timeline   | joins, leaves, power changes, key rotations, outages, recoveries and a pending one, newest first                                                                                                             | set changes and their events, absences, restarts                                         | its outages and recoveries                                                                                                        |
 
-**Scored** is the rule and weight the validator scoring gives a datum. Outages
-leave recovery runs out, as the scoring does; the other figures count every
-height, the scoring's other filters (recovery runs out of uptime, proposals on
-signed heights only, restart heights out) left to it. A scored
-value is green where its sub-score is full, orange partial, red zero: signed
+**Scored** is the rule and weight the validator scoring gives a datum. The
+scored figures apply the scoring's filters: uptime and outages leave recovery
+runs out, and proposals count only the heights it signed, restart heights left
+out; the daily charts count every height. A scored value is green where its sub-score is full, orange partial, red zero: signed
 ≥ 99.9 / 95 to 99.9 / ≤ 95 %; outages 0 / 1 to 9 / 10 or more; proposals missed
 none / under 5 % / 5 % or more; recovery ≤ 10 min / 10 min to 24 h / ≥ 24 h.
+The band reads the value, as the Ranking view colours it, and the figure is
+never written better than the value: signed rounded down (99.895 % reads
+99.89 %, orange), the missed share and the recovery up (600.4 s reads
+10 min 01 s, orange).
 
 On a wide screen the charts share one day axis (at least 8 px a day), scroll
 together and open on the newest day; on a phone, Uptime and Proposals are
@@ -324,7 +371,212 @@ Every tooltip in gnockpit is one popover, in two forms: text (the column headers
 every ⓘ and the buttons' hints) and rows (a title, then label / value rows, with a colour swatch
 where a colour means something), for the Recent Blocks boxes, the address and
 node ID cells, the peer RPC ✓, the provider's IP, the map's dots, the Missed last
-100 split and every chart. Hover on a desktop, tap on a phone.
+100 split, every chart and the Ranking view's values. Hover on a desktop, tap on a phone.
+
+## Ranking
+
+gnockpit ranks the community validator operators once per UTC day by a fixed
+formula, from chain data only, so that anyone with the chain's blocks can
+recompute every rank. `/api/ranking` serves each operator's raw inputs beside
+its sub-scores, with the window and the formula version.
+
+### What the ranking reads
+
+- **Chain data only,** read over a node's RPC: each block's header (time,
+  proposer, round) and commit, the validator sets with their proposer
+  priorities (`/validators?height=`), the set-change events in block results
+  (`ValidatorAdded`, `ValidatorRemoved`, `ValoperRotated`) and the valoper
+  profiles. Nothing from the tx-indexer, no vote timestamps, no arrival times.
+- **Operators, not keys:** an operator's profile and the set-change events link
+  its signing keys to it (a rotation applied at height H gives the blocks up to
+  H+1 to the old key, from H+2 to the new one). A key no chain record links is
+  ranked alone, under its signing address, never linked by moniker. The
+  ranking waits until a refresh reads the valopers realm's whole list and
+  every operator it lists has a profile, read then or by an earlier refresh:
+  gnockpit reads them every 15 minutes, an operator whose read fails keeping
+  its last profile, and logs the operators it could not read. A profile that
+  never reads, or a list that never reads whole, holds the ranking.
+- **Per block, per member of its set:** signed when its precommit in the commit
+  is for the block or for nil; absent when its slot is empty or its precommit
+  is for another block.
+- **Window:** the 30 complete UTC days before the day ranked, a block belonging
+  to the UTC day of its header time. Every block weighs the same; voting power
+  plays no part.
+- **As of the window's end:** the ranking reads each operator's blocks up to
+  the window's last height, and the time of the next block, the day ranked's
+  first, which times that height. A recovery not ended within the window is pending: it
+  gives no sample, and its run still counts as a recovery run. A run of
+  absences going on at the window's end ends there. Keys are linked to
+  operators by the valoper profiles, read as the ranking is computed, and
+  every stored set-change event: the published keys may list a key rotated
+  in after the window, which adds nothing to a score. So two gnockpits publish
+  the same ranks and scores, unless a valoper profile or a key link changed
+  between their computations; an operator without a profile is named by the
+  moniker each gnockpit knows its node by.
+- **Minimum:** an operator is ranked once its block time in the set within the
+  window reaches 168 hours: the sum, over its heights in the set, of each
+  one's time to the next block. Until then it is not ranked yet.
+- **Restarts:** two consecutive blocks b and b+1 whose header times are more
+  than 2 minutes apart; b is the restart height.
+- **Recovery samples,** at each restart, for an operator in the set at b−1 and
+  b: h is the first height from b it signed, and the sample is
+  time(block h+1) − time(block b+1), 0 when it signed height b itself, the
+  height decided across the restart. It gets none when its run of absences up
+  to h−1 held 10 heights or more up to b−1: it was already in an outage. That
+  run, its recovery run, leaves uptime and outages for up to 24 hours of block
+  time after block b+1; past that, the rest counts as absences and as an
+  outage. The recovery sub-score takes the last 3 samples within the 180
+  complete UTC days before the day ranked, whatever the window.
+- **Proposals,** at each height h committed at round r: the expected proposer
+  of each round 0 to r is recomputed from the proposer priorities.
+  `/validators?height=h` returns the set after round 0's proposer was chosen
+  and charged, so round 0's proposer is the member charged between the sets at
+  h−1 and h, and round r ≥ 1's is the proposer after r increments of the set
+  at h. k is the earliest of those rounds whose proposer is the header's
+  `proposer_address`. An operator is expected at the rounds 0 to k it was the
+  proposer of, and missed those before k. Only the heights it signed count (a
+  precommit for another block does not), and restart heights b never do.
+- **Proposals self-check:** a block of the window with no such k, or whose
+  round 0 proposer cannot be recomputed, disables the proposals sub-score for
+  every operator; the ranking lists those heights.
+
+### Sub-scores and score
+
+Each sub-score runs from 0 to 1, linear between the anchors of its mapping and
+flat past either end:
+
+| Sub-score | Weight | Raw value                                                                                                                                                                   | Mapping                                          |
+| --------- | ------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------ |
+| Uptime    | 50     | signed ÷ blocks in the set, the recovery runs' heights left out of both                                                                                                     | ≤ 95 % → 0, ≥ 99.9 % → 1                         |
+| Outages   | 20     | runs of 10 or more consecutive absences, recovery runs left out; a run open at the window's start is clipped to the window, and counts once 10 of its heights are inside it | 0 → 1, ≥ 10 → 0                                  |
+| Recovery  | 20     | the median of the recovery samples (of two, their mean), to the ms, truncated                                                                                               | ≤ 10 min → 1, 1 h → 0.66, 6 h → 0.33, ≥ 24 h → 0 |
+| Proposals | 10     | missed ÷ expected proposals                                                                                                                                                 | 0 % → 1, ≥ 5 % → 0                               |
+
+The score is the sum of each sub-score times its weight, 100 for full marks,
+shown to one decimal. A sub-score without data passes its weight to the others
+in proportion to theirs: no counted block for uptime (all its blocks in
+recovery runs), no recovery sample, no proposal expected, or proposals disabled
+by the self-check. Without a recovery sample, the weights are 62.5,
+25 and 12.5.
+
+### Order and shared ranks
+
+Five keys order the ranked operators, each deciding only between operators
+equal on the keys preceding it:
+
+1. the score, unrounded, higher first;
+2. the raw uptime, higher first;
+3. the longest absence, shorter first: the longest run of absences, in blocks,
+   clipped to the window, recovery runs left out, runs under 10 blocks
+   included;
+4. the median recovery time, shorter first, an operator without a sample after
+   every operator with one;
+5. the missed-proposal share, lower first, 0 with no proposal expected; left
+   out while the self-check disables proposals, since counts it cannot trust
+   decide no order either.
+
+The score, the uptime and the missed share compare exactly, as fractions of
+the counts (the mappings' anchors are decimals), never as rounded percentages
+or floating-point sums. Operators equal on all five keys (on the first four
+while proposals are disabled) share a rank, and the next rank skips
+accordingly (1, 1, 3). The operator address, in byte order, only orders the
+listing within a shared rank.
+
+### Who is ranked
+
+- **The set:** only the operators in the validator set at the window's last
+  height. One that left the set earlier is not ranked, whatever its hours in
+  it; its record stays on its validator page.
+- **Exclusions:** the deployment's exclusion list names operators left out of
+  the order, the gno.land team's and close partners' validators, so that only
+  community validators are ranked. The excluded are scored the same way and
+  published with their values and no rank.
+- **Listing:** the ranked operators in order, then the excluded by score, then
+  those not ranked yet by hours in the set, longest first.
+- Two gnockpits reading the same chain, with the same exclusion list, publish
+  the same ranks and scores, unless a valoper profile or a key link changed
+  between their computations.
+
+### Formula version
+
+Every constant of the formula is fixed in code, never a flag: the weights, the
+mappings, the 168 hours, the 10-block outage, the 2-minute restart, the
+24-hour recovery cap, the 30-day window, the 180 days and 3 samples of
+recovery. `ranking.FormulaVersion` (1) names them: a change to any of them
+bumps it, and each published ranking carries the version it was computed with.
+
+### Recomputing a rank
+
+`/api/ranking` serves the published ranking: its window (first and last UTC
+day and height), its formula version, its exclusion list (`exclusions`), the
+heights that disabled the proposals sub-score, and per operator its raw inputs (blocks in the set and in recovery
+runs; signed, nil, absent and other-block counts; each outage; the longest
+absence; each recovery sample and their median; proposals expected and missed)
+beside its sub-scores, weights and points. The formula turns those inputs into
+every score and rank, and a node's RPC serves the blocks, their results, the
+validator sets and the valoper profiles (`/abci_query`) to recount the inputs
+themselves.
+
+### Ranking view
+
+With `--ranking`, the validators card offers a third view, **Ranking**, beside
+**Live** and **Timeline**. The dashboard learns from `/api/boot` whether the
+ranking is on, so the card opens on a saved or requested Ranking view once the
+first answer says it is. `/?view=ranking` opens the dashboard on it, as `?view=live`
+and `?view=timeline` open the others, over the view the browser saved; a
+`?view=` is never saved; a click on the switch saves its view and takes
+`?view=` out of the address, so a reload opens the view clicked. On a server without `--ranking`, `?view=ranking` opens Live. The view
+reads `/api/ranking` when it shows, then every minute:
+
+- on the meta line, the ranking's window, heights and formula version, that
+  it is updated daily after 00:00 UTC (as soon as the day's first block is stored),
+  and **How is this ranked?**, which opens a dialog on how anyone can recompute
+  the ranking (its data, formula, window and exclusion list, with the `curl`
+  line reading `/api/ranking` from the dashboard's own address), what it
+  measures and how it breaks ties, why that is fair, what it does not score,
+  and its calibration;
+- a row per operator, a card on a screen up to 768 px wide: its rank, repeated
+  for operators sharing it; its name, a click on which opens its validator
+  page; its score, to one decimal; then its uptime, to 2 decimals, outages,
+  recovery median, rounded up to the unit it is written in (the second under
+  an hour, the minute to 48 h, the hour beyond), and missed proposals
+  (missed / expected),
+  each in its sub-score's colour (green full marks, orange partial, red zero)
+  followed by its points, to one decimal, or `—` without a sub-score, whose
+  weight the others share. No figure is written better than its value: the
+  score, the uptime and the points are rounded down (99.96 reads 99.9,
+  99.895 % reads 99.89 %), the recovery median up (600.4 s reads
+  10 min 01 s), and the points read their weight (to one decimal, a tie
+  rounded up) only at full marks;
+- the excluded operators in a separate group headed by a note, with their
+  values and no rank; with `--ranking-hide-excluded`, only their count, on the
+  meta line;
+- the operators not ranked yet, last, with their hours in the set out of the
+  168 needed.
+
+Every metric's header has a popover saying what it counts, its mapping and its
+weight; the rank's gives the order and its ties, the name's how keys link to
+operators, the score's the weights. On a phone, a card's rank and its values'
+labels carry their columns' popovers. Every value has one going from the
+chain's counts that `/api/ranking` publishes to its sub-score and its points,
+rounded as the cells are, never better than the value (an uptime, a sub-score
+to 3 decimals, points and a score down; a missed share and a recovery time up;
+a weight to one decimal, a tie rounded up), and says why a value without a
+sub-score has none.
+A score's lists its four parts and the operators sharing its rank; the hidden
+count's names the operators hidden; a not-ranked-yet operator's gives about the
+day it would be ranked from if it stays in the set.
+
+A line takes the place of the list when it is empty: every operator excluded
+and hidden, or no block in the window. While the block history lacks what the
+ranking needs, the view says how much of the chain is stored and, once the
+fill rate is measured, at most how long the rest takes (counted to genesis),
+or, once the blocks are stored, that it is reading the validator set's
+changes; on a node that keeps no block back to the recovery span's start, the
+lowest height it keeps; with the history ready and no ranking published yet,
+that it is being computed. A read that fails or gets no answer within 10 s
+says so in a line of its own, the ranking shown kept, and the next read tries
+again.
 
 ## Block ETA
 
@@ -375,6 +627,7 @@ CORS-open SVG image.
 | `/api/eta`       | Block ETAs: when a height is expected, which height a time reaches, or the scheduled halt; see [`/api/eta`](#apieta).                                                                                                |
 | `/api/history`   | The block history: how far back it reaches, the blocks of a range of heights with the validators that did not sign each for it, daily vote delays, and the validator set changes; see [`/api/history`](#apihistory). |
 | `/api/validator` | One validator's page data: status, keys, profile, timeline, daily series, recoveries, scoring-window summary and live figures; see [`/api/validator`](#apivalidator).                                                |
+| `/api/ranking`   | The daily validator ranking: its state, and the latest day published with every operator's inputs, sub-scores and rank; 404 while `--ranking` is off; see [`/api/ranking`](#apiranking).                             |
 | `/ws`            | The dashboard's live feed (unstable shape, following the dashboard): a WebSocket of JSON messages, open to any origin; see [`/ws`](#ws).                                                                             |
 | `/api`           | Raw internal snapshot dump (unstable shape; for debugging).                                                                                                                                                          |
 | `/badge.svg`     | SVG status badge.                                                                                                                                                                                                    |
@@ -484,25 +737,76 @@ it; a key none of those link, but a stored or the current set holds, is answered
 alone, with `operator` empty. The operator's keys are taken together. Times are
 RFC 3339 UTC to the millisecond, days `YYYY-MM-DD`.
 
-| Field                                            | Content                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
-| ------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `chain`, `now`, `address`, `operator`, `moniker` | `now` is the server's time the report is as of: the `summary` and `recoveries[]` windows end before its UTC day, while `days[]` includes that day's row when it has one. `address` is the one asked.                                                                                                                                                                                                                                                                                                                                                                             |
-| `status`                                         | `in_set`; `since_height` and `since_time`: in the set, its latest join with no leave after (a key rotation is none), out of it, its latest leave; in the set with no join or leave stored, the stored history's first block with `since_before` true (it joined before); left out while the stored history contradicts the current set; `signing_address`, its key in the set; `power` and `share` of the set's total power, each null while unknown: `power` while its own reads as no number, `share` while any member's does. Left out until the node's current set is known. |
-| `keys[]`                                         | Its signing keys: `address`, `from` (0: before the stored history) and `to` (left out: still its key). From the set events (a power change keeps a key's span), with the profile's signing key when no event names it; an unlinked key alone.                                                                                                                                                                                                                                                                                                                                    |
-| `location`                                       | Its matched peer's `country`, `city` and `provider`; left out without one.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
-| `profile`                                        | Its valopers profile: `moniker`, `description`, `server_type`, `operator`, `signing_address`, `signing_pubkey`, and `keep_running` and `last_rotation_height` when the node answered `vm/qeval`. Left out without a profile.                                                                                                                                                                                                                                                                                                                                                     |
-| `timeline[]`                                     | Newest first, each with `kind`, `height`, `time` and its kind's fields: `recovered` (`restart_height`, `duration_ms`; `height` is the first height signed again), `recovering` (`restart_height`, at the restart: not signed since), `outage` (`to`, `blocks`, `end_time`, `ongoing`), `power` (`before`, `after`), `rotated` (`old_address`, `new_address`), `joined`, `left` and `genesis` (`power`). A rotation reads as a `left` and a `joined` until its events are read.                                                                                                   |
-| `vote_delay_edges_ms`                            | The vote-delay buckets' edges, as in `/api/history`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
-| `days[]`                                         | Each UTC day with a row, ascending: `day`, `in_set`, `signed`, `absent`, `nil`, `other_block`, `proposals_expected`, `proposals_missed`, `votes`, `vote_delay_mean_ms` and `vote_delay_buckets`.                                                                                                                                                                                                                                                                                                                                                                                 |
-| `recoveries[]`                                   | Its samples, ascending: a restart it was in the set and signing before, with fewer than 10 absences up to it. `restart_height` (b: block b+1 came over 2 minutes after block b), `restart_time` (block b+1's), `signed_at`, `duration_ms`, `pending` (block `signed_at`+1, which times it, is not stored yet; `signed_at` and `duration_ms` are 0) and `scored` (one of the last 3 of the 180 complete UTC days before today).                                                                                                                                                   |
-| `summary`                                        | Over the 30 complete UTC days before today (`first_day`, `last_day`): `in_set` to `votes` summed over the days, `vote_delay_mean_ms` their mean, and `outages` (one counts once 10 of its heights are inside); `recovery`: the `samples` within the 180 complete UTC days before today, `median_ms` of the last 3 and `slowest_ms` of all.                                                                                                                                                                                                                                       |
-| `live`                                           | The validators table's: `vote_delay_ms` (null without one), `missed_100`, `nil_100`, `other_block_100`, `missed_24h`, `missed_proposals_24h` and `expected_proposals_24h`.                                                                                                                                                                                                                                                                                                                                                                                                       |
+| Field                                            | Content                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| ------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `chain`, `now`, `address`, `operator`, `moniker` | `now` is the server's time the report is as of: the `summary` and `recoveries[]` windows end before its UTC day, while `days[]` includes that day's row when it has one. `address` is the one asked.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| `status`                                         | `in_set`; `since_height` and `since_time`: in the set, its latest join with no leave after (a key rotation is none), out of it, its latest leave; in the set with no join or leave stored, the stored history's first block with `since_before` true (it joined before); left out while the stored history contradicts the current set; `signing_address`, its key in the set; `power` and `share` of the set's total power, each null while unknown: `power` while its own reads as no number, `share` while any member's does. Left out until the node's current set is known.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| `keys[]`                                         | Its signing keys: `address`, `from` (0: before the stored history) and `to` (left out: still its key). From the set events (a power change keeps a key's span), with the profile's signing key when no event names it; an unlinked key alone.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| `location`                                       | Its matched peer's `country`, `city` and `provider`; left out without one.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| `profile`                                        | Its valopers profile: `moniker`, `description`, `server_type`, `operator`, `signing_address`, `signing_pubkey`, and `keep_running` and `last_rotation_height` when the node answered `vm/qeval`. Left out without a profile.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| `timeline[]`                                     | Newest first, each with `kind`, `height`, `time` and its kind's fields: `recovered` (`restart_height`, `duration_ms`; `height` is the first height signed again), `recovering` (`restart_height`, at the restart: not signed since), `outage` (`to`, `blocks`, `end_time`, `ongoing`), `power` (`before`, `after`), `rotated` (`old_address`, `new_address`), `joined`, `left` and `genesis` (`power`). A rotation reads as a `left` and a `joined` until its events are read.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| `vote_delay_edges_ms`                            | The vote-delay buckets' edges, as in `/api/history`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| `days[]`                                         | Each UTC day with a row, ascending: `day`, `in_set`, `signed`, `absent`, `nil`, `other_block`, `proposals_expected`, `proposals_missed`, `votes`, `vote_delay_mean_ms` and `vote_delay_buckets`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| `recoveries[]`                                   | Its samples, ascending: a restart it was in the set and signing before, with fewer than 10 absences up to it. `restart_height` (b: block b+1 came over 2 minutes after block b), `restart_time` (block b+1's), `signed_at`, `duration_ms`, `pending` (block `signed_at`+1, which times it, is not stored yet; `signed_at` and `duration_ms` are 0) and `scored` (one of the last 3 of the 180 complete UTC days before today).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| `summary`                                        | Over the 30 complete UTC days before today (`first_day`, `last_day`): `in_set`, `signed`, `absent`, `nil`, `other_block` and `votes` summed over the days, `vote_delay_mean_ms` their mean, and `outages` (one counts once 10 of its heights are inside, recovery runs left out). `recovering` is the heights inside the window that belong to recovery runs (up to 24 h of block time after a restart's block b+1, decided per validator across its keys); uptime is `signed` ÷ (`in_set` − `recovering`). `longest_absence` is the longest run of absences inside the window, in heights, recovery runs left out, runs under 10 included. `in_set_ms` is the milliseconds of block time in the set over the window, 0 when the validator has no stored key or block in it. `proposals_expected` and `proposals_missed` count only the heights the validator signed, restart heights b left out, where each day's in `days[]` counts every height. `recovery`: the `samples` within the 180 complete UTC days before today, `median_ms` of the last 3 and `slowest_ms` of all. |
+| `live`                                           | The validators table's: `vote_delay_ms` (null without one), `missed_100`, `nil_100`, `other_block_100`, `missed_24h`, `missed_proposals_24h` and `expected_proposals_24h`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
 
 Errors come as `{"error": "…"}`: 400 when `val` is not a g1 address, 404 for
 one gnockpit knows nothing of, 500 when the database read fails.
 
 ```bash
 curl -s 'http://localhost:8080/api/validator?val=g1u7g4cejjqsm44nha34hzpzu6df6a7egc9rpqw5'
+```
+
+### `/api/ranking`
+
+`GET` only: any other method gets 405. With `--ranking` off the route answers
+404 `{"error": "ranking disabled"}`. Otherwise it answers 200 with the ranking's
+state and the latest day published. Times are RFC 3339 UTC. The formula and
+the ranking's rules are in [Ranking](#ranking).
+
+| Field           | Content                                                                                                                                                                                                                                                                                          |
+| --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `state`         | The ranking's readiness: `kind` is `filling` while the block history lacks what the ranking needs, `ready` once it holds it, `unavailable` when the node serves no block back to the start of the recovery span: the 180 complete UTC days before today, back to genesis on a younger chain.     |
+| `hide_excluded` | `--ranking-hide-excluded`: whether readers should hide the excluded operators. The excluded are in `ranking` either way.                                                                                                                                                                         |
+| `ranking`       | The latest day published for the chain, `null` until one is: a `ready` state can still have no day, while the valoper profiles are not whole (the last refresh missed a list page, or a listed operator has no profile read), the chain id is unknown, or today's first block is not stored yet. |
+
+The `state` always carries `kind`, `stored_share`, `left_s` and
+`events_pending`: 0, 0 and false outside `filling`. `floor` and `floor_time`
+are left out unless `unavailable`. While `filling`, `stored_share` is the
+stored heights' share of the chain's whole history (0 to 1), `left_s` the
+seconds the fill needs to reach genesis at its rate, rounded up to whole
+seconds (0 when unknown), and `events_pending` is true when the recovery span's
+blocks (the 180 complete UTC days before today, back to genesis on a younger
+chain) are stored and the events of a validator set change in it are not read
+yet. While `unavailable`, `floor` is the lowest height the node serves and
+`floor_time` its block's time.
+
+The `ranking` holds:
+
+| Field                                                  | Content                                                                                                                                              |
+| ------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `chain`, `day`                                         | The chain id and the UTC day (`YYYY-MM-DD`) the ranking is published for.                                                                            |
+| `computed_at`                                          | When the ranking was computed.                                                                                                                       |
+| `exclusions`                                           | The operator addresses of `--ranking-exclude`, sorted, each once, whether or not the validator set holds them.                                       |
+| `formula`                                              | The formula version the ranking was computed with.                                                                                                   |
+| `first_day`, `last_day`, `first_height`, `last_height` | The scoring window: its first and last UTC day, and its first and last block height.                                                                 |
+| `proposals_disabled`                                   | The heights of the window whose proposals cannot be checked; one disables the proposals sub-score.                                                   |
+| `entries`                                              | The operators in the validator set at `last_height`: the ranked in order, then the excluded by score, then those not ranked yet by hours in the set. |
+
+Each entry holds:
+
+| Field                                        | Content                                                                                                                                                                                                                                                                                                                                                                                           |
+| -------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `operator`, `name`, `keys`                   | The operator address, or the signing address of a key no chain record links; its moniker; and its signing keys.                                                                                                                                                                                                                                                                                   |
+| `status`                                     | `ranked`, `excluded` (scored, left out of the order) or `not_ranked_yet` (under 168 hours of block time in the set within the window).                                                                                                                                                                                                                                                            |
+| `rank`                                       | The rank, 0 unless `ranked`; `tied_with` lists the operators sharing it.                                                                                                                                                                                                                                                                                                                          |
+| `hours_in_set`, `score`                      | The block time in the set within the window, in hours, and the score, unrounded.                                                                                                                                                                                                                                                                                                                  |
+| `uptime`, `outages`, `recovery`, `proposals` | The sub-scores, each with `sub` (0 to 1, `null` without data), `weight` (after redistribution; 0 when `sub` is `null`) and `points`.                                                                                                                                                                                                                                                              |
+| `inputs`                                     | The raw figures: `in_set`, `recovering`, `signed`, `nil`, `absent` (empty slots) and `other_block` (precommits for another block), both absences, `outages` (each run with `first`, `last`, `first_time` and `end_time`), `longest_absence`, `recovery` (each sample with `restart_height`, `restart_time` and `duration_ms`), `recovery_median_ms`, `proposals_expected` and `proposals_missed`. |
+
+```bash
+curl -s http://localhost:8080/api/ranking
 ```
 
 ### `/ws`
@@ -530,9 +834,10 @@ polled its sources, then an `update` at each refresh (`-interval`). Both are
 - Network map — IP-geolocated peers, per-country list, Country + cloud-Provider columns
 - Signing stats — per-validator blocks missed in the last 100 (absent or other block; nil votes shown apart, counted as signed), vote delay, proposals missed in the last 24 h, and missed-block counts over 1h/24h/7d/30d/total
 - Validator page — a validator's status, valopers profile, uptime, proposals, recoveries after restarts, vote delay and timeline, with what the scoring counts (`/api/validator`)
+- Validator ranking — the community validator operators ranked once a day by a fixed formula anyone can recompute from chain data, shown as the validators card's Ranking view (`--ranking`, `/api/ranking`)
 - Block ETA — when a height will be produced (or which height at a given time), with 80%/95% ranges and drift from the original estimate; countdown cards for shared links and for the halt scheduled on chain
-- HTTP API — CORS-open `/api/status`, `/api/stats`, `/api/eta`, `/api/history` and `/api/validator` for external badges, dashboards and scripts
-- Alerts — browser push (PWA) and external notifications (Discord, Telegram, …, each webhook its own alerts) for chain-stuck, missed blocks, validator set changes and coordinated halts, and a per-device reminder before an ETA card's height
+- HTTP API — CORS-open `/api/status`, `/api/stats`, `/api/eta`, `/api/history`, `/api/validator` and `/api/ranking` for external badges, dashboards and scripts
+- Alerts — browser push (PWA) and external notifications (Discord, Telegram, …, each webhook its own alerts) for chain-stuck, missed blocks, validator set changes and coordinated halts, a per-device reminder before an ETA card's height, and a daily validator ranking for webhooks (`ranking`)
 - Recent blocks — the last 100 blocks with signing visualization
 - Block history — every block since genesis: proposer, round, the validators that did not sign it for the block and how, vote delays, expected round proposers and validator set changes, shown as a timeline (`/api/history`)
 

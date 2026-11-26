@@ -1,7 +1,8 @@
 // A validator's page opens in a modal over the dashboard, from a
-// click on its name (validators table, phone card, Timeline view)
-// or from ?val= in the URL, and reads /api/validator. Opening
-// pushes ?val=, so Back closes it; closing restores the URL.
+// click on its name (validators table, phone card, Timeline or
+// Ranking view) or from ?val= in the URL, and reads
+// /api/validator. Opening pushes ?val=, so Back closes it; closing
+// restores the URL.
 
 /** @import { TimelineEntry, ValidatorDay, ValidatorRecovery, ValidatorReport } from '../types/validator.js' */
 /** @import { Band } from './format.js' */
@@ -12,10 +13,13 @@ import { countryFlag, countryName } from './countries.js'
 import { $, clearChildren, mkEl, mkLink, SVG_NS } from './dom.js'
 import { focusable, keepFocusIn } from './focus.js'
 import {
+    durationText,
+    durationUpText,
+    pctDown,
+    pctUp,
     scoreBand,
     thousands,
     timeAgo,
-    twoDigits,
     utcMinute,
     voteDelayText,
 } from './format.js'
@@ -89,61 +93,35 @@ export function start() {
     let openerAt = 0 // its place among the shown links to its validator
 
     // ---- Formats
-    // dur writes a duration: seconds kept under an hour, days from
-    // 48 h.
-    /**
-     * @param {number} ms
-     * @returns {string}
-     */
-    function dur(ms) {
-        const s = Math.round(ms / 1000)
-        if (s < 60) return s + ' s'
-        if (s < 3600)
-            return Math.floor(s / 60) + ' min ' + twoDigits(s % 60) + ' s'
-        const h = Math.floor(s / 3600)
-        if (h >= 48) return Math.round(h / 24) + ' d'
-        return h + ' h ' + twoDigits(Math.floor((s % 3600) / 60)) + ' min'
-    }
-    // shownPct is n of total as a percentage rounded to digits
-    // decimals from the exact counts, a tie rounding up: the
-    // figure the page writes and its band reads, so 99.895 % is
-    // written 99.90 % and banded as 99.90 %.
-    /**
-     * @param {number} n
-     * @param {number} total
-     * @param {number} digits
-     * @returns {number}
-     */
-    function shownPct(n, total, digits) {
-        const scale = 10 ** digits
-        return Math.round((n * 100 * scale) / total) / scale
-    }
-    // missedShare writes missed of expected proposals as a share
-    // to the tenth, with its band. A miss is never none missed:
-    // one whose share rounds to 0.0 % reads < 0.1 % and takes
-    // the band of a share under 5 %.
+    // The scored figures read as the ranking's (format.js): never
+    // better than their value, banded on the value as the ranking
+    // colours it, by its sub-score.
+    // missedShare writes missed of expected proposals as a share to
+    // the tenth, rounded up, so a miss never reads none, with its
+    // band.
     /**
      * @param {number} missed
      * @param {number} expected
      * @returns {{ text: string, band: Band }}
      */
     function missedShare(missed, expected) {
-        const pct = shownPct(missed, expected, 1)
-        if (missed > 0 && pct === 0) return { text: '< 0.1 %', band: 'warn' }
         return {
-            text: pct.toFixed(1) + ' %',
-            band: scoreBand.proposals(pct),
+            text: pctUp(missed, expected, 1).toFixed(1) + ' %',
+            band: scoreBand.proposals((missed * 100) / expected),
         }
     }
-    // recoveryBand bands a recovery by its duration in whole
-    // seconds, as dur writes it: 600.4 s, written 10 min 00 s,
-    // is within 10 min.
+    // signedShare writes signed of blocks as a share to the
+    // hundredth, rounded down, with its band.
     /**
-     * @param {number} ms
-     * @returns {Band}
+     * @param {number} signed
+     * @param {number} blocks
+     * @returns {{ text: string, band: Band }}
      */
-    function recoveryBand(ms) {
-        return scoreBand.recovery(Math.round(ms / 1000) * 1000)
+    function signedShare(signed, blocks) {
+        return {
+            text: pctDown(signed, blocks, 2).toFixed(2) + ' %',
+            band: scoreBand.uptime((signed * 100) / blocks),
+        }
     }
     // ---- Building blocks
     // info builds an ⓘ whose popover says what a datum is, where it
@@ -422,7 +400,7 @@ export function start() {
      */
     function uptimeFill(d) {
         if (!d.c) return EMPTY
-        return BAND_FILL[scoreBand.uptime(shownPct(d.c.signed, d.c.in_set, 2))]
+        return BAND_FILL[signedShare(d.c.signed, d.c.in_set).band]
     }
     /**
      * @param {ChartDay} d
@@ -438,7 +416,7 @@ export function start() {
                 'signed',
                 thousands(c.signed) + ' of ' + thousands(c.in_set),
             ],
-            [null, '', shownPct(c.signed, c.in_set, 2).toFixed(2) + ' %'],
+            [null, '', signedShare(c.signed, c.in_set).text],
             [null, 'absent', thousands(c.absent)],
             [null, 'other block', thousands(c.other_block)],
             [null, 'nil votes', thousands(c.nil) + ' (signed)'],
@@ -449,7 +427,7 @@ export function start() {
                 '● outage',
                 thousands(o.blocks) +
                     ' blocks, ' +
-                    dur(Date.parse(o.end_time) - Date.parse(o.time)) +
+                    durationText(Date.parse(o.end_time) - Date.parse(o.time)) +
                     (o.ongoing ? ', ongoing' : ''),
             ])
             // A day the outage continues into dates its start.
@@ -665,7 +643,7 @@ export function start() {
                     8
                 )
                 const x = x0 + j * bw
-                const fill = BAND_FILL[recoveryBand(r.duration_ms)]
+                const fill = BAND_FILL[scoreBand.recovery(r.duration_ms)]
                 const bar = filled(
                     svgEl('rect', {
                         x: x,
@@ -679,7 +657,7 @@ export function start() {
                     fill
                 )
                 popRows(bar, day, [
-                    [fill, 'signed again after', dur(r.duration_ms)],
+                    [fill, 'signed again after', durationUpText(r.duration_ms)],
                     [null, 'restart', '#' + thousands(r.restart_height)],
                     [null, 'scored', r.scored ? 'yes (its last 3)' : 'no'],
                 ])
@@ -1364,10 +1342,13 @@ export function start() {
             info(
                 'per UTC day, of the blocks it was in the set for: signed (a nil vote counts as signed), absent from the commit, or voted for another block',
                 "the block history: every block's commit",
-                'signed ÷ blocks in the set (50 %), and outages, runs of 10 or more absences (20 %), over the 30 complete UTC days before today; outages leave recovery runs out, as the ranking does; signed counts every height, where the ranking leaves recovery runs out'
+                'signed ÷ blocks in the set (50 %), and outages, runs of 10 or more absences (20 %), over the 30 complete UTC days before today; recovery runs, the absences around a restart, count in neither; the chart counts every height'
             )
         )
-        const signed = sm.in_set ? shownPct(sm.signed, sm.in_set, 2) : null
+        // Recovery runs are left out of the uptime's denominator: the
+        // Recovery section scores them.
+        const counted = sm.in_set - sm.recovering
+        const signed = counted ? signedShare(sm.signed, counted) : null
         up.appendChild(
             statsLine([
                 [
@@ -1375,12 +1356,14 @@ export function start() {
                     [
                         [
                             'signed',
-                            signed === null ? '—' : signed.toFixed(2) + ' %',
-                            signed === null ? '' : scoreBand.uptime(signed),
+                            signed === null ? '—' : signed.text,
+                            signed === null ? '' : signed.band,
                         ],
                         [
                             'outages',
                             thousands(sm.outages),
+                            // Outages are a count, not a share of the counted
+                            // blocks: any block in the set bands them.
                             sm.in_set ? scoreBand.outages(sm.outages) : '',
                         ],
                         ['nil votes', thousands(sm.nil), ''],
@@ -1398,7 +1381,7 @@ export function start() {
             info(
                 'per UTC day: the rounds it was the expected proposer of until the block was made, and those it missed',
                 "the block history: block headers and each round's expected proposer",
-                'missed ÷ expected (10 %) over the 30 complete UTC days before today; the ranking counts only heights it signed and leaves restart heights out, the figures here count every height'
+                'missed ÷ expected (10 %) over the 30 complete UTC days before today, counting only the heights it signed and leaving restart heights out; the chart counts every height'
             )
         )
         const pm = sm.proposals_missed
@@ -1459,11 +1442,15 @@ export function start() {
                     [
                         [
                             'median of its last 3',
-                            rc.samples ? dur(rc.median_ms) : '—',
-                            rc.samples ? recoveryBand(rc.median_ms) : '',
+                            rc.samples ? durationUpText(rc.median_ms) : '—',
+                            rc.samples ? scoreBand.recovery(rc.median_ms) : '',
                         ],
                         ['samples', thousands(rc.samples), ''],
-                        ['slowest', rc.samples ? dur(rc.slowest_ms) : '—', ''],
+                        [
+                            'slowest',
+                            rc.samples ? durationUpText(rc.slowest_ms) : '—',
+                            '',
+                        ],
                     ],
                 ],
             ])
@@ -1534,7 +1521,10 @@ export function start() {
                 cls = 'vt-rec'
                 what = [
                     'recovered in ',
-                    [dur(e.duration_ms), recoveryBand(e.duration_ms)],
+                    [
+                        durationUpText(e.duration_ms),
+                        scoreBand.recovery(e.duration_ms),
+                    ],
                 ]
                 p = 'restart at #' + thousands(e.restart_height)
                 break
@@ -1543,7 +1533,7 @@ export function start() {
                 cls = 'vt-out'
                 what = ['outage of ' + thousands(e.blocks) + ' blocks']
                 p =
-                    dur(Date.parse(e.end_time) - Date.parse(e.time)) +
+                    durationText(Date.parse(e.end_time) - Date.parse(e.time)) +
                     (e.ongoing ? ', ongoing' : '')
                 break
             case 'power':

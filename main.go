@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -9,9 +10,11 @@ import (
 	"strings"
 	"time"
 
+	"github.com/gnolang/gno/tm2/pkg/crypto"
 	"github.com/gnoverse/gnockpit/blocks"
 	"github.com/gnoverse/gnockpit/eta"
 	"github.com/gnoverse/gnockpit/node"
+	"github.com/gnoverse/gnockpit/ranking"
 	"github.com/gnoverse/gnockpit/web"
 	"github.com/gnoverse/gnockpit/web/push"
 )
@@ -47,6 +50,10 @@ var (
 	flagChainName         string
 	flagAnalytics         string
 	flagAnalyticsDomain   string
+
+	flagRanking             bool
+	flagRankingExclude      operatorList
+	flagRankingHideExcluded bool
 )
 
 // stringSlice is a flag.Value that accumulates one entry per occurrence, for
@@ -91,6 +98,45 @@ func nonNegativeDurationVar(fs *flag.FlagSet, p *time.Duration, name string, val
 	fs.Var((*nonNegativeDuration)(p), name, usage)
 }
 
+// operatorList is a flag.Value for a comma-separated list of operator g1
+// addresses, surrounding spaces trimmed; each occurrence adds its entries.
+// An entry is an address as the chain writes it, the only form a ranking's
+// operator matches: its bech32 checksum holds, and it is lowercase.
+type operatorList []string
+
+func (l *operatorList) String() string { return strings.Join(*l, ",") }
+
+func (l *operatorList) Set(v string) error {
+	var entries []string
+	for _, entry := range strings.Split(v, ",") {
+		entry = strings.TrimSpace(entry)
+		if entry == "" {
+			return errors.New("an empty entry")
+		}
+		if addr, err := crypto.AddressFromString(entry); err != nil || addr.String() != entry {
+			return fmt.Errorf("%q is no g1 address", entry)
+		}
+		entries = append(entries, entry)
+	}
+	*l = append(*l, entries...)
+	return nil
+}
+
+// checkRankingFlags refuses a ranking flag set while the ranking is off: it
+// would do nothing.
+func checkRankingFlags(on bool, exclude operatorList, hideExcluded bool) error {
+	if on {
+		return nil
+	}
+	if len(exclude) > 0 {
+		return errors.New("--ranking-exclude needs --ranking")
+	}
+	if hideExcluded {
+		return errors.New("--ranking-hide-excluded needs --ranking")
+	}
+	return nil
+}
+
 func usage() {
 	fmt.Fprint(flag.CommandLine.Output(), `gnockpit — live web dashboard for gno.land validator nodes.
 
@@ -129,6 +175,10 @@ func registerFlags(fs *flag.FlagSet) {
 	fs.StringVar(&flagChainName, "chain-name", "", "display name for the chain in titles and the app icon; defaults to the chain-id (e.g. \"test13\" for chain-id \"test-13\")")
 	fs.StringVar(&flagAnalytics, "analytics", "", "load a third-party analytics script in the dashboard; only \"simple-analytics\" is supported. Off by default: a self-hosted dashboard reports to nobody unless you ask it to.")
 	fs.StringVar(&flagAnalyticsDomain, "analytics-domain", "", "serve the analytics script and its no-JS pixel from this custom domain (e.g. sa.example.com) instead of the provider's own hosts, which ad blockers list; needs --analytics")
+	fs.BoolVar(&flagRanking, "ranking", false, "compute and serve the daily validator ranking at /api/ranking, from the block history; off by default")
+	flagRankingExclude = nil // a fresh parse starts from no operators
+	fs.Var(&flagRankingExclude, "ranking-exclude", "operators left out of the ranking's order, as a comma-separated list of operator g1 addresses; the ranking publishes the list in the API. Needs --ranking.")
+	fs.BoolVar(&flagRankingHideExcluded, "ranking-hide-excluded", false, "tell the ranking's readers to hide the excluded operators; the API lists them either way. Needs --ranking.")
 }
 
 func main() {
@@ -160,6 +210,10 @@ func run() error {
 		return err
 	}
 
+	if err := checkRankingFlags(flagRanking, flagRankingExclude, flagRankingHideExcluded); err != nil {
+		return err
+	}
+
 	sources := newSources(ctx)
 	addr := fmt.Sprintf("%s:%d", flagWebAddr, flagWebPort)
 	srv := web.NewServer(sources.Primary(), addr, flagInterval)
@@ -178,9 +232,9 @@ func run() error {
 	if err != nil {
 		return fmt.Errorf("init block history: %w", err)
 	}
-	blockTracker, err := blocks.NewTracker(blockStore, sources.Primary(), blocks.Config{Pace: flagHistoryPace, Batch: flagHistoryBatch})
+	blockTracker, err := blocks.NewTracker(ctx, blockStore, sources.Primary(), blocks.Config{Pace: flagHistoryPace, Batch: flagHistoryBatch})
 	if err != nil {
-		return fmt.Errorf("invalid -history-pace or -history-batch: %w", err)
+		return fmt.Errorf("init block history tracker (-history-pace %s, -history-batch %d): %w", flagHistoryPace, flagHistoryBatch, err)
 	}
 	srv.Blocks = blockStore
 	srv.BlockFill = blockTracker
@@ -253,6 +307,32 @@ func run() error {
 		srv.ASN = node.NewASN(flagASNPath, func(format string, args ...any) {
 			fmt.Fprintf(os.Stderr, format+"\n", args...)
 		})
+	}
+
+	if flagRanking {
+		days, err := ranking.NewDayStore(ctx, db.SQL())
+		if err != nil {
+			return fmt.Errorf("init ranking days: %w", err)
+		}
+		pub := &ranking.Publisher{
+			Blocks: blockStore,
+			Fill:   blockTracker,
+			Days:   days,
+			Profiles: func() (ranking.Profiles, bool) {
+				m, ok := srv.Valopers()
+				return ranking.Profiles(m), ok
+			},
+			Names:   srv.Moniker,
+			Exclude: flagRankingExclude,
+			Now:     time.Now,
+			OnPublish: func(cur ranking.Published, prev *ranking.Published) {
+				title, body := ranking.Digest(cur, prev)
+				pushMgr.NotifyRanking(cur.Chain+":"+cur.Day, title, body)
+			},
+		}
+		srv.Ranking = pub
+		srv.RankingHideExcluded = flagRankingHideExcluded
+		go pub.Run(ctx)
 	}
 
 	return srv.Run(ctx)

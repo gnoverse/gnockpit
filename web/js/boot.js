@@ -1,12 +1,13 @@
 // The boot status, read from /api/boot for as long as the page is open:
-// the chain's name for the page's title, and the panel shown while no
-// source answers.
+// the chain's name for the page's title, the panel shown while no
+// source answers, and whether the server has the ranking on.
 
 /** @import { BootStatus } from '../types/server.js' */
 
 import { $ } from './dom.js'
 import { boundedRead } from './read.js'
 import { live } from './state.js'
+import { offerRanking } from './timeline.js'
 
 // showChainName titles the page with the chain's display name: the
 // --chain-name override if set, otherwise the chain-id. It waits
@@ -45,6 +46,7 @@ function pollBoot() {
             live.chainNameOverride =
                 typeof d.chain_name === 'string' ? d.chain_name : ''
             showChainName()
+            offerRanking(d.ranking === true)
             const panel = $('boot-panel')
             if (d.rpc) {
                 panel.style.display = 'none'

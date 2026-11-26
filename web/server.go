@@ -20,6 +20,7 @@ import (
 
 	"github.com/gnoverse/gnockpit/blocks"
 	"github.com/gnoverse/gnockpit/node"
+	"github.com/gnoverse/gnockpit/ranking"
 	"github.com/gnoverse/gnockpit/web/icon"
 	"github.com/gnoverse/gnockpit/web/push"
 	"github.com/gorilla/websocket"
@@ -78,8 +79,12 @@ type Server struct {
 	proposals24h map[string][2]int
 	missedSince  time.Time // time of the oldest stored block; how far back missed counts reach (guarded by mu)
 	// valopers is each operator's valopers profile, by operator address, as
-	// the last registry refresh read it (guarded by mu).
+	// the registry refreshes read it (guarded by mu).
 	valopers map[string]node.Valoper
+	// valopersWhole is whether the last refresh read the registry's whole
+	// list, and every operator it lists has a profile, from that refresh or
+	// an earlier one (guarded by mu).
+	valopersWhole bool
 
 	etaBlockTimes blockTimeCache // times of reached blocks asked for on /api/eta
 
@@ -88,20 +93,24 @@ type Server struct {
 	wsClients map[*wsClient]struct{}
 
 	// Set by caller before Run.
-	PushManager     *push.Manager // push notification manager (nil = disabled)
-	MaxMissedInARow int           // consecutive missed/signed blocks that flip a validator down/up
-	GeoIP           *node.GeoIP   // IP geolocation for the network map (nil = disabled)
-	ASN             *node.ASN     // IP-to-ASN/cloud-provider resolution (nil = disabled)
-	Blocks          *blocks.Store // block history: missed-block windows and /api/history (nil = disabled)
-	BlockFill       BlockFill     // fill progress of the block history for /api/history (nil = disabled)
-	ETA             ETAView       // block-time model and scheduled halt for /api/eta (nil = disabled)
-	NotifyTestToken string        // bearer token for the notify-test API (empty = disabled)
-	ChainStuckSecs  int           // seconds without a new block before status is "down"
-	Links           []Link        // static header link buttons
-	StatusLinks     []*StatusLink // header links with a live BetterStack status dot
-	HideSources     bool          // hide the configured source nodes from the peers list
-	ChainName       string        // display name for the chain; defaults to the chain-id when empty
-	Analytics       Analytics     // third-party analytics snippet injected into the dashboard (zero value = none)
+	PushManager     *push.Manager      // push notification manager (nil = disabled)
+	MaxMissedInARow int                // consecutive missed/signed blocks that flip a validator down/up
+	GeoIP           *node.GeoIP        // IP geolocation for the network map (nil = disabled)
+	ASN             *node.ASN          // IP-to-ASN/cloud-provider resolution (nil = disabled)
+	Blocks          *blocks.Store      // block history: missed-block windows and /api/history (nil = disabled)
+	BlockFill       BlockFill          // fill progress of the block history for /api/history (nil = disabled)
+	ETA             ETAView            // block-time model and scheduled halt for /api/eta (nil = disabled)
+	Ranking         *ranking.Publisher // the daily validator ranking for /api/ranking (nil = disabled)
+	// RankingHideExcluded tells /api/ranking's readers to hide the operators
+	// left out of the ranking; the answer lists them either way.
+	RankingHideExcluded bool
+	NotifyTestToken     string        // bearer token for the notify-test API (empty = disabled)
+	ChainStuckSecs      int           // seconds without a new block before status is "down"
+	Links               []Link        // static header link buttons
+	StatusLinks         []*StatusLink // header links with a live BetterStack status dot
+	HideSources         bool          // hide the configured source nodes from the peers list
+	ChainName           string        // display name for the chain; defaults to the chain-id when empty
+	Analytics           Analytics     // third-party analytics snippet injected into the dashboard (zero value = none)
 	// ReadHeaderTimeout is how long a client may take to send a request's
 	// headers before its connection is closed unanswered (0 = no limit).
 	ReadHeaderTimeout time.Duration
@@ -487,9 +496,10 @@ func (s *Server) handleBootStatus(w http.ResponseWriter, r *http.Request) {
 	type bootStatus struct {
 		RPC       bool   `json:"rpc"`
 		ChainName string `json:"chain_name,omitempty"` // configured display-name override, empty = use chain-id
+		Ranking   bool   `json:"ranking"`              // whether /api/ranking serves a ranking
 	}
 
-	bs := bootStatus{ChainName: s.ChainName}
+	bs := bootStatus{ChainName: s.ChainName, Ranking: s.Ranking != nil}
 
 	// "Up" once at least one source has yielded chain data; goes false again if
 	// every source is unreachable — the banner then doubles as the all-down
@@ -855,28 +865,44 @@ func (s *Server) valoperRefreshLoop(ctx context.Context) {
 // validator page and seeds validator names from them (non-overwriting /
 // upgrading unknown-val-N; the next snapshot's ensureValidatorNames picks
 // them up). A profile whose state vm/qeval did not answer is kept without
-// it, and one the read missed keeps its last read; each logged once per
-// refresh.
+// it, and one the read missed keeps its last read: an unread operator's, or
+// every last profile when the list is read in part or not at all. Each is
+// logged once per refresh. Valopers is whole once a refresh reads the whole
+// list and every operator it lists has a profile.
 func (s *Server) refreshValopers(ctx context.Context) {
+	s.mu.RLock()
+	last := s.valopers
+	s.mu.RUnlock()
 	read, err := s.Client.FetchValopers(ctx)
 	if err != nil {
-		log.Printf("valoper refresh failed: %v", err)
+		log.Printf("valoper refresh failed, the last profiles kept: %v", err)
+		s.mu.Lock()
+		s.valopersWhole = false
+		s.mu.Unlock()
 		return
 	}
 	vals := read.Profiles
 	byOperator := make(map[string]node.Valoper, len(vals)+len(read.Unread))
+	whole := read.ListError == nil
+	if !whole {
+		// The operators of the pages not read are unknown: every last profile
+		// stays.
+		maps.Copy(byOperator, last)
+		log.Printf("valoper list read in part, the last profiles kept: %v", read.ListError)
+	}
 	if len(read.Unread) > 0 {
-		s.mu.RLock()
-		last := s.valopers
-		s.mu.RUnlock()
 		unread := slices.Sorted(maps.Keys(read.Unread))
+		var why []string
 		for _, op := range unread {
-			if p, ok := last[op]; ok {
+			p, ok := last[op]
+			if ok {
 				byOperator[op] = p
 			}
+			whole = whole && ok
+			why = append(why, op+": "+read.Unread[op])
 		}
-		log.Printf("valoper profile unread for %d of %d, the last read kept: %s",
-			len(unread), len(vals)+len(unread), read.Unread[unread[0]])
+		log.Printf("valoper profile unread for %d of %d, the last read kept where there is one: %s",
+			len(unread), len(vals)+len(unread), strings.Join(why, "; "))
 	}
 	names := map[string]string{}
 	var noState int
@@ -898,8 +924,19 @@ func (s *Server) refreshValopers(ctx context.Context) {
 	}
 	s.mu.Lock()
 	s.valopers = byOperator
+	s.valopersWhole = whole
 	s.mu.Unlock()
 	s.Client.Names.SeedFromValopers(names)
+}
+
+// Valopers returns each operator's valopers profile, by operator address, as
+// the refreshes read them, and whether they are whole: the last refresh read
+// the registry's whole list, and every operator it lists has a profile, from
+// it or an earlier refresh. The map is shared: read only.
+func (s *Server) Valopers() (map[string]node.Valoper, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.valopers, s.valopersWhole
 }
 
 // geoIPRefreshLoop keeps the IP-geolocation database current: it checks daily
@@ -1215,6 +1252,7 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("/api/eta", s.handleETA)
 	mux.HandleFunc("/api/history", s.handleHistory)
 	mux.HandleFunc("/api/validator", s.handleValidator)
+	mux.HandleFunc("/api/ranking", s.handleRanking)
 	mux.HandleFunc("/badge.svg", s.handleBadge)
 	return mux
 }

@@ -42,15 +42,6 @@ func etaTime(t *testing.T, s string) time.Time {
 	return v
 }
 
-// etaNF is n with thousands separators, as the page writes heights.
-func etaNF(n int64) string {
-	s := strconv.FormatInt(n, 10)
-	for i := len(s) - 3; i > 0; i -= 3 {
-		s = s[:i] + "," + s[i:]
-	}
-	return s
-}
-
 // etaCountdown is sec as the count shows it: [Nd ]HH:MM:SS.
 func etaCountdown(sec int64) string {
 	sec = max(0, sec)
@@ -164,7 +155,7 @@ func etaCard(t *testing.T, rep etaReply, spec etaCardSpec) etaCardView {
 	if loc == nil {
 		loc = time.UTC
 	}
-	head := "#" + etaNF(rep.Target.Height)
+	head := "#" + thousands(rep.Target.Height)
 	switch {
 	case spec.kind == "halt":
 		head = "halt " + head
@@ -190,7 +181,7 @@ func etaCard(t *testing.T, rep etaReply, spec etaCardSpec) etaCardView {
 				blocks = " block"
 			}
 			v.count = etaCountdown(left)
-			v.target = "until " + head + " (" + etaNF(rep.Target.BlocksLeft) + blocks + " to go)"
+			v.target = "until " + head + " (" + thousands(rep.Target.BlocksLeft) + blocks + " to go)"
 		}
 		v.inline = v.count + " · " + head + " · " + etaDay(at) + " " + etaHM(at) + " UTC"
 		v.row("eta", etaWhen(at, loc))
@@ -219,7 +210,7 @@ func etaCard(t *testing.T, rep etaReply, spec etaCardSpec) etaCardView {
 		v.row("drift", drift)
 	}
 	if !reached {
-		v.row("pace", fmt.Sprintf("%.3f s/block (last %s blocks)", rep.Pace.SecondsPerBlock, etaNF(rep.Pace.OverBlocks)))
+		v.row("pace", fmt.Sprintf("%.3f s/block (last %s blocks)", rep.Pace.SecondsPerBlock, thousands(rep.Pace.OverBlocks)))
 		if h := rep.History; !h.Complete {
 			loading := "still loading"
 			if h.From != "" {
@@ -542,10 +533,10 @@ func etaPlanned(t *testing.T, rep etaReply) (big, all string) {
 func etaPlannedHeight(t *testing.T, rep etaReply) (big, all string) {
 	t.Helper()
 	est := rep.Estimate
-	big = "≈ #" + etaNF(est.Height)
+	big = "≈ #" + thousands(est.Height)
 	all = big + "margin pending: the block-time history is still too short"
 	if r80, r95 := est.Range80, est.Range95; r80 != nil {
-		all = fmt.Sprintf("%s80%% #%s–#%s · 95%% #%s–#%s", big, etaNF(r80.From), etaNF(r80.To), etaNF(r95.From), etaNF(r95.To))
+		all = fmt.Sprintf("%s80%% #%s–#%s · 95%% #%s–#%s", big, thousands(r80.From), thousands(r80.To), thousands(r95.From), thousands(r95.To))
 	}
 	return big, all + rep.Warning
 }

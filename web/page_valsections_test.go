@@ -37,7 +37,7 @@ func TestPageValidatorStats(t *testing.T) {
 				statItem{label: "nil votes", value: "0", band: ""}, statItem{label: "other block", value: "0", band: ""},
 			)},
 			proposals: []statWindow{
-				last30(statItem{label: "missed", value: "0 of 19,272 (0.0 %)", band: "ok"}),
+				last30(statItem{label: "missed", value: "0 of 19,268 (0.0 %)", band: "ok"}),
 				{name: "last 24 h", stats: []statItem{{label: "missed", value: "0 of 681", band: ""}}},
 			},
 			recovery: []statWindow{{name: "last 180 days", stats: []statItem{
@@ -50,7 +50,7 @@ func TestPageValidatorStats(t *testing.T) {
 		}},
 		{"bravo", valBravo.address(), stats{
 			uptime: []statWindow{last30(
-				statItem{label: "signed", value: "95.72 %", band: "warn"}, statItem{label: "outages", value: "2", band: "warn"},
+				statItem{label: "signed", value: "99.47 %", band: "warn"}, statItem{label: "outages", value: "2", band: "warn"},
 				statItem{label: "nil votes", value: "2", band: ""}, statItem{label: "other block", value: "1", band: ""},
 			)},
 			proposals: []statWindow{
@@ -68,7 +68,7 @@ func TestPageValidatorStats(t *testing.T) {
 		}},
 		{"charlie", valCharlie.address(), stats{
 			uptime: []statWindow{last30(
-				statItem{label: "signed", value: "94.84 %", band: "err"}, statItem{label: "outages", value: "10", band: "err"},
+				statItem{label: "signed", value: "94.83 %", band: "err"}, statItem{label: "outages", value: "10", band: "err"},
 				statItem{label: "nil votes", value: "0", band: ""}, statItem{label: "other block", value: "0", band: ""},
 			)},
 			proposals: []statWindow{
@@ -319,12 +319,12 @@ func TestPageValidatorInfoPopovers(t *testing.T) {
 		{
 			"per UTC day, of the blocks it was in the set for: signed (a nil vote counts as signed), absent from the commit, or voted for another block",
 			"the block history: every block's commit",
-			"yes, signed ÷ blocks in the set (50 %), and outages, runs of 10 or more absences (20 %), over the 30 complete UTC days before today; outages leave recovery runs out, as the ranking does; signed counts every height, where the ranking leaves recovery runs out",
+			"yes, signed ÷ blocks in the set (50 %), and outages, runs of 10 or more absences (20 %), over the 30 complete UTC days before today; recovery runs, the absences around a restart, count in neither; the chart counts every height",
 		},
 		{
 			"per UTC day: the rounds it was the expected proposer of until the block was made, and those it missed",
 			"the block history: block headers and each round's expected proposer",
-			"yes, missed ÷ expected (10 %) over the 30 complete UTC days before today; the ranking counts only heights it signed and leaves restart heights out, the figures here count every height",
+			"yes, missed ÷ expected (10 %) over the 30 complete UTC days before today, counting only the heights it signed and leaving restart heights out; the chart counts every height",
 		},
 		{
 			"after a restart (two blocks more than 2 min apart), how long it took to sign again; it gets a sample only if it was signing before the restart",

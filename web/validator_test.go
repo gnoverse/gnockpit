@@ -109,7 +109,8 @@ func TestValidatorDisabled(t *testing.T) {
 
 func TestValidatorRejectsAMalformedAddress(t *testing.T) {
 	srv := rotationServer(t)
-	for _, q := range []string{"", "?val=", "?val=g1nope", "?val=cosmos1vdhhxmt0wvkhgetnwskkzerywfjhxuepzgj7m9"} {
+	// The last is a g bech32 string of 32 bytes, not an address's 20.
+	for _, q := range []string{"", "?val=", "?val=g1nope", "?val=cosmos1vdhhxmt0wvkhgetnwskkzerywfjhxuepzgj7m9", "?val=g1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqemfmay"} {
 		code, body := getValidator(t, srv, q)
 		if code != http.StatusBadRequest || body["error"] != "val must be a g1 address" {
 			t.Errorf("%q: got %d %v, want 400 val must be a g1 address", q, code, body)
@@ -350,14 +351,14 @@ func TestValidatorTimeline(t *testing.T) {
 	// Heights 5 s apart; blocks 26 and 36 come 10 min late: restarts after
 	// 25 and 35, the second one with the key still down at the head.
 	at := func(h int64) time.Time {
-		t := base.Add(time.Duration(h) * 5 * time.Second)
+		ts := base.Add(time.Duration(h) * 5 * time.Second)
 		if h >= 26 {
-			t = t.Add(10 * time.Minute)
+			ts = ts.Add(10 * time.Minute)
 		}
 		if h >= 36 {
-			t = t.Add(10 * time.Minute)
+			ts = ts.Add(10 * time.Minute)
 		}
-		return t
+		return ts
 	}
 	absent := map[int64][]string{}
 	for h := int64(5); h <= 16; h++ {
@@ -400,10 +401,55 @@ func TestValidatorTimeline(t *testing.T) {
 		"first_day": today.AddDate(0, 0, -30).Format(time.DateOnly), "last_day": today.AddDate(0, 0, -1).Format(time.DateOnly),
 		"in_set": 40.0, "signed": 19.0, "absent": 21.0, "nil": 0.0, "other_block": 0.0, "outages": 1.0,
 		"proposals_expected": 0.0, "proposals_missed": 0.0, "votes": 19.0, "vote_delay_mean_ms": 0.0,
+		"recovering": 9.0, "longest_absence": 12.0, "in_set_ms": 1395000.0,
 		"recovery": map[string]any{"samples": 1.0, "median_ms": recovery, "slowest_ms": recovery},
 	}
 	if !reflect.DeepEqual(body["summary"], wantSummary) {
 		t.Errorf("summary = %v, want %v", body["summary"], wantSummary)
+	}
+}
+
+// TestValidatorSummaryLeavesRecoveryOutOfUptime checks the summary's scoring
+// figures on a key that is down after block 15 (block 16 comes 10 min late)
+// and absent from 15 to 17, then restarts after block 25 (block 26 comes
+// 10 min late) having signed it, with an absence of 5 to 7 apart from both.
+// The recovery run, 15 to 17, is counted in recovering and left out of
+// longest_absence; the proposals, all the key's, skip the absent heights and
+// the restart height 25 it signed.
+func TestValidatorSummaryLeavesRecoveryOutOfUptime(t *testing.T) {
+	base := valDay()
+	at := func(h int64) time.Time {
+		ts := base.Add(time.Duration(h) * 5 * time.Second)
+		if h >= 16 {
+			ts = ts.Add(10 * time.Minute)
+		}
+		if h >= 26 {
+			ts = ts.Add(10 * time.Minute)
+		}
+		return ts
+	}
+	absent := map[int64][]string{}
+	for _, h := range []int64{5, 6, 7, 15, 16, 17} {
+		absent[h] = []string{valOldKey}
+	}
+	s := newBlocksStore(t)
+	putBlocks(t, s, at, "T1", []blocks.Member{{Address: valOldKey, Power: 1}, {Address: valLoneKey, Power: 1}}, 1, 30, absent)
+	srv := &Server{Blocks: s, BlockFill: fakeFill{ChainID: "onyx-1", From: 1, To: 30, Complete: true}}
+
+	_, body := getValidator(t, srv, "?val="+valOldKey)
+	summary, ok := body["summary"].(map[string]any)
+	if !ok {
+		t.Fatalf("summary = %v, want an object", body["summary"])
+	}
+	want := map[string]float64{
+		"in_set": 30, "signed": 24, "absent": 6,
+		"recovering": 3, "longest_absence": 3, "in_set_ms": float64(at(30).Sub(at(1)).Milliseconds()),
+		"proposals_expected": 23, "proposals_missed": 0,
+	}
+	for field, w := range want {
+		if got := summary[field]; got != w {
+			t.Errorf("summary[%s] = %v, want %v", field, got, w)
+		}
 	}
 }
 

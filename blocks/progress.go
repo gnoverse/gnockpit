@@ -15,40 +15,50 @@ type Progress struct {
 	Rate     float64   // heights stored below From per second over the last rateWindow; 0 when unknown or complete
 }
 
-// publish refreshes Progress from the store.
-func (t *Tracker) publish(ctx context.Context) error {
+// read returns the stored history's progress, its rate 0: measuring it is
+// publish's.
+func (t *Tracker) read(ctx context.Context) (Progress, error) {
 	chainID, err := t.store.ChainID(ctx)
 	if err != nil {
-		return err
+		return Progress{}, err
 	}
 	low, high, err := t.store.Range(ctx)
 	if err != nil {
-		return err
+		return Progress{}, err
 	}
 	floor, err := t.store.Floor(ctx)
 	if err != nil {
-		return err
+		return Progress{}, err
 	}
 	var fromTime time.Time
 	if low > 0 {
 		if fromTime, _, err = t.store.TimeAt(ctx, low); err != nil {
-			return err
+			return Progress{}, err
 		}
 	}
-	p := Progress{
+	return Progress{
 		ChainID: chainID, From: low, To: high, FromTime: fromTime, Floor: floor,
-		Complete: low > 0 && low <= max(1, floor), Rate: t.measure(low),
+		Complete: low > 0 && low <= max(1, floor),
+	}, nil
+}
+
+// publish refreshes Progress from the store, with the fill's rate, and logs
+// the history's completion at the first publish that sees it complete.
+func (t *Tracker) publish(ctx context.Context) error {
+	p, err := t.read(ctx)
+	if err != nil {
+		return err
 	}
-	if p.Complete {
+	if p.Rate = t.measure(p.From); p.Complete {
 		p.Rate = 0
 	}
 	t.mu.Lock()
-	was := t.progress.Complete
 	t.progress = p
 	t.mu.Unlock()
-	if p.Complete && !was {
-		t.logf("blocks: history complete from #%d (%s)", low, fromTime.Format(time.RFC3339))
+	if p.Complete && !t.completeTold {
+		t.logf("blocks: history complete from #%d (%s)", p.From, p.FromTime.Format(time.RFC3339))
 	}
+	t.completeTold = p.Complete
 	return nil
 }
 

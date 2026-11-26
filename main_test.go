@@ -2,7 +2,10 @@ package main
 
 import (
 	"flag"
+	"fmt"
 	"io"
+	"slices"
+	"strings"
 	"testing"
 	"time"
 )
@@ -44,6 +47,89 @@ func TestReadHeaderTimeoutFlag(t *testing.T) {
 			want := `invalid value "` + tc.value + `" for flag -read-header-timeout: ` + tc.why
 			if err := fs.Parse(args); err == nil || err.Error() != want {
 				t.Errorf("parse %q: error %v, want %q", args, err, want)
+			}
+		})
+	}
+}
+
+const (
+	rankingOpA = "g1g0yrmdhney8pcaf9rfut4604equz604pszdsyt"
+	rankingOpB = "g15t7f9q6km3ldt885duwl8xu5dncs98528amk4f"
+)
+
+// TestRankingFlags checks --ranking, --ranking-exclude and
+// --ranking-hide-excluded: off and empty unless set, the operators listed
+// parsed, and an empty entry or a malformed address refused, naming the flag.
+func TestRankingFlags(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		args        []string
+		wantOn      bool
+		wantExclude []string
+		wantHide    bool
+	}{
+		{"defaults", nil, false, nil, false},
+		{"on", []string{"--ranking", "--ranking-hide-excluded"}, true, nil, true},
+		{"two operators", []string{"--ranking-exclude=" + rankingOpA + "," + rankingOpB}, false, []string{rankingOpA, rankingOpB}, false},
+		{"spaces trimmed", []string{"--ranking-exclude= " + rankingOpA + " , " + rankingOpB}, false, []string{rankingOpA, rankingOpB}, false},
+		{"duplicates kept", []string{"--ranking-exclude=" + rankingOpA + "," + rankingOpA}, false, []string{rankingOpA, rankingOpA}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fs := flag.NewFlagSet("gnockpit", flag.ContinueOnError)
+			registerFlags(fs)
+			if err := fs.Parse(tc.args); err != nil {
+				t.Fatalf("parse %q: %v", tc.args, err)
+			}
+			if flagRanking != tc.wantOn || !slices.Equal(flagRankingExclude, tc.wantExclude) || flagRankingHideExcluded != tc.wantHide {
+				t.Errorf("parse %q: --ranking %v, --ranking-exclude %v, --ranking-hide-excluded %v; want %v, %v, %v",
+					tc.args, flagRanking, []string(flagRankingExclude), flagRankingHideExcluded, tc.wantOn, tc.wantExclude, tc.wantHide)
+			}
+		})
+	}
+
+	for _, tc := range []struct{ name, value, why string }{
+		{"empty entries", rankingOpA + ",,", "an empty entry"},
+		{"blank value", "", "an empty entry"},
+		{"not an address", "nope", `"nope" is no g1 address`},
+		{"too short", rankingOpA[:39], `"` + rankingOpA[:39] + `" is no g1 address`},
+		{"too long", rankingOpA + "q", `"` + rankingOpA + `q" is no g1 address`},
+		{"outside the bech32 alphabet", "g1b" + rankingOpA[3:], `"g1b` + rankingOpA[3:] + `" is no g1 address`},
+		{"a one-character typo", rankingOpA[:39] + "q", `"` + rankingOpA[:39] + `q" is no g1 address`},
+		{"uppercase", strings.ToUpper(rankingOpA), `"` + strings.ToUpper(rankingOpA) + `" is no g1 address`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fs := flag.NewFlagSet("gnockpit", flag.ContinueOnError)
+			fs.SetOutput(io.Discard)
+			registerFlags(fs)
+			args := []string{"--ranking-exclude=" + tc.value}
+			want := `invalid value "` + tc.value + `" for flag -ranking-exclude: ` + tc.why
+			if err := fs.Parse(args); err == nil || err.Error() != want {
+				t.Errorf("parse %q: error %v, want %q", args, err, want)
+			}
+		})
+	}
+}
+
+// TestCheckRankingFlags checks that a ranking flag set without --ranking is
+// refused, naming it, and that the flags are accepted with it on, or all off.
+func TestCheckRankingFlags(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		on      bool
+		exclude operatorList
+		hide    bool
+		want    string
+	}{
+		{"all off", false, nil, false, ""},
+		{"on", true, operatorList{rankingOpA}, true, ""},
+		{"exclude without ranking", false, operatorList{rankingOpA}, false, "--ranking-exclude needs --ranking"},
+		{"hide without ranking", false, nil, true, "--ranking-hide-excluded needs --ranking"},
+		{"both without ranking", false, operatorList{rankingOpA}, true, "--ranking-exclude needs --ranking"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := checkRankingFlags(tc.on, tc.exclude, tc.hide)
+			if got := fmt.Sprint(err); (err == nil && tc.want != "") || (err != nil && got != tc.want) {
+				t.Errorf("checkRankingFlags(%v, %v, %v) = %v, want %q", tc.on, tc.exclude, tc.hide, err, tc.want)
 			}
 		})
 	}

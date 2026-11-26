@@ -144,3 +144,28 @@ func TestRouteWants(t *testing.T) {
 		t.Error("a route naming validator_missing_blocks alone does not want every validator's")
 	}
 }
+
+func TestNotifyConfigAcceptsRanking(t *testing.T) {
+	cfg, err := ParseNotifyConfig([]byte(`{"targets": [{"url": "x://y", "alerts": ["ranking"]}]}`))
+	if err != nil {
+		t.Fatalf("ParseNotifyConfig(ranking) error = %v, want none", err)
+	}
+	if _, ok := cfg.Targets[0].Alerts[AlertRanking]; !ok {
+		t.Errorf("ParseNotifyConfig(ranking) = %+v, want the ranking alert listed", cfg)
+	}
+	_, err = ParseNotifyConfig([]byte(`{"targets": [{"url": "x://y", "alerts": [{"ranking": "1h"}]}]}`))
+	if err == nil || !strings.Contains(err.Error(), "ranking takes no options") {
+		t.Errorf("ParseNotifyConfig(ranking with options) error = %v, want one naming %q", err, "ranking takes no options")
+	}
+}
+
+func TestDeviceAlertsRefuseRanking(t *testing.T) {
+	err := ValidateDeviceAlerts([]SubscriptionAlert{{AlertType: AlertRanking}})
+	if err == nil || err.Error() != `unknown alert "ranking"` {
+		t.Errorf("ValidateDeviceAlerts(ranking) error = %v, want unknown alert \"ranking\"", err)
+	}
+	err = ValidateKeep([]AlertType{AlertRanking}, nil)
+	if err == nil || err.Error() != `unknown alert "ranking"` {
+		t.Errorf("ValidateKeep(ranking) error = %v, want unknown alert \"ranking\"", err)
+	}
+}

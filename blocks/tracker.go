@@ -108,20 +108,23 @@ type Tracker struct {
 	gapsAt       time.Time     // when the event gaps are read again
 	lastErr      map[string]string
 	onChange     func(ValsetChange) // told of the validator set changes stored going up; nil: none
+	completeTold bool               // the last publish saw the history complete: its completion is logged
 
 	mu       sync.RWMutex
 	progress Progress
 }
 
-// NewTracker returns a tracker reading source into store. Run starts it.
-func NewTracker(store *Store, source Source, cfg Config) (*Tracker, error) {
+// NewTracker returns a tracker reading source into store, its Progress the
+// stored history's from the start: a reader before Run's first pass sees
+// what the store holds. Run starts it.
+func NewTracker(ctx context.Context, store *Store, source Source, cfg Config) (*Tracker, error) {
 	if cfg.Batch < 1 {
 		return nil, fmt.Errorf("batch of %d commits: want at least 1", cfg.Batch)
 	}
 	if cfg.Pace < 0 {
 		return nil, fmt.Errorf("pace of %s: want 0 or more", cfg.Pace)
 	}
-	return &Tracker{
+	t := &Tracker{
 		store:      store,
 		source:     source,
 		cfg:        cfg,
@@ -132,7 +135,13 @@ func NewTracker(store *Store, source Source, cfg Config) (*Tracker, error) {
 		maxBatch:   cfg.Batch,
 		setRefused: map[int64]int{},
 		lastErr:    map[string]string{},
-	}, nil
+	}
+	p, err := t.read(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("stored history: %w", err)
+	}
+	t.progress = p
+	return t, nil
 }
 
 // OnValsetChange sets f, told of each validator set change stored going up

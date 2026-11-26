@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -375,7 +376,7 @@ func (c *Client) forgetCommitsOutside(from, to int64) {
 // caller from the streaks, since they need cross-cycle hysteresis.
 func (c *Client) GetSigningStats(ctx context.Context, currentHeight int, window int) (*SigningStats, error) {
 	if currentHeight < 2 || window < 1 {
-		return nil, fmt.Errorf("need height >= 2 and window >= 1")
+		return nil, errors.New("need height >= 2 and window >= 1")
 	}
 	if window > currentHeight-1 {
 		window = currentHeight - 1

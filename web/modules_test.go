@@ -556,3 +556,252 @@ func TestModulesFormNoCycle(t *testing.T) {
 		}
 	})
 }
+
+// TestPercentagesRoundDown checks the percentages the ranking writes
+// rounded down: n of total to digits decimals, so a figure reads 99.90 %
+// only at or past 99.9 %; and a share of 1 as a whole percentage, its
+// float64 error absorbed first (0.29 × 100 is 28.999999999999996), a share
+// one block short of 2,000,000 still 99.
+func TestPercentagesRoundDown(t *testing.T) {
+	stdout, _ := runNode(t, `import { pctDown, sharePctDown } from `+moduleURL(t, "format.js")+`
+console.log(JSON.stringify({
+    pct: [pctDown(19979, 20000, 2), pctDown(999, 1000, 2), pctDown(6447, 6451, 2), pctDown(1, 1, 2)],
+    share: [0.29, 0.57, 0.76875, 0.9999995, 0.999999, 1, 0].map(sharePctDown),
+}))
+`)
+	var got struct{ Pct, Share []float64 }
+	if err := json.Unmarshal([]byte(stdout), &got); err != nil {
+		t.Fatalf("read the percentages %q: %v", stdout, err)
+	}
+	if want := []float64{99.89, 99.9, 99.93, 100}; !slices.Equal(got.Pct, want) {
+		t.Errorf("pctDown of 19979/20000, 999/1000, 6447/6451, 1/1 = %v, want %v", got.Pct, want)
+	}
+	if want := []float64{29, 57, 76, 99, 99, 100, 0}; !slices.Equal(got.Share, want) {
+		t.Errorf("sharePctDown of 0.29, 0.57, 0.76875, 0.9999995, 0.999999, 1, 0 = %v, want %v", got.Share, want)
+	}
+}
+
+// TestSubScoresRoundDown checks a ranking sub-score written to 3 decimals,
+// rounded down, so 1.000 reads only at full marks, its float64 error
+// absorbed first: 0.7 − 0.6 is 0.09999999999999998, written 0.100.
+func TestSubScoresRoundDown(t *testing.T) {
+	stdout, _ := runNode(t, `import { subScoreText } from `+moduleURL(t, "format.js")+`
+console.log(JSON.stringify([0.9995, 0.864, 1, 0, 0.7 - 0.6].map(subScoreText)))
+`)
+	var got []string
+	if err := json.Unmarshal([]byte(stdout), &got); err != nil {
+		t.Fatalf("read the sub-scores %q: %v", stdout, err)
+	}
+	if want := []string{"0.999", "0.864", "1.000", "0.000", "0.100"}; !slices.Equal(got, want) {
+		t.Errorf("subScoreText of 0.9995, 0.864, 1, 0, 0.7 − 0.6 = %q, want %q", got, want)
+	}
+}
+
+// TestSharesWhereLowerIsBetterRoundUp checks a missed share written
+// rounded up, n of total to digits decimals from the exact counts, so it
+// never reads better than its value: a miss never reads 0.00 %, and 4.95 %
+// to a tenth reads 5.0 %.
+func TestSharesWhereLowerIsBetterRoundUp(t *testing.T) {
+	stdout, _ := runNode(t, `import { pctUp } from `+moduleURL(t, "format.js")+`
+console.log(JSON.stringify([pctUp(1, 26000, 2), pctUp(4950, 100000, 1), pctUp(1, 2001, 1), pctUp(1, 150, 2), pctUp(7, 100, 2), pctUp(0, 5, 2)]))
+`)
+	var got []float64
+	if err := json.Unmarshal([]byte(stdout), &got); err != nil {
+		t.Fatalf("read the shares %q: %v", stdout, err)
+	}
+	if want := []float64{0.01, 5, 0.1, 0.67, 7, 0}; !slices.Equal(got, want) {
+		t.Errorf("pctUp of 1/26,000, 4,950/100,000, 1/2,001, 1/150, 7/100, 0/5 = %v, want %v", got, want)
+	}
+}
+
+// TestRecoveryTimesRoundUp checks a recovery time written rounded up at
+// its last unit, so it never reads faster than it was: 600.4 s reads
+// 10 min 01 s, past the 10 minutes of full marks; minutes from an hour,
+// days and hours from 48 h, so 48 h and 1 ms reads 2 d 01 h.
+func TestRecoveryTimesRoundUp(t *testing.T) {
+	const ms = "[600400, 600000, 0, 59001, 3600001, 86399600, 172799000, 172800000, 172800001, 180000001, 259199000]"
+	stdout, _ := runNode(t, `import { durationUpText } from `+moduleURL(t, "format.js")+`
+console.log(JSON.stringify(`+ms+`.map(durationUpText)))
+`)
+	var got []string
+	if err := json.Unmarshal([]byte(stdout), &got); err != nil {
+		t.Fatalf("read the durations %q: %v", stdout, err)
+	}
+	want := []string{"10 min 01 s", "10 min 00 s", "0 s", "1 min 00 s", "1 h 01 min", "24 h 00 min", "2 d 00 h", "2 d 00 h", "2 d 01 h", "2 d 03 h", "3 d 00 h"}
+	if !slices.Equal(got, want) {
+		t.Errorf("durationUpText of %s ms = %q, want %q", ms, got, want)
+	}
+}
+
+// TestScoresRoundDown checks a ranking score written to one decimal,
+// rounded down, its float64 error absorbed first, so it never reads better
+// than it is: 99.96 reads 99.9, never 100.0; 0.7 + 0.1, 0.7999999999999999,
+// reads 0.8.
+func TestScoresRoundDown(t *testing.T) {
+	stdout, _ := runNode(t, `import { scoreText } from `+moduleURL(t, "format.js")+`
+console.log(JSON.stringify([93.25, 99.96, 99.94999, 96.95, 100, 0, 0.7 + 0.1].map(scoreText)))
+`)
+	var got []string
+	if err := json.Unmarshal([]byte(stdout), &got); err != nil {
+		t.Fatalf("read the scores %q: %v", stdout, err)
+	}
+	if want := []string{"93.2", "99.9", "99.9", "96.9", "100.0", "0.0", "0.8"}; !slices.Equal(got, want) {
+		t.Errorf("scoreText of 93.25, 99.96, 99.94999, 96.95, 100, 0, 0.7 + 0.1 = %q, want %q", got, want)
+	}
+}
+
+// TestPointsRoundDown checks a part's points written to one decimal: its
+// weight's text, a tie rounded up, at full marks; below them, rounded down
+// and never the weight's text, one tenth less where rounding down reaches
+// it (22.22 of 22.222… reads 22.1).
+func TestPointsRoundDown(t *testing.T) {
+	stdout, _ := runNode(t, `import { pointsText, weightText } from `+moduleURL(t, "format.js")+`
+console.log(JSON.stringify({
+    points: [
+        pointsText({ sub: 1, weight: 50, points: 50 }),
+        pointsText({ sub: 1, weight: 200 / 9, points: 200 / 9 }),
+        pointsText({ sub: 1, weight: 500 / 9, points: 500 / 9 }),
+        pointsText({ sub: 0.9999, weight: 200 / 9, points: (0.9999 * 200) / 9 }),
+        pointsText({ sub: 0.9999, weight: 50, points: 49.995 }),
+        pointsText({ sub: 0.9999, weight: 500 / 9, points: (0.9999 * 500) / 9 }),
+        pointsText({ sub: 0.99968, weight: 10, points: 9.9968 }),
+        pointsText({ sub: 0.666, weight: 62.5, points: 41.625 }),
+        pointsText({ sub: 0, weight: 25, points: 0 }),
+    ],
+    weights: [50, 200 / 9, 500 / 9, 62.5, 12.5].map(weightText),
+}))
+`)
+	var got struct{ Points, Weights []string }
+	if err := json.Unmarshal([]byte(stdout), &got); err != nil {
+		t.Fatalf("read the points %q: %v", stdout, err)
+	}
+	if want := []string{"50.0", "22.2", "55.6", "22.1", "49.9", "55.5", "9.9", "41.6", "0.0"}; !slices.Equal(got.Points, want) {
+		t.Errorf("pointsText = %q, want %q", got.Points, want)
+	}
+	if want := []string{"50.0", "22.2", "55.6", "62.5", "12.5"}; !slices.Equal(got.Weights, want) {
+		t.Errorf("weightText of 50, 22.222…, 55.555…, 62.5, 12.5 = %q, want %q", got.Weights, want)
+	}
+}
+
+// rankingStub is the document, the fetch and the timers the Ranking view
+// runs on in node: the panel and the dialog's figures, elements that record
+// their children and attributes, a fetch answering answer, and setTimeout
+// recording each delay asked, running nothing; and the observer and the
+// media query the popover's module, which the view's explanations import,
+// sets up as it loads.
+const rankingStub = `class Element {}
+class HTMLElement extends Element {
+    constructor(tag) {
+        super()
+        this.tag = tag
+        this.kids = []
+        this.style = {}
+        this.attrs = {}
+        this.textContent = ''
+        this.className = ''
+    }
+    appendChild(child) {
+        this.kids.push(child)
+        return child
+    }
+    append(...children) {
+        this.kids.push(...children)
+    }
+    replaceChildren(...children) {
+        this.kids = children
+    }
+    setAttribute(name, value) {
+        this.attrs[name] = value
+    }
+    removeAttribute(name) {
+        delete this.attrs[name]
+    }
+}
+globalThis.HTMLElement = HTMLElement
+globalThis.MutationObserver = class {}
+globalThis.window = { matchMedia: () => ({ matches: false }) }
+const panel = new HTMLElement('div')
+const figures = new Map(['ranking-window', 'ranking-heights', 'ranking-formula'].map((id) => [id, new HTMLElement('span')]))
+globalThis.document = {
+    getElementById: (id) => (id === 'validators-ranking' ? panel : (figures.get(id) ?? null)),
+    createElement: (tag) => new HTMLElement(tag),
+}
+let answer = null
+globalThis.fetch = async () => ({ ok: true, json: async () => answer })
+const delays = []
+globalThis.setTimeout = (fn, ms) => {
+    delays.push(ms)
+    return 0
+}
+const settle = () => new Promise((resolve) => setImmediate(resolve))
+const text = (n) => (typeof n === 'string' ? n : n.textContent + n.kids.map(text).join(''))
+`
+
+// TestRankingShowsAnAnswerItCannotDraw checks the Ranking view on an
+// answer that breaks the server's contract (an unavailable state without
+// its floor): the panel says it could not show the ranking, and the next
+// read is still asked for, 60 s later.
+func TestRankingShowsAnAnswerItCannotDraw(t *testing.T) {
+	stdout, _ := runNode(t, rankingStub+`const { start, rankingShown } = await import(`+moduleURL(t, "ranking.js")+`)
+answer = {
+    state: { kind: 'unavailable', stored_share: 0, left_s: 0, events_pending: false },
+    hide_excluded: false,
+    ranking: null,
+}
+start()
+rankingShown()
+await settle()
+console.log(JSON.stringify({ shown: panel.kids.map(text), polls: delays.filter((ms) => ms === 60000).length }))
+`)
+	var got struct {
+		Shown []string
+		Polls int
+	}
+	if err := json.Unmarshal([]byte(stdout), &got); err != nil {
+		t.Fatalf("read the panel %q: %v", stdout, err)
+	}
+	if want := []string{"Could not show the ranking (an indexed read found nothing)."}; !slices.Equal(got.Shown, want) {
+		t.Errorf("panel = %q, want %q", got.Shown, want)
+	}
+	if got.Polls != 1 {
+		t.Errorf("%d reads asked 60 s later, want 1", got.Polls)
+	}
+}
+
+// TestRankingShowsAnOutagesPartWithoutSubScore checks the Ranking view on a
+// ranking whose entry has an outages part without a sub-score, which the
+// server always gives: the panel says it could not show the ranking,
+// rather than write a sub-score it was not given.
+func TestRankingShowsAnOutagesPartWithoutSubScore(t *testing.T) {
+	stdout, _ := runNode(t, rankingStub+`const { start, rankingShown } = await import(`+moduleURL(t, "ranking.js")+`)
+const none = { sub: null, weight: 0, points: 0 }
+answer = {
+    state: { kind: 'ready', stored_share: 1, left_s: 0, events_pending: false },
+    hide_excluded: false,
+    ranking: {
+        chain: 'test-13', day: '2026-11-18', computed_at: '2026-11-18T00:01:00Z', exclusions: [], formula: 1,
+        first_day: '2026-10-19', last_day: '2026-11-17', first_height: 1, last_height: 10, proposals_disabled: [],
+        entries: [{
+            operator: 'g1operator', name: 'alpha', keys: ['g1operator'], status: 'ranked', rank: 1, hours_in_set: 200,
+            score: 100, uptime: { sub: 1, weight: 100, points: 100 }, outages: none, recovery: none, proposals: none,
+            tied_with: [],
+            inputs: {
+                in_set: 10, recovering: 0, signed: 10, nil: 0, absent: 0, other_block: 0, outages: [], longest_absence: 0,
+                recovery: [], recovery_median_ms: null, proposals_expected: 0, proposals_missed: 0,
+            },
+        }],
+    },
+}
+start()
+rankingShown()
+await settle()
+console.log(JSON.stringify(panel.kids.map(text)))
+`)
+	var shown []string
+	if err := json.Unmarshal([]byte(stdout), &shown); err != nil {
+		t.Fatalf("read the panel %q: %v", stdout, err)
+	}
+	if want := []string{"Could not show the ranking (an indexed read found nothing)."}; !slices.Equal(shown, want) {
+		t.Errorf("panel = %q, want %q", shown, want)
+	}
+}

@@ -963,7 +963,7 @@ func TestPageRemindersFailedReadKeepsTheSave(t *testing.T) {
 		// The poll reads the halt, then the link target, and sets its
 		// next timer once the link card shows that second answer: the
 		// clock moves only then, so the next poll comes cardPoll later.
-		e.must(e.expect(linkCard + " .eta-target").ToHaveText(regexp.MustCompile(`^until #` + regexp.QuoteMeta(etaNF(farHeight)) + ` \(`)))
+		e.must(e.expect(linkCard + " .eta-target").ToHaveText(regexp.MustCompile(`^until #` + regexp.QuoteMeta(thousands(farHeight)) + ` \(`)))
 		saved := e.hold("/api/push/reminder?id=")
 		failed := e.hold("/api/push/reminder?id=")
 		failed.drop()

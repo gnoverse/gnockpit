@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/containrrr/shoutrrr"
@@ -121,11 +122,70 @@ func (m *Manager) notifyTargets(a Alert) {
 // sendTarget sends a to t, one of targets, whose URLs a failed send's log
 // is stripped of.
 func (m *Manager) sendTarget(t notifyTarget, a Alert, targets []notifyTarget) {
-	for _, err := range t.sender.Send(FormatAlert(m.ChainName(), m.publicURL, a), nil) {
+	m.sendText(t, FormatAlert(m.ChainName(), m.publicURL, a), targets)
+}
+
+// sendText sends one message to t, one of targets, whose URLs a failed send's
+// log is stripped of.
+func (m *Manager) sendText(t notifyTarget, text string, targets []notifyTarget) {
+	for _, err := range t.sender.Send(text, nil) {
 		if err != nil {
 			log.Printf("notify: %s", m.notifyErrorText(err, targetURLs(targets)))
 		}
 	}
+}
+
+// maxMessageChars is the most characters, Unicode code points, of one
+// message sent to a target: 2,000 of them stay within every service's limit,
+// Telegram's 4,096 UTF-16 units included.
+const maxMessageChars = 2000
+
+// rankingLink is the page a tap on the ranking notification opens.
+const rankingLink = "/?view=ranking"
+
+// NotifyRanking sends the day's ranking digest to each target that lists the
+// ranking, once per key: the chain and day it ranks. A digest over
+// maxMessageChars goes as several messages, split at line breaks, in order.
+// It sends synchronously, so it holds the publisher's pass for up to the
+// targets times the parts times the send timeout, and it never calls back
+// into the publisher.
+func (m *Manager) NotifyRanking(key, title, body string) {
+	a := Alert{Type: AlertRanking, Firing: true, Notice: true, Title: title, Body: body, Link: rankingLink}
+	targets := m.currentTargets()
+	for _, t := range targets {
+		if !t.route.Wants(a) || !m.markSent("target:"+t.fingerprint, a.Type, key) {
+			continue
+		}
+		for _, part := range splitMessage(FormatAlert(m.ChainName(), m.publicURL, a), maxMessageChars) {
+			m.sendText(t, part, targets)
+		}
+	}
+}
+
+// splitMessage cuts text into parts of at most limit characters (Unicode
+// code points), at line breaks, so that joining the parts with line breaks
+// gives text back, unless a line longer than limit was cut: it is cut at
+// limit, and the join adds a line break at each cut.
+func splitMessage(text string, limit int) []string {
+	var parts []string
+	var part []rune
+	open := false // part holds at least one line, possibly an empty one
+	for _, line := range strings.Split(text, "\n") {
+		runes := []rune(line)
+		if open && len(part)+1+len(runes) <= limit {
+			part = append(append(part, '\n'), runes...)
+			continue
+		}
+		if open {
+			parts = append(parts, string(part))
+		}
+		for len(runes) > limit {
+			parts = append(parts, string(runes[:limit]))
+			runes = runes[limit:]
+		}
+		part, open = runes, true
+	}
+	return append(parts, string(part))
 }
 
 func (m *Manager) currentTargets() []notifyTarget {

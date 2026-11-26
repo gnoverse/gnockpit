@@ -3,6 +3,7 @@
 package web
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -1076,4 +1077,63 @@ func TestPageValidatorSections(t *testing.T) {
 		e.must(e.expect(uptime).ToHaveText("last 30 dayssigned100.00 %outages0nil votes0other block0"))
 		e.must(e.Expect.Locator(e.Page.Locator(uptime + " b").First()).ToHaveClass("ok"))
 	})
+}
+
+// valPageUptimeCounts are the summary figures the scored uptime is made of.
+type valPageUptimeCounts struct{ InSet, Signed, Recovering float64 }
+
+// valPageSummary reads the summary figures of the validator at addr from
+// the server's report, closing the answer when the read ends.
+func (e *pageEnv) valPageSummary(name, addr string) valPageUptimeCounts {
+	e.T.Helper()
+	resp, err := (&http.Client{Timeout: valPageReadBound}).Get(e.ts.URL + "/api/validator?val=" + addr)
+	if err != nil {
+		e.T.Fatalf("%s: read the report: %v", name, err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		e.T.Fatalf("%s: report status = %d, want %d", name, resp.StatusCode, http.StatusOK)
+	}
+	var rep struct {
+		Summary struct {
+			InSet      float64 `json:"in_set"`
+			Signed     float64 `json:"signed"`
+			Recovering float64 `json:"recovering"`
+		}
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&rep); err != nil {
+		e.T.Fatalf("%s: decode the report: %v", name, err)
+	}
+	return valPageUptimeCounts(rep.Summary)
+}
+
+// TestPageValidatorUptimeLeavesRecoveryOut checks that the scored uptime is
+// signed ÷ (in the set − recovering), to the 2 decimals the stats line
+// shows: bravo and charlie, absent through a restart's recovery run, read
+// the report's figures with that run left out, not the share it would give
+// with it.
+func TestPageValidatorUptimeLeavesRecoveryOut(t *testing.T) {
+	e := openPage(t, desktop, valChartsRecoveryEdges(t), noNavigate())
+	for _, v := range []struct {
+		name string
+		addr string
+	}{{"bravo", valBravo.address()}, {"charlie", valCharlie.address()}} {
+		sm := e.valPageSummary(v.name, v.addr)
+		if sm.Recovering == 0 {
+			t.Fatalf("%s: recovering = 0, want a recovery run in the window", v.name)
+		}
+		// The page rounds half up, in decimal: so do these.
+		share := func(signed, counted int64) string {
+			hundredths := (signed*20000 + counted) / (2 * counted)
+			return fmt.Sprintf("%d.%02d %%", hundredths/100, hundredths%100)
+		}
+		with := share(int64(sm.Signed), int64(sm.InSet))
+		without := share(int64(sm.Signed), int64(sm.InSet-sm.Recovering))
+		if with == without {
+			t.Fatalf("%s: uptime reads %s with the recovery run and without: the scenario cannot tell them apart", v.name, with)
+		}
+		e.navigate("/?val=" + v.addr)
+		e.must(e.expect("#val-body [data-section=timeline]").ToBeVisible())
+		e.must(e.Expect.Locator(e.Page.Locator("#val-body [data-section=uptime] .val-stats b").First()).ToHaveText(without))
+	}
 }

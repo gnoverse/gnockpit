@@ -1,16 +1,33 @@
-// The validators card's Timeline view lists the validator set
-// changes the block history holds, newest first, from
-// /api/history?changes=; the pages it shows are read again while
-// shown.
+// The validators card's views, Live, Timeline and Ranking, and its
+// Timeline view, which lists the validator set changes the block
+// history holds, newest first, from /api/history?changes=; the pages
+// it shows are read again while shown.
 
 /** @import { HistoryChange, HistoryChangeMember, HistoryFilled, HistoryReport } from '../types/history.js' */
 
-import { $ } from './dom.js'
+import { $, $in } from './dom.js'
 import { thousands, timeAgo, utcMinute } from './format.js'
 import { shortAddr, valLink } from './names.js'
 import { present } from './present.js'
+import { rankingHidden, rankingShown } from './ranking.js'
 import { boundedRead, errorOf, failureMessage } from './read.js'
 import { storageGet, storageSet } from './storage.js'
+
+// offer is what offerRanking does: start sets it, as the card's view
+// lives in start. Before start, or after a start that failed, an
+// answer changes nothing.
+/** @type {(on: boolean) => void} */
+let offer = function () {}
+
+// offerRanking takes the server's word on the ranking, as each
+// /api/boot answer gives it. While it is on, the card offers the
+// Ranking view, and shows it if it waits for it: asked by ?view= or
+// the saved view, or left for Live by an answer saying off. While it
+// is off, the card shows Live in its stead.
+/** @param {boolean} on */
+export function offerRanking(on) {
+    offer(on)
+}
 
 /**
  * A segment of a change's line: its text, whether it is bold, and the
@@ -30,10 +47,15 @@ export function start() {
     // one never holds up the reads after it.
     const READ_BOUND_MS = 10000
     const VIEW_KEY = 'gnockpit-validators-view'
+    const VIEWS = ['live', 'timeline', 'ranking']
     const card = $('validators-card')
     const list = $('validators-timeline')
     const seg = $('validators-view')
+    const rankingButton = $in(seg, 'button[data-view="ranking"]')
     let view = 'live'
+    // The card waits to show the Ranking view until the server's word
+    // that the ranking is on; a view the viewer picks ends the wait.
+    let rankingWaits = false
     /** @type {HistoryChange[]} */
     let changes = []
     let moreBelow = false // the history holds changes below the last page read
@@ -497,23 +519,41 @@ export function start() {
                 }, VALSET_POLL_MS)
         })
     }
+    // setView shows view v. It saves nothing: only the viewer's click
+    // on the switch does, so neither ?view= nor a view the card shows
+    // on its own changes the view saved.
     /** @param {string} v */
     function setView(v) {
         view = v
         card.classList.toggle('view-timeline', v === 'timeline')
+        card.classList.toggle('view-ranking', v === 'ranking')
         seg.querySelectorAll('button').forEach(function (b) {
             b.setAttribute('aria-pressed', String(b.dataset.view === v))
         })
-        storageSet(VIEW_KEY, v)
         clearTimeout(timer)
         gen++
         if (v === 'timeline') poll(gen)
+        if (v === 'ranking') rankingShown()
+        else rankingHidden()
     }
+    // A click on the switch is the viewer's choice: it saves the view,
+    // and takes ?view= out of the page's address, so a reload opens the
+    // view clicked, not the link's. The entry is replaced, its state
+    // kept: the validator page's entries carry theirs.
     seg.addEventListener('click', function (e) {
         if (!(e.target instanceof Element)) return
         const b = e.target.closest('button')
+        if (!b) return
+        rankingWaits = false
         // Each of the view's buttons carries data-view (index.html).
-        if (b) setView(/** @type {string} */ (b.dataset.view))
+        const v = /** @type {string} */ (b.dataset.view)
+        storageSet(VIEW_KEY, v)
+        const url = new URL(location.href)
+        if (url.searchParams.has('view')) {
+            url.searchParams.delete('view')
+            history.replaceState(history.state, '', url)
+        }
+        setView(v)
     })
     // A user who moves on while "older" reads keeps where they
     // went: a press outside the list, or the focus taken anywhere,
@@ -533,6 +573,26 @@ export function start() {
         },
         true
     )
-    const saved = storageGet(VIEW_KEY) || 'live'
-    setView(saved === 'timeline' ? 'timeline' : 'live')
+    // The card opens on the view ?view= names, else on the one saved,
+    // else on Live. The Ranking view waits for /api/boot's word:
+    // Live shows meanwhile.
+    const wanted =
+        [
+            new URLSearchParams(location.search).get('view'),
+            storageGet(VIEW_KEY),
+        ].find(function (v) {
+            return v !== null && VIEWS.includes(v)
+        }) || 'live'
+    rankingWaits = wanted === 'ranking'
+    setView(rankingWaits ? 'live' : wanted)
+    offer = function (on) {
+        rankingButton.hidden = !on
+        if (on && rankingWaits) {
+            rankingWaits = false
+            setView('ranking')
+        } else if (!on && view === 'ranking') {
+            rankingWaits = true
+            setView('live')
+        }
+    }
 }

@@ -72,7 +72,7 @@ func TestPageValidatorUptimeChart(t *testing.T) {
 	}{
 		{"2026-10-21", rowsPopover{
 			labels:   []string{"signed", "", "absent", "other block", "nil votes"},
-			values:   []string{"697 of 720", "96.81 %", "22", "1", "2 (signed)"},
+			values:   []string{"697 of 720", "96.80 %", "22", "1", "2 (signed)"},
 			swatches: []string{yellowColor},
 		}},
 		{"2026-10-22", rowsPopover{
@@ -94,7 +94,7 @@ func TestPageValidatorUptimeChart(t *testing.T) {
 		{"2026-10-24", rowsPopover{labels: []string{"not in the set"}, values: []string{""}, swatches: []string{borderColor}}},
 		{"2026-11-18", rowsPopover{
 			labels:   []string{"signed", "", "absent", "other block", "nil votes"},
-			values:   []string{"299 of 330", "90.61 %", "31", "0", "0 (signed)"},
+			values:   []string{"299 of 330", "90.60 %", "31", "0", "0 (signed)"},
 			swatches: []string{redColor},
 		}},
 	} {
@@ -700,68 +700,70 @@ func TestPageValidatorChartsReadTheReport(t *testing.T) {
 
 // ---- Bands
 
-// TestPageValidatorBandsReadTheFiguresShown checks that a share's band is
-// the band of the share as written: 99.895 % signed is written 99.90 % and
-// is green, 4.96 % of proposals missed is written 5.0 % and is red, in a
-// stats line and on a day.
-func TestPageValidatorBandsReadTheFiguresShown(t *testing.T) {
+// TestPageValidatorBandsReadTheValues checks that a share is written never
+// better than it is and banded on its value, as the ranking colours it:
+// 99.895 % signed is written 99.89 % and is orange, 4.96 % of proposals
+// missed is written 5.0 % and is orange, in a stats line and on a day.
+func TestPageValidatorBandsReadTheValues(t *testing.T) {
 	onProfiles(t, []profile{desktop, phone}, func(t *testing.T, p profile) {
 		e := openPage(t, p, valChartsEdges(t), withURL("/?val="+valAlpha.address()))
 		e.must(e.expect("#val-body [data-section=timeline]").ToBeVisible())
 		e.expectStats("alpha", "uptime", statWindow{name: "last 30 days", stats: []statItem{
-			{label: "signed", value: "99.90 %", band: "ok"}, {label: "outages", value: "0", band: "ok"}, {label: "nil votes", value: "0", band: ""}, {label: "other block", value: "0", band: ""},
+			{label: "signed", value: "99.89 %", band: "warn"}, {label: "outages", value: "0", band: "ok"}, {label: "nil votes", value: "0", band: ""}, {label: "other block", value: "0", band: ""},
 		}})
 		// From 2026-10-28: 2026-11-17 is the 21st day, 959 of 960 signed.
 		day := e.chartBox("uptime").Locator("svg > rect").Nth(20)
-		e.must(e.Expect.Locator(day).ToHaveCSS("fill", greenColor))
+		e.must(e.Expect.Locator(day).ToHaveCSS("fill", yellowColor))
 		e.point(day)
 		e.expectPopover(rowsPopover{
 			title:    "2026-11-17",
 			labels:   []string{"signed", "", "absent", "other block", "nil votes"},
-			values:   []string{"959 of 960", "99.90 %", "1", "0", "0 (signed)"},
-			swatches: []string{greenColor},
+			values:   []string{"959 of 960", "99.89 %", "1", "0", "0 (signed)"},
+			swatches: []string{yellowColor},
 		})
 
 		e.navigate("/?val=" + valBravo.address())
 		e.must(e.expect("#val-body [data-section=timeline]").ToBeVisible())
 		e.expectStats("bravo", "proposals",
-			statWindow{name: "last 30 days", stats: []statItem{{label: "missed", value: "31 of 625 (5.0 %)", band: "err"}}},
+			statWindow{name: "last 30 days", stats: []statItem{{label: "missed", value: "31 of 625 (5.0 %)", band: "warn"}}},
 			statWindow{name: "last 24 h", stats: []statItem{{label: "missed", value: "none expected", band: ""}}},
 		)
 		day = e.chartBox("proposals").Locator("svg > rect").Nth(13) // 2026-11-10
-		e.must(e.Expect.Locator(day).ToHaveCSS("fill", redColor))
+		e.must(e.Expect.Locator(day).ToHaveCSS("fill", yellowColor))
 		e.point(day)
 		e.expectPopover(rowsPopover{
-			title: "2026-11-10", labels: []string{"missed", ""}, values: []string{"31 of 625", "5.0 %"}, swatches: []string{redColor},
+			title: "2026-11-10", labels: []string{"missed", ""}, values: []string{"31 of 625", "5.0 %"}, swatches: []string{yellowColor},
 		})
 	})
 }
 
 // TestPageValidatorAMissIsNeverNoneMissed checks that a missed proposal
-// whose share rounds to 0.0 % reads under 0.1 % and is banded as a miss,
-// never as none missed: 1 of 2,001, in a stats line and on its day.
+// whose share is under 0.05 % reads 0.1 %, rounded up, and is banded as a
+// miss, never as none missed: 1 of 2,001, in a stats line and on its day.
 func TestPageValidatorAMissIsNeverNoneMissed(t *testing.T) {
 	onProfiles(t, []profile{desktop, phone}, func(t *testing.T, p profile) {
 		e := openPage(t, p, valChartsOneMiss(t), withURL("/?val="+valBravo.address()))
 		e.must(e.expect("#val-body [data-section=timeline]").ToBeVisible())
 		e.expectStats("bravo", "proposals",
-			statWindow{name: "last 30 days", stats: []statItem{{label: "missed", value: "1 of 2,001 (< 0.1 %)", band: "warn"}}},
+			statWindow{name: "last 30 days", stats: []statItem{{label: "missed", value: "1 of 2,001 (0.1 %)", band: "warn"}}},
 			statWindow{name: "last 24 h", stats: []statItem{{label: "missed", value: "none expected", band: ""}}},
 		)
 		day := e.chartBox("proposals").Locator("svg > rect").First() // 2026-11-12
 		e.must(e.Expect.Locator(day).ToHaveCSS("fill", yellowColor))
 		e.point(day)
 		e.expectPopover(rowsPopover{
-			title: "2026-11-12", labels: []string{"missed", ""}, values: []string{"1 of 2,001", "< 0.1 %"}, swatches: []string{yellowColor},
+			title: "2026-11-12", labels: []string{"missed", ""}, values: []string{"1 of 2,001", "0.1 %"}, swatches: []string{yellowColor},
 		})
 	})
 }
 
-// TestPageValidatorRecoveryBandsReadTheDurationsShown checks that a
-// recovery's band is the band of its duration as written, to the second:
-// 600.4 s is written 10 min 00 s and is green, 86,399.6 s 24 h 00 min and
-// red, in the stats line, the chart and the Timeline.
-func TestPageValidatorRecoveryBandsReadTheDurationsShown(t *testing.T) {
+// TestPageValidatorRecoveryBandsReadTheDurations checks that a recovery is
+// written never faster than it was, rounded up, and banded on its
+// duration, as the ranking colours it: 600.4 s is written 10 min 01 s and
+// is orange, past the 10 minutes of full marks; 86,399.6 s is written
+// 24 h 00 min and is orange, short of the 24 hours that score 0; in the
+// stats line, the chart and the Timeline.
+func TestPageValidatorRecoveryBandsReadTheDurations(t *testing.T) {
 	onProfiles(t, []profile{desktop, phone}, func(t *testing.T, p profile) {
 		e := openPage(t, p, valChartsRecoveryEdges(t), noNavigate())
 		for _, tc := range []struct {
@@ -770,8 +772,8 @@ func TestPageValidatorRecoveryBandsReadTheDurationsShown(t *testing.T) {
 			shown      string
 			band, fill string
 		}{
-			{"bravo", valBravo.address(), "10 min 00 s", "ok", greenColor},
-			{"charlie", valCharlie.address(), "24 h 00 min", "err", redColor},
+			{"bravo", valBravo.address(), "10 min 01 s", "warn", yellowColor},
+			{"charlie", valCharlie.address(), "24 h 00 min", "warn", yellowColor},
 		} {
 			e.navigate("/?val=" + tc.val)
 			e.must(e.expect("#val-body [data-section=timeline]").ToBeVisible())

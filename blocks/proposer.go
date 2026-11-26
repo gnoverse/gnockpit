@@ -29,7 +29,7 @@ type prioSet []*prioVal
 func newPrioSet(members []node.SetMember) (prioSet, error) {
 	set := make(prioSet, len(members))
 	for i, m := range members {
-		b, err := crypto.AddressFromBech32(m.Address)
+		b, err := crypto.AddressFromString(m.Address)
 		if err != nil {
 			return nil, fmt.Errorf("validator %q: %w", m.Address, err)
 		}

@@ -11,6 +11,17 @@ import (
 	"github.com/mxschmitt/playwright-go"
 )
 
+// ---- The validators card's views
+
+const (
+	// validatorsViewKey is the localStorage key of the validators card's view.
+	validatorsViewKey = "gnockpit-validators-view"
+	// validatorsLiveToggle and validatorsTimelineToggle are the view switch's
+	// Live and Timeline buttons.
+	validatorsLiveToggle     = `#validators-view button[data-view="live"]`
+	validatorsTimelineToggle = `#validators-view button[data-view="timeline"]`
+)
+
 // ---- Rows and cards
 
 // peerEntry is the row of the Peers table (desktop, tablet) or the card
