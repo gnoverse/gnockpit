@@ -1,4 +1,4 @@
-.PHONY: install test test-page install-browsers typecheck
+.PHONY: install test test-page test-gnokey install-browsers typecheck
 
 install:
 	go install .
@@ -14,6 +14,23 @@ test:
 test-page:
 	go vet -tags page ./web/
 	go test -tags page -count=1 -timeout 45m ./web/
+
+# The page's location document, signed by real gnokeys: each version
+# GNOKEY_VERSIONS lists is built into a temporary directory (go install
+# needs the module proxy or the module cache, the v1.7.1 toolchain
+# included), and TestLocationSignedByGnokey signs with each. The directory
+# goes by its absolute path, as go test runs in ./web/, and only once
+# mktemp made it: cd "" stays put, and the trap would remove where make runs.
+GNOKEY_VERSIONS ?= v1.1.0 v1.7.1
+
+test-gnokey:
+	@tmp=$$(mktemp -d) && dir=$$(cd "$$tmp" && pwd) && trap 'rm -rf "$$dir"' EXIT && list= && \
+	for v in $(GNOKEY_VERSIONS); do \
+		echo "building gnokey $$v"; \
+		GOBIN="$$dir/$$v" go install github.com/gnolang/gno/gno.land/cmd/gnokey@$$v || exit 1; \
+		list="$$list$${list:+:}$$dir/$$v/gnokey"; \
+	done && \
+	GNOCKPIT_GNOKEY="$$list" go test -count=1 -v -run '^TestLocationSignedByGnokey$$' ./web/
 
 # --with-deps also installs the browsers' system packages, on the Linux
 # distributions Playwright supports; set it empty to install the browsers

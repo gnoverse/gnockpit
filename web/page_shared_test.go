@@ -470,13 +470,38 @@ func sectionTitle(key string) string {
 
 // ---- Window
 
-// resize sets the viewport to width × height, then has the browser
-// render a frame, which fires the window's resize event.
+// resize sets the viewport to width × height, has the browser render a
+// frame, which fires the window's resize event, and returns once the page
+// has handled the event: a listener added here, after the page's own, sets a
+// flag the wait polls for, on the browser's own timers, which an installed
+// clock leaves running. A test that moves an installed clock next moves it
+// past the timers the page's listeners armed, never before them: WebKit can
+// dispatch the event after the frame's screenshot returned. A size the
+// viewport already has fires no event, and needs no wait.
 func (e *pageEnv) resize(width, height int) {
 	e.T.Helper()
+	if vp := e.Page.ViewportSize(); vp != nil && vp.Width == width && vp.Height == height {
+		e.renderFrame()
+		return
+	}
+	if _, err := e.Page.Evaluate(`() => {
+		window.pageTestResized = false
+		addEventListener('resize', () => { window.pageTestResized = true }, { once: true })
+	}`); err != nil {
+		e.T.Fatalf("resize to %d × %d: listen for the resize event: %v", width, height, err)
+	}
 	e.must(e.Page.SetViewportSize(width, height))
 	e.renderFrame()
+	if _, err := e.Page.WaitForFunction(`() => window.pageTestResized`, nil, playwright.PageWaitForFunctionOptions{
+		Polling: resizePoll.Milliseconds(),
+	}); err != nil {
+		e.T.Fatalf("resize to %d × %d: the page handled no resize event: %v", width, height, err)
+	}
 }
+
+// resizePoll is how often resize checks whether the page handled the resize
+// event.
+const resizePoll = 10 * time.Millisecond
 
 // renderFrame has the browser render a frame, which a headless browser
 // under an installed clock renders only on demand: resize and scroll events

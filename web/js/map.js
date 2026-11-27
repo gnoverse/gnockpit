@@ -1,7 +1,8 @@
-// The map card: the peers placed on a world map, and beside it their
-// count by country or by provider.
+// The map card: the peers and the declared validators placed on a world
+// map, and beside it their count by country or by provider.
 
 /** @import { Peer } from '../types/node.js' */
+/** @import { DeclaredNode } from '../types/server.js' */
 /** @import { PopRow } from './popover.js' */
 
 import { compareNames } from './collate.js'
@@ -14,13 +15,31 @@ import { present } from './present.js'
 import { live } from './state.js'
 
 /**
- * The peers counted by country or by provider.
- * @typedef {Record<string, number>} Counts
+ * The nodes counted by country or by provider. A Map, as the providers are
+ * any text (an operator declares its own): a name such as "constructor" or
+ * "__proto__" keys a count as any other.
+ * @typedef {Map<string, number>} Counts
+ */
+/**
+ * A node the map counts: a peer, or a validator at its declared location.
+ * Its coordinates, null while it is not located; its country and provider,
+ * "Unknown" when it has none; whether it is a validator.
+ * @typedef {object} MapNode
+ * @property {number | null} lat
+ * @property {number | null} lon
+ * @property {string} cc
+ * @property {string} prov
+ * @property {boolean} val
  */
 /**
  * The validators (v) and the other peers (p) of a branch of a cluster's
  * popover.
  * @typedef {{ v: number, p: number }} BranchCount
+ */
+/**
+ * The branches of the popovers' groups, by group then branch: a country's
+ * providers, or a provider's countries.
+ * @typedef {Map<string, Map<string, BranchCount>>} Branches
  */
 /**
  * A cluster of the map: its group and its kind, how many peers it
@@ -39,53 +58,137 @@ import { live } from './state.js'
  * @property {number} ay
  */
 
+// countIn adds one to key's count in counts.
+/**
+ * @param {Counts} counts
+ * @param {string} key
+ */
+function countIn(counts, key) {
+    counts.set(key, (counts.get(key) || 0) + 1)
+}
+
+// branchOf returns the count of branch in group's branches, a new
+// one at zero the first time.
+/**
+ * @param {Branches} branches
+ * @param {string} group
+ * @param {string} branch
+ * @returns {BranchCount}
+ */
+function branchOf(branches, group, branch) {
+    let ofGroup = branches.get(group)
+    if (!ofGroup) {
+        ofGroup = new Map()
+        branches.set(group, ofGroup)
+    }
+    let c = ofGroup.get(branch)
+    if (!c) {
+        c = { v: 0, p: 0 }
+        ofGroup.set(branch, c)
+    }
+    return c
+}
+
 // mapFingerprint sums up what the map and its side list draw of
-// peers: each peer's place, kind, country and provider, and the
-// list's mode.
+// peers and declared: each peer's place, kind, country and
+// provider, each declared validator's key, name, place, country and
+// provider (not its time, which they do not show), and the list's
+// mode.
 /**
  * @param {Peer[] | null} peers
+ * @param {Record<string, DeclaredNode>} declared
  * @returns {string}
  */
-function mapFingerprint(peers) {
+function mapFingerprint(peers, declared) {
     return JSON.stringify([
         mapListMode,
         (peers || []).map(function (p) {
             return [p.lat, p.lon, p.country, p.provider, p.val_address, p.role]
+        }),
+        Object.entries(declared).map(function ([key, d]) {
+            return [key, d.name, d.lat, d.lon, d.country, d.provider]
         }),
     ])
 }
 /** @type {string | null} */
 let lastMapFingerprint = null
 
-// renderMap plots a dot for each peer that has a geolocation, on an
-// equirectangular world map (viewBox 0 0 360 180): x = lon + 180,
-// y = 90 - lat. Dots and the side list are tagged with the peer's
-// country so hovering either highlights the other. The card stays
-// hidden until at least one peer resolves (the geo database
-// downloads in the background at startup). It draws again only
-// when what it draws changed: an open popover, a highlight and the
-// list's scroll stay.
-/** @param {Peer[] | null} peers */
-export function renderMap(peers) {
+// renderMap plots a dot for each peer that has a geolocation, and
+// for each validator of declared (the declared locations that
+// show, by signing key), on an equirectangular world map (viewBox
+// 0 0 360 180): x = lon + 180, y = 90 - lat. Dots and the side
+// list are tagged with the node's country so hovering either
+// highlights the other. The card stays hidden until at least one
+// node is placed (the geo database downloads in the background at
+// startup). It draws again only when what it draws changed: an
+// open popover, a highlight and the list's scroll stay.
+/**
+ * @param {Peer[] | null} peers
+ * @param {Record<string, DeclaredNode>} declared
+ */
+export function renderMap(peers, declared) {
     const card = $('map-card')
     const g = $svg('map-points')
     const list = $('map-country-list')
-    const fp = mapFingerprint(peers)
+    const fp = mapFingerprint(peers, declared)
     if (fp === lastMapFingerprint) return
     lastMapFingerprint = fp
     clearChildren(g)
     clearChildren(list)
 
-    const allPeers = peers || []
-    // The server sends a peer's coordinates only once it is
-    // located, and 0 is a coordinate like any other.
-    const located = allPeers.filter(
+    // Whether peer p is a validator's node: it reports a validator's
+    // address, or its role names it one.
+    /**
+     * @param {Peer} p
+     * @returns {boolean}
+     */
+    function isVal(p) {
+        return !!p.val_address || (p.role || '').indexOf('val') === 0
+    }
+    // A declared validator's provider, "Unknown" when its operator
+    // declared none.
+    /**
+     * @param {DeclaredNode} d
+     * @returns {string}
+     */
+    function provOf(d) {
+        return d.provider || 'Unknown'
+    }
+    // The nodes: the peers, and the declared validators. A
+    // declaration stands for its validator's peers, which no IP
+    // locates while it shows: they leave the counts, the
+    // declaration counts in their stead. The server sends a peer's
+    // coordinates only once it is located, and 0 is a coordinate
+    // like any other.
+    const declarations = Object.values(declared)
+    /** @type {MapNode[]} */
+    const nodes = []
+    for (const p of peers || []) {
+        if (p.val_address && Object.hasOwn(declared, p.val_address)) continue
+        nodes.push({
+            lat: typeof p.lat === 'number' ? p.lat : null,
+            lon: typeof p.lon === 'number' ? p.lon : null,
+            cc: p.country || 'Unknown',
+            prov: p.provider || 'Unknown',
+            val: isVal(p),
+        })
+    }
+    for (const d of declarations) {
+        nodes.push({
+            lat: d.lat,
+            lon: d.lon,
+            cc: d.country,
+            prov: provOf(d),
+            val: true,
+        })
+    }
+    const located = nodes.filter(
         /**
-         * @param {Peer} p
-         * @returns {p is Peer & { lat: number, lon: number }}
+         * @param {MapNode} n
+         * @returns {n is MapNode & { lat: number, lon: number }}
          */
-        function (p) {
-            return typeof p.lat === 'number' && typeof p.lon === 'number'
+        function (n) {
+            return n.lat !== null && n.lon !== null
         }
     )
     if (located.length === 0) {
@@ -94,62 +197,43 @@ export function renderMap(peers) {
     }
     card.style.display = ''
 
-    // Aggregate ALL peers (located + unlocated) for the side lists so
+    // Aggregate ALL nodes (located + unlocated) for the side lists so
     // peers with no public IP (hence no country/provider) are counted
-    // under "Unknown". Map dots are plotted only for located peers.
+    // under "Unknown". Map dots are plotted only for located nodes.
     /** @type {Counts} */
-    const byCountry = {}
+    const byCountry = new Map()
     /** @type {Counts} */
-    const byProvider = {}
-    allPeers.forEach(function (p) {
-        const code = p.country || 'Unknown'
-        byCountry[code] = (byCountry[code] || 0) + 1
-        const prov = p.provider || 'Unknown'
-        byProvider[prov] = (byProvider[prov] || 0) + 1
+    const byProvider = new Map()
+    nodes.forEach(function (n) {
+        countIn(byCountry, n.cc)
+        countIn(byProvider, n.prov)
     })
-    // Per-country validator / peer counts among located peers, for the
-    // cluster tooltips.
-    /**
-     * @param {Peer} p
-     * @returns {boolean}
-     */
-    function isVal(p) {
-        return !!p.val_address || (p.role || '').indexOf('val') === 0
-    }
-    // Totals + cross breakdowns among located peers, keyed both ways
-    // for the two cluster tooltips: country root -> providers, and
-    // provider root -> countries.
+    // Totals + cross breakdowns among located nodes, validators and
+    // peers apart, keyed both ways for the two cluster tooltips:
+    // country root -> providers, and provider root -> countries.
     /** @type {Counts} */
-    const ccVal = {}
+    const ccVal = new Map()
     /** @type {Counts} */
-    const ccPeer = {}
-    /** @type {Record<string, Record<string, BranchCount>>} */
-    const ccProv = {} // cc -> { provider -> {v, p} }
+    const ccPeer = new Map()
+    /** @type {Branches} */
+    const ccProv = new Map() // cc -> provider -> {v, p}
     /** @type {Counts} */
-    const prVal = {}
+    const prVal = new Map()
     /** @type {Counts} */
-    const prPeer = {}
-    /** @type {Record<string, Record<string, BranchCount>>} */
-    const prCC = {} // provider -> { cc -> {v, p} }
-    located.forEach(function (p) {
-        const cc = p.country || 'Unknown'
-        const prov = p.provider || 'Unknown'
-        const v = isVal(p)
-        if (v) {
-            ccVal[cc] = (ccVal[cc] || 0) + 1
-            prVal[prov] = (prVal[prov] || 0) + 1
-        } else {
-            ccPeer[cc] = (ccPeer[cc] || 0) + 1
-            prPeer[prov] = (prPeer[prov] || 0) + 1
-        }
-        const m1 = (ccProv[cc] = ccProv[cc] || {})
-        const e1 = (m1[prov] = m1[prov] || { v: 0, p: 0 })
-        const m2 = (prCC[prov] = prCC[prov] || {})
-        const e2 = (m2[cc] = m2[cc] || { v: 0, p: 0 })
-        if (v) {
+    const prPeer = new Map()
+    /** @type {Branches} */
+    const prCC = new Map() // provider -> cc -> {v, p}
+    located.forEach(function (n) {
+        const e1 = branchOf(ccProv, n.cc, n.prov)
+        const e2 = branchOf(prCC, n.prov, n.cc)
+        if (n.val) {
+            countIn(ccVal, n.cc)
+            countIn(prVal, n.prov)
             e1.v++
             e2.v++
         } else {
+            countIn(ccPeer, n.cc)
+            countIn(prPeer, n.prov)
             e1.p++
             e2.p++
         }
@@ -172,14 +256,14 @@ export function renderMap(peers) {
     // Unknown last as in the side list. name(key) is the name a
     // branch shows, label(key) its whole label.
     /**
-     * @param {Record<string, BranchCount> | undefined} m
+     * @param {Map<string, BranchCount> | undefined} m
      * @param {(key: string) => string} name
      * @param {(key: string) => string} label
      * @returns {PopRow[]}
      */
     function branchRows(m, name, label) {
         if (!m) return []
-        return Object.entries(m)
+        return Array.from(m)
             .sort(function ([a, ca], [b, cb]) {
                 if (a === 'Unknown') return 1
                 if (b === 'Unknown') return -1
@@ -191,7 +275,42 @@ export function renderMap(peers) {
                 return [null, label(k), counts(c.v, c.p)]
             })
     }
-    // Country popover: flag + name + totals, providers as rows.
+    // A branch's label: a provider's in a country's popover, a
+    // country's in a provider's.
+    /**
+     * @param {string} pr
+     * @returns {string}
+     */
+    function providerLabel(pr) {
+        return '☁️ ' + pr
+    }
+    /**
+     * @param {string} cc
+     * @returns {string}
+     */
+    function countryLabel(cc) {
+        return countryFlag(cc) + ' ' + countryName(cc)
+    }
+    // Rows after a popover's branches, one per declared validator
+    // of its group (inGroup), in the order of their names: the name
+    // marked declared, its branch as branch(d) labels it.
+    /**
+     * @param {(d: DeclaredNode) => boolean} inGroup
+     * @param {(d: DeclaredNode) => string} branch
+     * @returns {PopRow[]}
+     */
+    function declaredRows(inGroup, branch) {
+        return declarations
+            .filter(inGroup)
+            .sort(function (a, b) {
+                return compareNames(a.name, b.name)
+            })
+            .map(function (d) {
+                return [null, d.name + ' (declared)', branch(d)]
+            })
+    }
+    // Country popover: flag + name + totals, providers as rows,
+    // then the country's declared validators.
     /**
      * @param {Element} el
      * @param {string} cc
@@ -199,19 +318,19 @@ export function renderMap(peers) {
     function countryPop(el, cc) {
         popRows(
             el,
-            countryFlag(cc) +
-                ' ' +
-                countryName(cc) +
+            countryLabel(cc) +
                 ' · ' +
-                counts(ccVal[cc] || 0, ccPeer[cc] || 0),
-            branchRows(
-                ccProv[cc],
-                (pr) => pr,
-                (pr) => '☁️ ' + pr
+                counts(ccVal.get(cc) || 0, ccPeer.get(cc) || 0),
+            branchRows(ccProv.get(cc), (pr) => pr, providerLabel).concat(
+                declaredRows(
+                    (d) => d.country === cc,
+                    (d) => providerLabel(provOf(d))
+                )
             )
         )
     }
-    // Provider popover: cloud + name + totals, countries as rows.
+    // Provider popover: cloud + name + totals, countries as rows,
+    // then the provider's declared validators.
     /**
      * @param {Element} el
      * @param {string} prov
@@ -219,10 +338,15 @@ export function renderMap(peers) {
     function providerPop(el, prov) {
         popRows(
             el,
-            '☁️ ' + prov + ' · ' + counts(prVal[prov] || 0, prPeer[prov] || 0),
-            branchRows(prCC[prov], countryName, function (cc) {
-                return countryFlag(cc) + ' ' + countryName(cc)
-            })
+            providerLabel(prov) +
+                ' · ' +
+                counts(prVal.get(prov) || 0, prPeer.get(prov) || 0),
+            branchRows(prCC.get(prov), countryName, countryLabel).concat(
+                declaredRows(
+                    (d) => provOf(d) === prov,
+                    (d) => countryLabel(d.country)
+                )
+            )
         )
     }
 
@@ -233,18 +357,18 @@ export function renderMap(peers) {
     // One point per (city coordinate, type, group): city-level geo puts
     // every node in a city on one coordinate, split into validators vs
     // peers, keyed by the active grouping.
-    /** @type {Record<string, MapPoint>} */
-    const byKey = {}
-    located.forEach(function (p) {
+    /** @type {Map<string, MapPoint>} */
+    const byKey = new Map()
+    located.forEach(function (n) {
         /** @type {'val' | 'peer'} */
-        const type = isVal(p) ? 'val' : 'peer'
-        const grp = provMode ? p.provider || 'Unknown' : p.country || 'Unknown'
-        const cx = p.lon + 180,
-            cy = 90 - p.lat
+        const type = n.val ? 'val' : 'peer'
+        const grp = provMode ? n.prov : n.cc
+        const cx = n.lon + 180
+        const cy = 90 - n.lat
         const key = cx.toFixed(3) + ',' + cy.toFixed(3) + ',' + type + ',' + grp
-        let pt = byKey[key]
-        if (!pt)
-            pt = byKey[key] = {
+        let pt = byKey.get(key)
+        if (!pt) {
+            pt = {
                 grp: grp,
                 type: type,
                 count: 0,
@@ -257,11 +381,13 @@ export function renderMap(peers) {
                 ax: 0,
                 ay: 0,
             }
+            byKey.set(key, pt)
+        }
         pt.count++
         pt.sx += cx
         pt.sy += cy
     })
-    const pts = Object.values(byKey)
+    const pts = Array.from(byKey.values())
     const GAP = 4
     // fin places cluster p at the mean of its peers' coordinates, its
     // anchor there too, sized by its count.
@@ -312,9 +438,11 @@ export function renderMap(peers) {
                 const d = Math.sqrt(ex * ex + ey * ey) || 0.001,
                     mn = p1.r + p2.r + GAP
                 if (d < mn) {
-                    const push = (mn - d) / 2,
-                        ux = ex / d,
-                        uy = ey / d
+                    const push = (mn - d) / 2
+                    // Clusters at one point have no direction between
+                    // them: they part along x.
+                    const ux = ex || ey ? ex / d : 1
+                    const uy = ey / d
                     p1.x -= ux * push
                     p1.y -= uy * push
                     p2.x += ux * push
@@ -405,11 +533,11 @@ export function renderMap(peers) {
 // renderMap so switching re-renders without refetching.
 let mapListMode = 'country'
 /** @type {Counts} */
-let lastByCountry = {}
+let lastByCountry = new Map()
 /** @type {Counts} */
-let lastByProvider = {}
+let lastByProvider = new Map()
 
-// renderSideList lists the last map's peers by the list's mode.
+// renderSideList lists the last map's nodes by the list's mode.
 function renderSideList() {
     const list = $('map-country-list')
     clearChildren(list)
@@ -426,18 +554,14 @@ function renderSideList() {
  * @param {Counts} byProvider
  */
 function renderProviderList(list, byProvider) {
-    const provs = Object.entries(byProvider)
-        .sort(function ([a, na], [b, nb]) {
-            if (a === 'Unknown') return 1
-            if (b === 'Unknown') return -1
-            const d = nb - na
-            if (d !== 0) return d
-            return compareNames(a, b)
-        })
-        .map(function ([prov]) {
-            return prov
-        })
-    provs.forEach(function (prov) {
+    const provs = Array.from(byProvider).sort(function ([a, na], [b, nb]) {
+        if (a === 'Unknown') return 1
+        if (b === 'Unknown') return -1
+        const d = nb - na
+        if (d !== 0) return d
+        return compareNames(a, b)
+    })
+    provs.forEach(function ([prov, n]) {
         const row = document.createElement('div')
         row.className = 'country-row'
         row.setAttribute('role', 'listitem')
@@ -447,7 +571,7 @@ function renderProviderList(list, byProvider) {
         name.textContent = prov
         const count = document.createElement('span')
         count.className = 'country-count'
-        count.textContent = String(byProvider[prov])
+        count.textContent = String(n)
         row.appendChild(name)
         row.appendChild(count)
         list.appendChild(row)
@@ -462,18 +586,14 @@ function renderProviderList(list, byProvider) {
  * @param {Counts} byCountry
  */
 function renderCountryList(list, byCountry) {
-    const codes = Object.entries(byCountry)
-        .sort(function ([a, na], [b, nb]) {
-            if (a === 'Unknown') return 1
-            if (b === 'Unknown') return -1
-            const d = nb - na
-            if (d !== 0) return d
-            return compareNames(countryName(a), countryName(b))
-        })
-        .map(function ([code]) {
-            return code
-        })
-    codes.forEach(function (code) {
+    const codes = Array.from(byCountry).sort(function ([a, na], [b, nb]) {
+        if (a === 'Unknown') return 1
+        if (b === 'Unknown') return -1
+        const d = nb - na
+        if (d !== 0) return d
+        return compareNames(countryName(a), countryName(b))
+    })
+    codes.forEach(function ([code, n]) {
         const row = document.createElement('div')
         row.className = 'country-row'
         row.setAttribute('role', 'listitem')
@@ -489,7 +609,7 @@ function renderCountryList(list, byCountry) {
 
         const count = document.createElement('span')
         count.className = 'country-count'
-        count.textContent = String(byCountry[code])
+        count.textContent = String(n)
 
         row.appendChild(flag)
         row.appendChild(name)
@@ -512,6 +632,6 @@ export function start() {
         for (const b of btns) b.setAttribute('aria-pressed', String(b === btn))
         // The map clusters by the active mode, so it re-renders along
         // with the side list.
-        renderMap(live.lastPeers)
+        renderMap(live.lastPeers, live.declared)
     })
 }

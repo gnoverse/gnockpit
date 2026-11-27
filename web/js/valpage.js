@@ -10,6 +10,7 @@
 
 import { copyNotify } from './copy.js'
 import { countryFlag, countryName } from './countries.js'
+import { declaredInfo, locationSection } from './declare.js'
 import { $, clearChildren, mkEl, mkLink, SVG_NS } from './dom.js'
 import { focusable, keepFocusIn } from './focus.js'
 import {
@@ -27,6 +28,7 @@ import { shortAddr } from './names.js'
 import { hidePopover, popRows, showPopover } from './popover.js'
 import { present } from './present.js'
 import { boundedRead, errorOf, failureMessage } from './read.js'
+import { info, section } from './valpage-blocks.js'
 
 // pushedEntry says whether the current history entry is one the page
 // pushed: it carries the { val } state the page gives its own entries.
@@ -82,6 +84,9 @@ export function start() {
     const modal = $('val-modal')
     const body = $('val-body')
     const title = $('val-title')
+    // The note of a declaration stored, which the report's redraw
+    // keeps: it is outside the body.
+    const storedNote = $('val-note')
     /** @type {string | null} */
     let shown = null // the ?val= the page shows; null while closed
     let pushed = false // the URL's ?val= is an entry this page pushed
@@ -124,43 +129,6 @@ export function start() {
         }
     }
     // ---- Building blocks
-    // info builds an ⓘ whose popover says what a datum is, where it
-    // comes from, and whether the ranking scores it.
-    /**
-     * @param {string} what
-     * @param {string} source
-     * @param {string} scored
-     * @returns {HTMLSpanElement}
-     */
-    function info(what, source, scored) {
-        const i = mkEl('span', 'ⓘ', 'info-btn', { tabindex: '0' })
-        i.setAttribute(
-            'data-popover',
-            'What: ' +
-                what +
-                '\nSource: ' +
-                source +
-                '\nScored: ' +
-                (scored ? 'yes, ' + scored : 'no, shown for monitoring')
-        )
-        return i
-    }
-    // section is a section of the page: its title, then its ⓘ.
-    /**
-     * @param {string} key
-     * @param {string} name
-     * @param {HTMLElement} i
-     * @returns {HTMLDivElement}
-     */
-    function section(key, name, i) {
-        const sec = mkEl('div', null, 'val-sec', {
-            'data-section': key,
-        })
-        const h = mkEl('h3', name)
-        h.appendChild(i)
-        sec.appendChild(h)
-        return sec
-    }
     // statsLine builds a section's stats: [window, [[label, value,
     // band class or '']…]] per window.
     /**
@@ -1178,7 +1146,8 @@ export function start() {
 
     // ---- Content
     // statusLine says whether the validator is in the set, since
-    // when, with its power, and where its node runs.
+    // when, with its power, and where its node runs, as its IP or
+    // its operator's declaration places it.
     /**
      * @param {ValidatorReport} rep
      * @returns {HTMLDivElement}
@@ -1231,19 +1200,32 @@ export function start() {
         const loc = rep.location
         if (loc && (loc.country || loc.provider)) {
             const flag = countryFlag(loc.country)
-            const where = mkEl(
-                'span',
+            const declared = loc.source === 'declared'
+            let text =
                 (flag ? flag + ' ' : '') +
-                    (loc.country ? countryName(loc.country) : '—') +
+                (loc.country ? countryName(loc.country) : '—') +
+                ' · ' +
+                (loc.provider || '—')
+            // A declared location carries its coordinates, on the
+            // record's 0.1° grid, and its declaration, whose UTC day
+            // its time starts with.
+            if (declared)
+                text +=
                     ' · ' +
-                    (loc.provider || '—')
-            )
+                    present(loc.lat).toFixed(1) +
+                    ', ' +
+                    present(loc.lon).toFixed(1) +
+                    ' · declared by the operator on ' +
+                    present(loc.declared).at.slice(0, 10)
+            const where = mkEl('span', text)
             where.appendChild(
-                info(
-                    'where its node is hosted',
-                    "its matched peer's IP, through the GeoIP and ASN databases",
-                    ''
-                )
+                declared
+                    ? declaredInfo()
+                    : info(
+                          'where its node is hosted',
+                          "its matched peer's IP, through the GeoIP and ASN databases",
+                          ''
+                      )
             )
             line.appendChild(where)
         }
@@ -1634,6 +1616,13 @@ export function start() {
         body.appendChild(scoredGroup(rep))
         body.appendChild(delaySection(rep))
         body.appendChild(timelineSection(rep))
+        // The Location section, last: what declares a location is the
+        // operator's alone, and its status line above says where it is.
+        const locSec = locationSection(rep, {
+            clearNote: clearNote,
+            reread: (said) => reread(said, rep.operator),
+        })
+        if (locSec) body.appendChild(locSec)
         chartRep = rep
         drawCharts()
     }
@@ -1658,10 +1647,10 @@ export function start() {
         const s = p.toString()
         return location.pathname + (s ? '?' + s : '') + location.hash
     }
-    // show opens the modal on val and reads its report; the URL
-    // follows to the report's operator when it names one. from
-    // is the name clicked to open it, if any: a browser that
-    // does not focus a link on a click leaves it unfocused.
+    // show opens the modal on val and reads its report (see
+    // readReport). from is the name clicked to open it, if any: a
+    // browser that does not focus a link on a click leaves it
+    // unfocused.
     /**
      * @param {string} val
      * @param {Element} [from]
@@ -1678,10 +1667,73 @@ export function start() {
             modal.classList.add('open')
         }
         title.textContent = shortAddr(val)
+        clearNote()
         message('loading…')
         $('val-close').focus()
+        readReport(val, '').catch(throwOn)
+    }
+    // clearNote empties the note of a declaration stored: a page opened
+    // or closed, or a submission starting, has none.
+    function clearNote() {
+        storedNote.textContent = ''
+    }
+    // reread reads the shown validator's report again once gnockpit
+    // stored a declaration of its location, which said says ("declaration
+    // stored"), submitted from the page of operator's validator: a page
+    // closed, or showing another validator, by the time gnockpit answers
+    // stays as it is. The page shows the report it has until the new one
+    // comes, then says said in its note, focuses the Location section's
+    // first button (Update, or Declare its location after a removal),
+    // without scrolling to the page's end where the section is, and
+    // shows the note, the status line just below it, which holds the
+    // location stored. A read that fails says said before why, the focus
+    // on Close.
+    /**
+     * @param {string} said
+     * @param {string} operator
+     */
+    function reread(said, operator) {
+        if (shown !== operator) return
+        // Emptied first, so that the same note is announced again.
+        clearNote()
+        readReport(shown, said + '; ')
+            .then(function (outcome) {
+                if (outcome === 'dropped') return
+                storedNote.textContent = said
+                const open =
+                    outcome === 'shown'
+                        ? body.querySelector(
+                              '[data-section=location] .decl-open'
+                          )
+                        : null
+                if (open instanceof HTMLElement)
+                    open.focus({ preventScroll: true })
+                else $('val-close').focus({ preventScroll: true })
+                storedNote.scrollIntoView({ block: 'nearest' })
+            })
+            .catch(throwOn)
+    }
+    // throwOn throws e, the page's fault, for the console, out of the
+    // promise that caught it: the page has already said what it could.
+    /** @param {unknown} e */
+    function throwOn(e) {
+        setTimeout(function () {
+            throw e
+        })
+    }
+    // readReport reads val's report and shows it, unless a newer read
+    // started meanwhile; the URL follows to the report's operator when
+    // it names one. A read that fails says before, then why. It
+    // resolves once the read ended: shown, failed, or dropped for a
+    // newer one.
+    /**
+     * @param {string} val
+     * @param {string} before
+     * @returns {Promise<'shown' | 'failed' | 'dropped'>}
+     */
+    function readReport(val, before) {
         const s = ++seq
-        boundedRead(REPORT_READ_BOUND_MS, function (signal) {
+        return boundedRead(REPORT_READ_BOUND_MS, function (signal) {
             return fetch('/api/validator?val=' + encodeURIComponent(val), {
                 signal,
             }).then(
@@ -1717,10 +1769,10 @@ export function start() {
             )
         }).then(
             function (r) {
-                if (s !== seq) return
+                if (s !== seq) return 'dropped'
                 if ('error' in r) {
-                    message(r.error)
-                    return
+                    message(before + r.error)
+                    return 'failed'
                 }
                 try {
                     render(r.rep)
@@ -1728,11 +1780,9 @@ export function start() {
                     // The page's fault, not the read's: said
                     // so, and thrown on for the console.
                     chartRep = null
-                    message('could not show it: ' + failureMessage(e))
-                    setTimeout(function () {
-                        throw e
-                    })
-                    return
+                    message(before + 'could not show it: ' + failureMessage(e))
+                    throwOn(e)
+                    return 'failed'
                 }
                 if (r.rep.operator && r.rep.operator !== val) {
                     shown = r.rep.operator
@@ -1742,16 +1792,20 @@ export function start() {
                         urlWith(shown)
                     )
                 }
+                return 'shown'
             },
             /** @param {unknown} e */
             function (e) {
-                if (s === seq) message('could not load: ' + failureMessage(e))
+                if (s !== seq) return 'dropped'
+                message(before + 'could not load: ' + failureMessage(e))
+                return 'failed'
             }
         )
     }
     function hide() {
         shown = null
         chartRep = null
+        clearNote()
         seq++
         modal.classList.remove('open')
         hidePopover()

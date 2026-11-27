@@ -21,8 +21,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gnolang/gno/tm2/pkg/crypto"
+
 	"github.com/gnoverse/gnockpit/blocks"
 	"github.com/gnoverse/gnockpit/eta"
+	"github.com/gnoverse/gnockpit/location"
+	"github.com/gnoverse/gnockpit/location/locationtest"
 	"github.com/gnoverse/gnockpit/node"
 	"github.com/gnoverse/gnockpit/web/push"
 )
@@ -267,6 +271,108 @@ func specNetwork(specs ...valSpec) *scenario {
 	}
 	sc.fill = blocks.Progress{ChainID: pageChainID, From: recs[0].Height, To: pageHeight, FromTime: recs[0].Time, Complete: true}
 	return sc
+}
+
+// ---- Declared locations
+
+// declOpBravo and declOpCharlie are the operator keys of bravo and charlie in
+// declaredNetwork, of gnokey's key type.
+var (
+	declOpBravo   = locationKey("operator bravo")
+	declOpCharlie = locationKey("operator charlie")
+)
+
+// keyAddress is the g1 address of key.
+func keyAddress(key crypto.PrivKey) string { return key.PubKey().Address().String() }
+
+// declaredNetwork is setChangesNetwork, its powers in units of 1, with bravo's
+// peer located by its IP in Berlin (52.52, 13.40), and bravo and charlie
+// operated by declOpBravo and declOpCharlie: their valopers profiles under
+// those keys' addresses. Charlie's peer, at OVH, has no coordinates, so its
+// operator may declare a location; bravo's may not; alpha and delta have no
+// profile. A declaration of charlie's takes its peer out of the map's counts:
+// a declared OVH counts once.
+func declaredNetwork(t *testing.T) *scenario {
+	t.Helper()
+	sc := setChangesNetwork(t, 1)
+	i := slices.IndexFunc(sc.snap.Peers, func(p node.Peer) bool { return p.Moniker == "bravo" })
+	if i < 0 {
+		t.Fatal("declaredNetwork: setChangesNetwork has no peer named bravo")
+	}
+	sc.snap.Peers[i].Lat, sc.snap.Peers[i].Lon = float64Ptr(52.52), float64Ptr(13.40)
+	for op, key := range map[string]crypto.PrivKey{opBravo: declOpBravo, opCharlie: declOpCharlie} {
+		profile, ok := sc.valopers[op]
+		if !ok {
+			t.Fatalf("declaredNetwork: setChangesNetwork has no profile of operator %s", op)
+		}
+		delete(sc.valopers, op)
+		profile.Operator = keyAddress(key)
+		sc.valopers[profile.Operator] = profile
+	}
+	return sc
+}
+
+// unlocate takes the coordinates of v's peers in snap: gnockpit does not
+// locate v by its IP, so its operator's declaration shows.
+func unlocate(snap *node.Snapshot, v pageValidator) {
+	for i := range snap.Peers {
+		if snap.Peers[i].ValAddress == v.address() {
+			snap.Peers[i].Lat, snap.Peers[i].Lon = nil, nil
+		}
+	}
+}
+
+// declaration is the declaration of r, its document signed with key as gnokey
+// v1.1.0 signs it and verified as POST /api/location verifies it.
+func declaration(t *testing.T, key crypto.PrivKey, r location.Record) location.Declaration {
+	t.Helper()
+	doc := locationtest.Sign(t, locationtest.Document(r.Operator, locationtest.Memo(r)), key, location.SignChainID, location.Legacy)
+	d, err := location.Verify(doc)
+	if err != nil {
+		t.Fatalf("declaration: verify %s: %v", doc, err)
+	}
+	return d
+}
+
+// declare stores the declaration of r, signed with key, in the server's
+// location store, as POST /api/location stores one: the server's next message
+// carries it.
+func (e *pageEnv) declare(key crypto.PrivKey, r location.Record) location.Declaration {
+	e.T.Helper()
+	d := declaration(e.T, key, r)
+	if err := e.Srv.Locations.Put(e.T.Context(), d); err != nil {
+		e.T.Fatalf("store the declaration of %s: %v", r.Operator, err)
+	}
+	return d
+}
+
+// charlieInSingapore is the declaration of charlie's operator in
+// declaredNetwork: Singapore (1.3, 103.8) at OVH, an hour before pageNow.
+func charlieInSingapore(t *testing.T) location.Declaration {
+	t.Helper()
+	return declaration(t, declOpCharlie, location.Record{
+		Chain: pageChainID, Operator: keyAddress(declOpCharlie),
+		Lat: 1.3, Lon: 103.8, Country: "SG", Provider: "OVH", At: pageNow.Add(-time.Hour),
+	})
+}
+
+// bravoInSingapore is a declaration of bravo's operator in declaredNetwork,
+// beside charlieInSingapore: Singapore (1.3, 103.8) at provider, an hour
+// before pageNow.
+func bravoInSingapore(t *testing.T, provider string) location.Declaration {
+	t.Helper()
+	return declaration(t, declOpBravo, location.Record{
+		Chain: pageChainID, Operator: keyAddress(declOpBravo),
+		Lat: 1.3, Lon: 103.8, Country: "SG", Provider: provider, At: pageNow.Add(-time.Hour),
+	})
+}
+
+// charlieWithoutProvider is charlieInSingapore naming no provider.
+func charlieWithoutProvider(t *testing.T) location.Declaration {
+	t.Helper()
+	r := charlieInSingapore(t).Record
+	r.Provider = ""
+	return declaration(t, declOpCharlie, r)
 }
 
 // appHashHex is the app hash of height h as the page writes it: the hex of

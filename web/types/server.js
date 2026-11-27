@@ -22,6 +22,20 @@
  * @property {VotesReport | null} votes
  * @property {CheckData} checks
  * @property {SigningStats} [signing]
+ * @property {Record<string, DeclaredNode>} declared each shown declaration,
+ *   by its validator's signing key
+ */
+
+/**
+ * declaredNode (web/server.go): a validator's declared location.
+ * @typedef {object} DeclaredNode
+ * @property {string} name
+ * @property {string} operator
+ * @property {string} country
+ * @property {number} lat
+ * @property {number} lon
+ * @property {string} [provider]
+ * @property {string} at
  */
 
 /**

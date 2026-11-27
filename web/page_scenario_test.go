@@ -16,6 +16,7 @@ import (
 	"github.com/gnolang/gno/tm2/pkg/crypto/ed25519"
 
 	"github.com/gnoverse/gnockpit/blocks"
+	"github.com/gnoverse/gnockpit/location"
 	"github.com/gnoverse/gnockpit/node"
 	"github.com/gnoverse/gnockpit/presence"
 	"github.com/gnoverse/gnockpit/ranking"
@@ -47,6 +48,8 @@ type scenario struct {
 	// presence writes the polls the peer presence store holds; nil leaves the
 	// store off.
 	presence func(t *testing.T, s *presence.Store)
+	// declarations are the declared locations the location store holds.
+	declarations []location.Declaration
 	// chainStuckSecs and maxMissedInARow are --chain-stuck-secs and
 	// --max-missed-in-a-row; main.go's defaults when zero.
 	chainStuckSecs, maxMissedInARow int
@@ -122,10 +125,27 @@ func newPageServer(t *testing.T, sc *scenario, clock *serverClock) *Server {
 		sc.presence(t, store)
 		srv.Presence = store
 	}
+	srv.Locations = openLocationStore(t, sc.declarations)
 	if sc.snap != nil {
 		publishSnapshot(t.Context(), srv, sc.snap)
 	}
 	return srv
+}
+
+// openLocationStore opens the location store on an in-memory database, as
+// main.go opens it on --db-path, holding declarations.
+func openLocationStore(t *testing.T, declarations []location.Declaration) *location.Store {
+	t.Helper()
+	store, err := location.NewStore(t.Context(), openTestDB(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, d := range declarations {
+		if err := store.Put(t.Context(), d); err != nil {
+			t.Fatalf("store the declaration of %s: %v", d.Operator, err)
+		}
+	}
+	return store
 }
 
 // newPagePublisher builds the ranking's publisher as main.go does, on the

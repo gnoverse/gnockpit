@@ -6,10 +6,12 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"reflect"
+	"slices"
 	"testing"
 	"time"
 
 	"github.com/gnoverse/gnockpit/blocks"
+	"github.com/gnoverse/gnockpit/location"
 	"github.com/gnoverse/gnockpit/node"
 )
 
@@ -264,7 +266,7 @@ func TestValidatorLocation(t *testing.T) {
 		Validators: []node.Validator{{Address: valLoneKey, VotingPower: "1"}, {Address: valNewKey, VotingPower: "1"}},
 		Peers:      []node.Peer{{ValAddress: valNewKey, Country: "DE", City: "Berlin", Provider: "Hetzner"}},
 	})
-	want := map[string]any{"country": "DE", "city": "Berlin", "provider": "Hetzner"}
+	want := map[string]any{"country": "DE", "city": "Berlin", "provider": "Hetzner", "source": "ip"}
 	if _, body := getValidator(t, srv, "?val="+valOperator); !reflect.DeepEqual(body["location"], want) {
 		t.Errorf("location = %v, want %v", body["location"], want)
 	}
@@ -536,5 +538,138 @@ func TestStatusSince(t *testing.T) {
 		if ok != (tc.want > 0) || (ok && got.Height != tc.want) {
 			t.Errorf("%s: since %d, %v; want %d", tc.name, got.Height, ok, tc.want)
 		}
+	}
+}
+
+// locationReportServer is locationServer with a block history: K1 and K2
+// sign blocks 1 to 3, and a stored event links operator D, which has no
+// valopers profile, to the key K4.
+func locationReportServer(t *testing.T) *Server {
+	t.Helper()
+	srv := locationServer(t)
+	srv.Blocks = openBlocksStore(t)
+	members := []blocks.Member{{Address: locationAddr("K1"), Power: 10}, {Address: locationAddr("K2"), Power: 10}}
+	putBlocks(t, srv.Blocks, secondsFrom(valDay()), "S", members, 1, 3, nil)
+	putValEvents(t, srv.Blocks, 3, blocks.Event{Type: "ValidatorAdded", Operator: locationAddr("D"), Address: locationAddr("K4"), Power: 1, Applied: true})
+	return srv
+}
+
+func TestValidatorDeclaredLocation(t *testing.T) {
+	srv := locationReportServer(t)
+	opA, opB, opD := locationAddr("A"), locationAddr("B"), locationAddr("D")
+	// undeclared checks A's report without a declaration that shows: its
+	// unlocated peer's provider, and A may declare.
+	undeclared := func(when string) {
+		t.Helper()
+		_, body := getValidator(t, srv, "?val="+opA)
+		if want := map[string]any{"provider": "OVH SAS", "source": "ip"}; !reflect.DeepEqual(body["location"], want) || body["declarable"] != true {
+			t.Errorf("A %s: location %v, declarable %v; want %v, true", when, body["location"], body["declarable"], want)
+		}
+	}
+	undeclared("without a declaration")
+
+	signed := signedLocation(t, "A", locationWith("A", "Equinix"), location.Legacy)
+	declareOK(t, srv, signed)
+	storeDeclaration(t, srv, locationAt("B", locationT))
+	for _, c := range []struct {
+		name       string
+		operator   string
+		location   any
+		declarable bool
+	}{{
+		name: "a declared location", operator: opA,
+		location: map[string]any{
+			"country": "SG", "lat": 1.3, "lon": 103.8, "provider": "Equinix", "source": "declared",
+			"declared": map[string]any{"at": "2026-11-18T11:00:00Z", "signed": string(signed)},
+		},
+		declarable: true,
+	}, {
+		name: "a validator located by its IP", operator: opB,
+		location:   map[string]any{"country": "DE", "lat": 50.1, "lon": 8.7, "provider": "Hetzner Online GmbH", "source": "ip"},
+		declarable: false,
+	}, {
+		name: "an operator without a profile", operator: opD,
+		location:   nil,
+		declarable: false,
+	}} {
+		t.Run(c.name, func(t *testing.T) {
+			code, body := getValidator(t, srv, "?val="+c.operator)
+			if code != http.StatusOK {
+				t.Fatalf("status = %d, body %v", code, body)
+			}
+			if !reflect.DeepEqual(body["location"], c.location) {
+				t.Errorf("location = %v, want %v", body["location"], c.location)
+			}
+			if body["declarable"] != c.declarable {
+				t.Errorf("declarable = %v, want %t", body["declarable"], c.declarable)
+			}
+		})
+	}
+
+	// A declaration naming no provider: none shown, its peer's aside.
+	r := locationWith("A", "")
+	r.At = locationT.Add(time.Second)
+	signed = signedLocation(t, "A", r, location.Legacy)
+	declareOK(t, srv, signed)
+	want := map[string]any{
+		"country": "SG", "lat": 1.3, "lon": 103.8, "source": "declared",
+		"declared": map[string]any{"at": "2026-11-18T11:00:01Z", "signed": string(signed)},
+	}
+	if _, body := getValidator(t, srv, "?val="+opA); !reflect.DeepEqual(body["location"], want) {
+		t.Errorf("A declared without a provider: location %v, want %v", body["location"], want)
+	}
+
+	declareOK(t, srv, signedLocation(t, "A", removalAt("A", locationT.Add(2*time.Second)), location.Legacy))
+	undeclared("after its removal")
+}
+
+// TestValidatorNotDeclarableUnavailable checks that /api/validator's
+// operator may not declare, and its stored declaration does not show, without
+// a store or a chain id.
+func TestValidatorNotDeclarableUnavailable(t *testing.T) {
+	for _, c := range []struct {
+		name  string
+		unset func(srv *Server)
+	}{
+		{"no store", func(srv *Server) { srv.Locations = nil }},
+		{"no chain id", func(srv *Server) { srv.BlockFill = fakeFill{} }},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			srv := locationReportServer(t)
+			declareOK(t, srv, signedLocation(t, "A", locationWith("A", "Equinix"), location.Legacy))
+			c.unset(srv)
+			code, body := getValidator(t, srv, "?val="+locationAddr("A"))
+			if code != http.StatusOK {
+				t.Fatalf("status = %d, body %v", code, body)
+			}
+			if want := map[string]any{"provider": "OVH SAS", "source": "ip"}; !reflect.DeepEqual(body["location"], want) {
+				t.Errorf("location = %v, want %v: its peer's", body["location"], want)
+			}
+			if body["declarable"] != false {
+				t.Errorf("declarable = %v, want false", body["declarable"])
+			}
+		})
+	}
+}
+
+// TestValidatorLocationWithoutAKey checks that a validator without a signing
+// key (its profile names none, no event links one) has no location: a
+// located peer that belongs to no validator, such as a sentry, never stands
+// for it.
+func TestValidatorLocationWithoutAKey(t *testing.T) {
+	srv := locationReportServer(t)
+	opE := locationAddr("E")
+	srv.valopers[opE] = node.Valoper{Operator: opE, Moniker: "echo"}
+	snap := *srv.getSnapshot()
+	lat, lon := 48.8, 2.3
+	snap.Peers = append(slices.Clone(snap.Peers), node.Peer{NodeID: "sentry", Lat: &lat, Lon: &lon, Country: "FR", City: "Paris", Provider: "Scaleway"})
+	srv.setSnapshot(&snap)
+
+	code, body := getValidator(t, srv, "?val="+opE)
+	if code != http.StatusOK || !reflect.DeepEqual(body["keys"], []any{}) {
+		t.Fatalf("got %d, keys %v; want 200 and no key", code, body["keys"])
+	}
+	if loc, ok := body["location"]; ok {
+		t.Errorf("location = %v, want none: E's validator has no key", loc)
 	}
 }

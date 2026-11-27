@@ -5,6 +5,7 @@
 // cycle.
 
 /** @import { BlockInfo, Peer, Status, VotesReport } from '../types/node.js' */
+/** @import { DeclaredNode } from '../types/server.js' */
 
 import { storageGet } from './storage.js'
 
@@ -14,6 +15,9 @@ import { storageGet } from './storage.js'
  *   one, and while the sources have none
  * @property {Peer[] | null} lastPeers the peers of the last message, in name order;
  *   null before one, and while the sources have none
+ * @property {Record<string, DeclaredNode>} declared the declared locations
+ *   the last message shows, by their validator's signing key; none before
+ *   one
  * @property {Status | null} lastStatus the status of the last message that had one;
  *   null before
  * @property {boolean} hideSources set from the server's --hide-sources flag
@@ -25,6 +29,8 @@ import { storageGet } from './storage.js'
  * @property {boolean} dataSeen whether a snapshot or an update has come:
  *   until then the tables keep their loading rows
  * @property {number} serverTimeOffset server UTC - local UTC in ms
+ * @property {boolean} serverTimeKnown whether a message gave the server's
+ *   time: serverTimeOffset holds 0 until one does
  * @property {number} genesisTimeMs the chain's genesis time, in ms since
  *   the epoch; 0 until the server's checks give it
  * @property {string} genesisTimeStr the chain's genesis time as the server
@@ -39,6 +45,7 @@ import { storageGet } from './storage.js'
 export const live = {
     lastVotes: null,
     lastPeers: null,
+    declared: {},
     lastStatus: null,
     hideSources: false,
     chainNetwork: '',
@@ -46,6 +53,7 @@ export const live = {
     lastRecentBlocks: null,
     dataSeen: false,
     serverTimeOffset: 0,
+    serverTimeKnown: false,
     genesisTimeMs: 0,
     genesisTimeStr: '',
     pushSubID: storageGet('gnockpitPushSubID') || null,

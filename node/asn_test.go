@@ -29,6 +29,9 @@ func TestProvider(t *testing.T) {
 		{"Oracle Corporation", "Oracle"},
 		{"Alibaba (US) Technology Co., Ltd.", "Alibaba"},
 		{"Some Local ISP Ltd", "Some Local ISP Ltd"}, // unknown -> raw org
+		{"FRIT ", "FRIT"},                            // white space around the raw org trimmed
+		{" \tSome Local ISP Ltd\n", "Some Local ISP Ltd"},
+		{" ", ""},
 		{"", ""},
 	}
 	for _, tc := range tests {

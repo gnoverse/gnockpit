@@ -62,7 +62,7 @@ func TestBuildStatsMissedWindows(t *testing.T) {
 	s := newBlocksStore(t)
 	writeMissedBlocks(t, s, now)
 	snap := &node.Snapshot{Validators: []node.Validator{{Address: histValA}, {Address: histValB}}}
-	st := buildStats(context.Background(), snap, s, now)
+	st := buildStats(context.Background(), snap, s, nil, now)
 	if got := st.Validators.WindowBlocks; got["1h"] != 2 || got["24h"] != 3 || got["total"] != 3 {
 		t.Errorf("window blocks = %v, want 1h 2, 24h 3, total 3", got)
 	}

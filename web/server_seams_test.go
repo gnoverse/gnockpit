@@ -97,7 +97,7 @@ func TestRoutesServeEveryPath(t *testing.T) {
 		"/icon-192.png", "/icon-512.png", "/apple-touch-icon.png", "/service-worker.js",
 		"/api/push/vapid-key", "/api/push/subscribe", "/api/push/entities", "/api/push/test",
 		"/api/push/reminder", "/api/notify/targets", "/api/notify/test", "/api/links",
-		"/api/status", "/api/stats", "/api/eta", "/api/history", "/api/validator", "/badge.svg",
+		"/api/status", "/api/stats", "/api/eta", "/api/history", "/api/validator", "/api/location", "/badge.svg",
 	}
 	for _, p := range paths {
 		t.Run(p, func(t *testing.T) {

@@ -20,6 +20,8 @@
  * @property {ValidatorRecovery[]} recoveries
  * @property {ValidatorSummary} summary
  * @property {ValidatorLive} live
+ * @property {boolean} declarable whether the operator may declare its
+ *   validator's location
  */
 
 /**
@@ -44,11 +46,24 @@
  */
 
 /**
- * validatorLocation (web/validator.go).
+ * validatorLocation (web/validator.go), its embedded nodeLocation
+ * (web/status.go) inline.
  * @typedef {object} ValidatorLocation
  * @property {string} [country]
  * @property {string} [city]
+ * @property {number} [lat]
+ * @property {number} [lon]
  * @property {string} [provider]
+ * @property {'ip' | 'declared'} source
+ * @property {ValidatorDeclared} [declared]
+ */
+
+/**
+ * validatorDeclared (web/validator.go): the declaration a declared location
+ * comes from.
+ * @typedef {object} ValidatorDeclared
+ * @property {string} at
+ * @property {string} signed
  */
 
 /**

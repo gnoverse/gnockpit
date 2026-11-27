@@ -128,6 +128,7 @@ function handleChecks(d) {
     if (d.system && d.system.node_time) {
         const serverMs = new Date(d.system.node_time).getTime()
         live.serverTimeOffset = serverMs - Date.now()
+        live.serverTimeKnown = true
         const driftSec = Math.abs(Math.round(live.serverTimeOffset / 1000))
         const driftEl = $('gc-drift')
         if (driftSec > 2) {
@@ -165,7 +166,7 @@ function setPeers(d) {
                 true
             )
         })
-    renderMap(live.lastPeers)
+    renderMap(live.lastPeers, live.declared)
 }
 
 /** @param {VotesReport | null} d */
@@ -198,6 +199,9 @@ function connect() {
                 // sources have none: the tables and the map
                 // empty. Without a status the last head stays.
                 if (msg.data.status) handleStatus(msg.data.status)
+                // The map and the tables draw the declared locations
+                // beside the peers.
+                live.declared = msg.data.declared
                 setPeers(msg.data.peers)
                 setVotes(msg.data.votes)
                 live.dataSeen = true

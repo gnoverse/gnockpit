@@ -17,6 +17,7 @@ import (
 
 	"github.com/mxschmitt/playwright-go"
 
+	"github.com/gnoverse/gnockpit/location"
 	"github.com/gnoverse/gnockpit/node"
 )
 
@@ -665,9 +666,7 @@ func TestPageValidatorsProviderCell(t *testing.T) {
 			e.must(e.expect(cell + " .info-btn").ToHaveCount(0))
 			continue
 		}
-		if title, rows := popRows(e, cell+" .info-btn"); title != "" || !slices.Equal(rows, [][2]string{{"guessed from IP", tc.ip}}) {
-			t.Errorf("%s: provider popover = %q %q, want no title and the IP %s", tc.val.name(), title, rows, tc.ip)
-		}
+		validatorsExpectInfoRows(e, cell, [][2]string{{"guessed from IP", tc.ip}})
 	}
 	e.must(e.expect(validatorsCell(validatorsFoxtrot, valColProvider)).ToHaveText("—"))
 	e.must(e.expect(validatorsCell(validatorsFoxtrot, valColProvider)).Not().ToHaveAttribute("data-copy", regexp.MustCompile(`.*`)))
@@ -697,6 +696,169 @@ func TestPageValidatorsCountryHighlight(t *testing.T) {
 	e.must(e.expect(peerEntry(desktop, "eu-node") + " td.cc-hl[data-prov]").ToHaveCount(1))
 	e.must(away.Hover())
 	e.must(e.expect(".cc-hl").ToHaveCount(0))
+}
+
+// TestPageValidatorsDeclaredLocation checks that a validator's declared
+// location stands for its node's in the Validators table and cards: charlie,
+// declared in Singapore at OVH, its peer unlocated. The country's popover and
+// the provider's ⓘ say the operator declared them, the ⓘ when; the country
+// highlights its own on the map, and the Country column sorts by it. A card
+// writes "(declared)" after both, which wrap rather than clip.
+func TestPageValidatorsDeclaredLocation(t *testing.T) {
+	t.Run("desktop", func(t *testing.T) {
+		sc := declaredNetwork(t)
+		declared := charlieInSingapore(t)
+		sc.declarations = []location.Declaration{declared}
+		e := openPage(t, desktop, sc)
+
+		country := validatorsCell(valCharlie, valColCountry)
+		e.must(e.expect(country).ToHaveAttribute("data-cc", "SG"))
+		e.must(e.expect(country + " > .cc-inner > span").ToHaveText([]string{"🇸🇬", "Singapore", "SG"}))
+		e.showPopover(e.Page.Locator(country))
+		e.must(e.expect(pagePopover).ToHaveText("Singapore · declared by the operator"))
+		expectMapHighlighted(e, "data-cc", "SG")
+
+		provider := validatorsCell(valCharlie, valColProvider)
+		e.must(e.expect(provider).ToHaveText("OVH ⓘ"))
+		e.must(e.expect(provider).ToHaveAttribute("data-prov", "OVH"))
+		validatorsExpectInfoRows(e, provider, validatorsDeclaredRows(declared))
+
+		validatorsSortBy(e, "country", true)
+		validatorsExpectRows(e, "bravo", "charlie", shortAddr(valDelta.address()), "alpha")
+	})
+	t.Run("phone", func(t *testing.T) {
+		sc := declaredNetwork(t)
+		sc.declarations = []location.Declaration{charlieInSingapore(t)}
+		e := openPage(t, phone, sc)
+		country, provider := validatorsCardValue(valCharlie, "country"), validatorsCardValue(valCharlie, "provider")
+		e.must(e.expect(country).ToHaveText("🇸🇬 Singapore (declared)"))
+		e.must(e.expect(provider).ToHaveText("OVH (declared)"))
+		e.must(e.expect(country).ToHaveCSS("white-space", "normal"))
+		e.must(e.expect(provider).ToHaveCSS("white-space", "normal"))
+	})
+}
+
+// TestPageValidatorsDeclaredWithoutProvider checks a declaration naming no
+// provider: the Provider cell reads unknown, nothing to copy or link to the
+// map, its ⓘ saying the operator declared the location, and when; a card
+// writes it unknown, marked declared.
+func TestPageValidatorsDeclaredWithoutProvider(t *testing.T) {
+	t.Run("desktop", func(t *testing.T) {
+		sc := declaredNetwork(t)
+		declared := charlieWithoutProvider(t)
+		sc.declarations = []location.Declaration{declared}
+		e := openPage(t, desktop, sc)
+		provider := validatorsCell(valCharlie, valColProvider)
+		e.must(e.expect(provider).ToHaveText("unknown ⓘ"))
+		e.must(e.expect(provider).Not().ToHaveAttribute("data-prov", regexp.MustCompile(`.*`)))
+		e.must(e.expect(provider).Not().ToHaveAttribute("data-copy", regexp.MustCompile(`.*`)))
+		validatorsExpectInfoRows(e, provider, validatorsDeclaredRows(declared))
+	})
+	t.Run("phone", func(t *testing.T) {
+		sc := declaredNetwork(t)
+		sc.declarations = []location.Declaration{charlieWithoutProvider(t)}
+		e := openPage(t, phone, sc)
+		e.must(e.expect(validatorsCardValue(valCharlie, "provider")).ToHaveText("unknown (declared)"))
+	})
+}
+
+// TestPageValidatorsDeclaredRedraws checks that a declaration the server
+// comes to show redraws the table, nothing else changed: charlie, declared
+// in Singapore once the page is open.
+func TestPageValidatorsDeclaredRedraws(t *testing.T) {
+	e := openPage(t, desktop, declaredNetwork(t))
+	country := validatorsCell(valCharlie, valColCountry)
+	e.must(e.expect(country).ToHaveText("—"))
+	if err := e.Srv.Locations.Put(t.Context(), charlieInSingapore(t)); err != nil {
+		t.Fatal(err)
+	}
+	e.publish(declaredNetwork(t).snap)
+	e.must(e.expect(country).ToHaveAttribute("data-cc", "SG"))
+}
+
+// TestPageValidatorsDeclaredKeepsTheTable checks that a re-declaration
+// changing nothing the table shows, its time within the day, leaves the
+// table as it is, an open popover on it open; one of the next day shows its
+// day.
+func TestPageValidatorsDeclaredKeepsTheTable(t *testing.T) {
+	sc := declaredNetwork(t)
+	dayBefore := charlieInSingapore(t).Record
+	dayBefore.At = pageNow.Add(-25 * time.Hour)
+	sc.declarations = []location.Declaration{declaration(t, declOpCharlie, dayBefore)}
+	e := openPage(t, desktop, sc)
+	country := validatorsCell(valCharlie, valColCountry)
+	e.showPopover(e.Page.Locator(country))
+	e.must(e.expect(pagePopover).ToHaveText("Singapore · declared by the operator"))
+	old, err := e.Page.Locator(country).ElementHandle()
+	e.must(err)
+
+	// Later the same day, with a new head: the head's time shows the message
+	// is in, and a frame later the tables would be drawn.
+	sameDay := dayBefore
+	sameDay.At = dayBefore.At.Add(30 * time.Minute)
+	e.declare(declOpCharlie, sameDay)
+	snap := declaredNetwork(t).snap
+	snap.Status.SyncInfo.LatestBlockTime = pageNow.Add(-time.Second).Format(time.RFC3339Nano)
+	e.publish(snap)
+	e.must(e.expect("#d-time").ToContainText(snap.Status.SyncInfo.LatestBlockTime))
+	liveAwaitFrame(e)
+	if v, err := old.Evaluate(`(el) => el.isConnected`); err != nil || v != true {
+		t.Fatalf("charlie's country is out of the page (%v, %v): the tables were drawn again", v, err)
+	}
+	e.must(e.expect(pagePopover).ToBeVisible())
+	e.must(e.expect(pagePopover).ToHaveText("Singapore · declared by the operator"))
+
+	nextDay := sameDay
+	nextDay.At = pageNow.Add(-time.Hour)
+	declared := e.declare(declOpCharlie, nextDay)
+	e.publish(declaredNetwork(t).snap)
+	provider := validatorsCell(valCharlie, valColProvider)
+	day := declared.At.UTC().Format(time.DateOnly)
+	e.must(e.expect(provider+" .info-btn").ToHaveAttribute("data-pop-rows", regexp.MustCompile(regexp.QuoteMeta(day))))
+	validatorsExpectInfoRows(e, provider, validatorsDeclaredRows(declared))
+}
+
+// TestPageValidatorsDeclaredFollowsItsData checks that each value of a
+// declaration the table shows redraws it when it alone changes: charlie's
+// country and provider, and the validator it stands for (bravo, its peer
+// unlocated).
+func TestPageValidatorsDeclaredFollowsItsData(t *testing.T) {
+	network := func() *node.Snapshot {
+		snap := declaredNetwork(t).snap
+		unlocate(snap, valBravo)
+		return snap
+	}
+	sc := declaredNetwork(t)
+	sc.snap = network()
+	r := charlieInSingapore(t).Record
+	sc.declarations = []location.Declaration{declaration(t, declOpCharlie, r)}
+	e := openPage(t, desktop, sc)
+	redeclare := func(change func(r *location.Record)) {
+		t.Helper()
+		change(&r)
+		r.At = r.At.Add(time.Minute)
+		e.declare(declOpCharlie, r)
+		e.publish(network())
+	}
+	country := validatorsCell(valCharlie, valColCountry)
+	provider := validatorsCell(valCharlie, valColProvider)
+	e.must(e.expect(country).ToHaveAttribute("data-cc", "SG"))
+
+	redeclare(func(r *location.Record) { r.Country = "MY" })
+	e.must(e.expect(country).ToHaveAttribute("data-cc", "MY"))
+	redeclare(func(r *location.Record) { r.Provider = "AWS" })
+	e.must(e.expect(provider).ToHaveText("AWS ⓘ"))
+
+	// Charlie's removal and bravo's declaration of the same place on the
+	// same day: only the validator differs.
+	removal := location.Record{Chain: r.Chain, Operator: r.Operator, Clear: true, At: r.At.Add(time.Minute)}
+	e.declare(declOpCharlie, removal)
+	bravo := r
+	bravo.Operator = keyAddress(declOpBravo)
+	e.declare(declOpBravo, bravo)
+	e.publish(network())
+	e.must(e.expect(validatorsCell(valBravo, valColCountry)).ToHaveAttribute("data-cc", "MY"))
+	e.must(e.expect(country).ToHaveText("—"))
 }
 
 // ---- Cross-highlight

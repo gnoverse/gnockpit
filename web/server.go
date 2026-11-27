@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/gnoverse/gnockpit/blocks"
+	"github.com/gnoverse/gnockpit/location"
 	"github.com/gnoverse/gnockpit/node"
 	"github.com/gnoverse/gnockpit/presence"
 	"github.com/gnoverse/gnockpit/ranking"
@@ -27,7 +28,7 @@ import (
 	"github.com/gorilla/websocket"
 )
 
-//go:embed index.html service-worker.js js
+//go:embed index.html service-worker.js js data
 var content embed.FS
 
 const (
@@ -103,6 +104,7 @@ type Server struct {
 	ETA             ETAView            // block-time model and scheduled halt for /api/eta (nil = disabled)
 	Presence        *presence.Store    // how often the polls listed each peer (nil = disabled)
 	Ranking         *ranking.Publisher // the daily validator ranking for /api/ranking (nil = disabled)
+	Locations       *location.Store    // the operators' declared locations, POST /api/location (nil = none)
 	// RankingHideExcluded tells /api/ranking's readers to hide the operators
 	// left out of the ranking; the answer lists them either way.
 	RankingHideExcluded bool
@@ -118,6 +120,9 @@ type Server struct {
 	ReadHeaderTimeout time.Duration
 
 	clock func() time.Time // time source for the handlers (nil = time.Now)
+	// documentTimeout is how long POST /api/location gives a client to send
+	// its body (0 = documentReadTimeout).
+	documentTimeout time.Duration
 }
 
 // NewServer creates a new web server.
@@ -323,17 +328,48 @@ type liveData struct {
 	Votes   *node.VotesReport  `json:"votes"`
 	Checks  checkData          `json:"checks"`
 	Signing *node.SigningStats `json:"signing,omitempty"`
+	// Declared is each shown declaration, by its validator's signing key;
+	// never nil.
+	Declared map[string]declaredNode `json:"declared"`
+}
+
+// declaredNode is a validator's declared location as the page shows it: its
+// name, its operator and the declaration's location and time.
+type declaredNode struct {
+	Name     string  `json:"name"`
+	Operator string  `json:"operator"`
+	Country  string  `json:"country"`
+	Lat      float64 `json:"lat"`
+	Lon      float64 `json:"lon"`
+	Provider string  `json:"provider,omitempty"`
+	At       string  `json:"at"`
 }
 
 func (s *Server) buildLiveData(snap *node.Snapshot) liveData {
 	return liveData{
-		Time:    snap.Timestamp.Format("15:04:05"),
-		Status:  snap.Status,
-		Peers:   snap.Peers,
-		Votes:   s.buildVotesReport(snap),
-		Checks:  s.buildCheckData(snap),
-		Signing: snap.Signing,
+		Time:     snap.Timestamp.Format("15:04:05"),
+		Status:   snap.Status,
+		Peers:    snap.Peers,
+		Votes:    s.buildVotesReport(snap),
+		Checks:   s.buildCheckData(snap),
+		Signing:  snap.Signing,
+		Declared: s.buildDeclaredNodes(snap),
 	}
+}
+
+// buildDeclaredNodes returns the declarations that show with snap and the
+// profiles the server holds, by signing key, as the page shows them.
+func (s *Server) buildDeclaredNodes(snap *node.Snapshot) map[string]declaredNode {
+	valopers, _ := s.Valopers()
+	shown := s.shownDeclarations(snap, valopers)
+	nodes := make(map[string]declaredNode, len(shown))
+	for key, d := range shown {
+		nodes[key] = declaredNode{
+			Name: s.Client.Names.Name(key), Operator: d.Operator,
+			Country: d.Country, Lat: d.Lat, Lon: d.Lon, Provider: d.Provider, At: declaredAt(d),
+		}
+	}
+	return nodes
 }
 
 // buildSnapshotMsg builds the message a WebSocket client gets on connecting.
@@ -1238,6 +1274,7 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("/apple-touch-icon.png", s.handleAppleTouchIcon)
 	mux.HandleFunc("/service-worker.js", s.handleServiceWorker)
 	mux.Handle("/js/", newJSHandler(content))
+	mux.Handle("/data/", newDataHandler(content))
 	mux.HandleFunc("/api/push/vapid-key", s.handlePushVAPIDKey)
 	mux.HandleFunc("/api/push/subscribe", s.handlePushSubscribe)
 	mux.HandleFunc("/api/push/entities", s.handlePushEntities)
@@ -1252,6 +1289,7 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("/api/history", s.handleHistory)
 	mux.HandleFunc("/api/validator", s.handleValidator)
 	mux.HandleFunc("/api/ranking", s.handleRanking)
+	mux.HandleFunc("/api/location", s.handleLocation)
 	mux.HandleFunc("/badge.svg", s.handleBadge)
 	return mux
 }

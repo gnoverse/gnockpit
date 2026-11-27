@@ -340,6 +340,10 @@ func TestPageValidatorInfoPopovers(t *testing.T) {
 			"the block history: validator sets, set-change events, absences, restart gaps",
 			"yes, its outages and recoveries (see Uptime and Recovery); the rest is not",
 		},
+		{
+			"where its signing node is, as its operator declared it",
+			"a document its operator signed with its operator key (gnokey), which gnockpit verified", no,
+		},
 	}
 	onProfiles(t, []profile{desktop, phone}, func(t *testing.T, p profile) {
 		e := openPage(t, p, setChangesNetwork(t, 1), withURL("/?val="+opBravo))

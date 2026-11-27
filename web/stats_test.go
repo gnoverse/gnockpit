@@ -2,10 +2,15 @@ package web
 
 import (
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"reflect"
 	"strconv"
 	"testing"
 	"time"
 
+	"github.com/gnoverse/gnockpit/blocks"
+	"github.com/gnoverse/gnockpit/location"
 	"github.com/gnoverse/gnockpit/node"
 )
 
@@ -69,7 +74,7 @@ func TestStatsNakamotoUnknown(t *testing.T) {
 		{"unreadable power", &node.Snapshot{Validators: []node.Validator{{Address: "g1a", VotingPower: "10"}, {Address: "g1b", VotingPower: "lots"}}}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			body, err := json.Marshal(buildStats(t.Context(), tc.snap, nil, time.Now()))
+			body, err := json.Marshal(buildStats(t.Context(), tc.snap, nil, nil, time.Now()))
 			if err != nil {
 				t.Fatalf("marshal: %v", err)
 			}
@@ -92,7 +97,7 @@ func TestStatsNakamotoUnknown(t *testing.T) {
 // countries; the peers' counts 0.
 func TestStatsBeforeTheFirstSnapshot(t *testing.T) {
 	now := time.Date(2026, 11, 18, 12, 0, 0, 0, time.UTC)
-	body, err := json.Marshal(buildStats(t.Context(), nil, nil, now))
+	body, err := json.Marshal(buildStats(t.Context(), nil, nil, nil, now))
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
 	}
@@ -101,5 +106,51 @@ func TestStatsBeforeTheFirstSnapshot(t *testing.T) {
 		`"providers":null,"countries":null,"peers":{"total":0,"reachable":0}}`
 	if string(body) != want {
 		t.Errorf("/api/stats = %s, want %s", body, want)
+	}
+}
+
+// TestStatsCountsDeclaredValidators checks that a validator with a shown
+// declaration counts in its declared country and provider (none when it
+// names none), with its misses of the last 24 h, in place of its matched
+// peer's, the peers' counts as they are; a stored declaration of a validator
+// located by its IP counts nowhere.
+func TestStatsCountsDeclaredValidators(t *testing.T) {
+	k1, k2 := locationAddr("K1"), locationAddr("K2")
+	hetzner := ProviderStat{Provider: "Hetzner Online GmbH", Peers: 1, Validators: 1, Missed24h: 0}
+	ovh := ProviderStat{Provider: "OVH SAS", Peers: 1, Validators: 0, Missed24h: 0} // K1's peer's, K1 counted elsewhere
+	for _, c := range []struct {
+		name      string
+		provider  string // the provider A declares
+		providers []ProviderStat
+	}{
+		{"a provider", "Equinix", []ProviderStat{hetzner, ovh, {Provider: "Equinix", Peers: 0, Validators: 1, Missed24h: 2}}},
+		{"no provider", "", []ProviderStat{hetzner, ovh}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			srv := locationServer(t)
+			declareOK(t, srv, signedLocation(t, "A", locationWith("A", c.provider), location.Legacy))
+			r := locationAt("B", locationT)
+			r.Country, r.Provider = "FR", "Scaleway"
+			storeDeclaration(t, srv, r)
+			srv.Blocks = openBlocksStore(t)
+			// K1 misses 2 of the last 3 blocks, all within 24 h.
+			at := func(h int64) time.Time { return seamNow.Add(time.Duration(h-4) * time.Minute) }
+			putBlocks(t, srv.Blocks, at, "S", []blocks.Member{{Address: k1, Power: 10}, {Address: k2, Power: 10}}, 1, 3,
+				map[int64][]string{1: {k1}, 2: {k1}})
+
+			rec := httptest.NewRecorder()
+			srv.handleStats(rec, httptest.NewRequest(http.MethodGet, "/api/stats", nil))
+			var st Stats
+			if err := json.Unmarshal(rec.Body.Bytes(), &st); err != nil {
+				t.Fatalf("decode %s: %v", rec.Body, err)
+			}
+			wantCountries := []CountryStat{{Country: "DE", Peers: 1, Validators: 1}, {Country: "SG", Peers: 0, Validators: 1}}
+			if !reflect.DeepEqual(st.Countries, wantCountries) {
+				t.Errorf("countries = %+v, want %+v", st.Countries, wantCountries)
+			}
+			if !reflect.DeepEqual(st.Providers, c.providers) {
+				t.Errorf("providers = %+v, want %+v", st.Providers, c.providers)
+			}
+		})
 	}
 }

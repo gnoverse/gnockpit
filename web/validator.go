@@ -13,6 +13,7 @@ import (
 	"github.com/gnolang/gno/tm2/pkg/crypto"
 
 	"github.com/gnoverse/gnockpit/blocks"
+	"github.com/gnoverse/gnockpit/location"
 	"github.com/gnoverse/gnockpit/node"
 )
 
@@ -26,7 +27,7 @@ type validatorReport struct {
 	Moniker          string              `json:"moniker"`
 	Status           *validatorStatus    `json:"status,omitempty"` // omitted while the node's current set is unknown
 	Keys             []validatorKey      `json:"keys"`
-	Location         *validatorLocation  `json:"location,omitempty"` // omitted without a matched peer
+	Location         *validatorLocation  `json:"location,omitempty"` // omitted without a matched peer or a shown declaration
 	Profile          *validatorProfile   `json:"profile,omitempty"`
 	Timeline         []timelineEntry     `json:"timeline"` // newest first
 	VoteDelayEdgesMs []int64             `json:"vote_delay_edges_ms"`
@@ -34,6 +35,9 @@ type validatorReport struct {
 	Recoveries       []validatorRecovery `json:"recoveries"`
 	Summary          validatorSummary    `json:"summary"`
 	Live             validatorLive       `json:"live"`
+	// Declarable tells whether the operator may declare its validator's
+	// location: declarableKey passes, with a store and a chain id.
+	Declarable bool `json:"declarable"`
 }
 
 // validatorStatus is the validator's place in the node's current set, and the
@@ -61,10 +65,21 @@ type validatorKey struct {
 	To      int64  `json:"to,omitempty"` // omitted: still its key
 }
 
+// validatorLocation is where the validator runs, its fields those of the
+// embedded nodeLocation, and where gnockpit has it from: source "ip" for a
+// peer's IP, "declared" for its operator's declaration, which Declared then
+// holds.
 type validatorLocation struct {
-	Country  string `json:"country,omitempty"`
-	City     string `json:"city,omitempty"`
-	Provider string `json:"provider,omitempty"`
+	nodeLocation
+	Source   string             `json:"source"`
+	Declared *validatorDeclared `json:"declared,omitempty"`
+}
+
+// validatorDeclared is the declaration a declared location comes from: its
+// time and its signed document, in its canonical Amino JSON form.
+type validatorDeclared struct {
+	At     string `json:"at"`
+	Signed string `json:"signed"`
 }
 
 // validatorProfile is the operator's valopers profile; the state fields are
@@ -267,11 +282,8 @@ func (s *Server) buildValidatorReport(ctx context.Context, val string, ref valid
 	} else {
 		rep.Moniker = s.Moniker(liveKey)
 	}
-	if src.snap != nil {
-		if p, ok := peersByValAddr(src.snap.Peers)[liveKey]; ok {
-			rep.Location = &validatorLocation{Country: p.Country, City: p.City, Provider: p.Provider}
-		}
-	}
+	declared, declarable := s.operatorDeclaration(src.snap, src.valopers, ref.operator)
+	rep.Location, rep.Declarable = reportLocation(src.snap, liveKey, declared), declarable
 	rep.Live = s.liveOf(src.snap, liveKey)
 
 	low, high, err := s.Blocks.Range(ctx)
@@ -335,6 +347,30 @@ func (s *Server) buildValidatorReport(ctx context.Context, val string, ref valid
 		},
 	}
 	return rep, nil
+}
+
+// reportLocation returns where the validator signing with key runs, nil when
+// gnockpit knows nothing of it: the location of key's located peer; else
+// declared's, its operator's shown declaration (nil when none); else the
+// fields of key's matched peer.
+func reportLocation(snap *node.Snapshot, key string, declared *location.Declaration) *validatorLocation {
+	var peers []node.Peer
+	if snap != nil {
+		peers = snap.Peers
+	}
+	if p, ok := locatedPeer(peers, key); ok {
+		return &validatorLocation{nodeLocation: locationOf(p), Source: "ip"}
+	}
+	if declared != nil {
+		return &validatorLocation{
+			nodeLocation: declaredLocationOf(*declared), Source: "declared",
+			Declared: &validatorDeclared{At: declaredAt(*declared), Signed: declared.Signed},
+		}
+	}
+	if p, ok := peersByValAddr(peers)[key]; ok {
+		return &validatorLocation{nodeLocation: locationOf(p), Source: "ip"}
+	}
+	return nil
 }
 
 // currentSet returns the voting power of each member of the node's current

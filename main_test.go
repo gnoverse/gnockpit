@@ -159,3 +159,17 @@ func TestCheckPublicURL(t *testing.T) {
 		t.Errorf("checkPublicURL(a URL of 513 bytes) = %v, want %q", err, want)
 	}
 }
+
+// TestCheckDBPath checks that --db-path names a file, and that an empty one is
+// refused, naming the flag.
+func TestCheckDBPath(t *testing.T) {
+	for _, s := range []string{"/tmp/gnockpit.db", "gnockpit.db"} {
+		if err := checkDBPath(s); err != nil {
+			t.Errorf("checkDBPath(%q) = %v, want nil", s, err)
+		}
+	}
+	want := "--db-path must name a database file"
+	if err := checkDBPath(""); err == nil || err.Error() != want {
+		t.Errorf(`checkDBPath("") = %v, want %q`, err, want)
+	}
+}

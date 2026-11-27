@@ -4,9 +4,11 @@ package web
 
 import (
 	"fmt"
+	"slices"
 	"strconv"
 	"time"
 
+	"github.com/gnoverse/gnockpit/location"
 	"github.com/gnoverse/gnockpit/node"
 )
 
@@ -113,4 +115,19 @@ func validatorsMissedRows(missed, otherBlock, nilVotes int) [][2]string {
 		{"other block", strconv.Itoa(otherBlock)},
 		{"nil votes", fmt.Sprintf("%d (counted as signed)", nilVotes)},
 	}
+}
+
+// validatorsExpectInfoRows checks the popover of the ⓘ in cell: no title, and
+// want as its rows' labels and values.
+func validatorsExpectInfoRows(e *pageEnv, cell string, want [][2]string) {
+	e.T.Helper()
+	if title, rows := popRows(e, cell+" .info-btn"); title != "" || !slices.Equal(rows, want) {
+		e.T.Errorf("%s: ⓘ popover = %q %q, want no title and %q", cell, title, rows, want)
+	}
+}
+
+// validatorsDeclaredRows are the rows of the Provider cell's ⓘ of a validator
+// whose location d declares: declared by the operator, on d's day.
+func validatorsDeclaredRows(d location.Declaration) [][2]string {
+	return [][2]string{{"declared by the operator", d.At.UTC().Format(time.DateOnly)}}
 }

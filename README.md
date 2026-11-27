@@ -48,7 +48,7 @@ connection time, which is the longest any source reports.
 | `--read-header-timeout`   | `10s`                      | How long a client may take to send a request's headers before gnockpit closes its connection unanswered; `0` for none, a negative value refused                                                                                                                                                                                                                                                                  |
 | `-interval`               | `5s`                       | Dashboard refresh interval                                                                                                                                                                                                                                                                                                                                                                                       |
 | `-v`, `--verbose`         | false                      | Verbose HTTP logging: each request to the node                                                                                                                                                                                                                                                                                                                                                                   |
-| `--db-path`               | `/tmp/gnockpit.db`         | SQLite database for push notifications, the block history, block-ETA history, peer presence and the published rankings; keep it on a persistent path (see Push Notifications, Block history, Block ETA, Peers, Ranking)                                                                                                                                                                                          |
+| `--db-path`               | `/tmp/gnockpit.db`         | SQLite database for push notifications, the block history, block-ETA history, peer presence, the published rankings and the operators' declared locations; keep it on a persistent path (see Push Notifications, Block history, Block ETA, Peers, Ranking, `POST /api/location`); an empty path is refused                                                                                                       |
 | `--history-pace`          | `1s`                       | Wait between the batches that fill the block history, back to genesis and up to the head after downtime; `0` for none (see Block history)                                                                                                                                                                                                                                                                        |
 | `--history-batch`         | `100`                      | Commits asked in one JSON-RPC batch while filling the block history; halved until restart when the first `-rpc` refuses a batch, for 10 minutes when one times out; at `1`, the backfill never completes at a node's oldest block (see Block history)                                                                                                                                                            |
 | `--chain-stuck-secs`      | `30`                       | Seconds without a new block before the chain-stuck alert fires                                                                                                                                                                                                                                                                                                                                                   |
@@ -137,7 +137,7 @@ gnockpit can send browser push notifications for validator monitoring alerts. Th
 
 **Flags:**
 
-- `--db-path` (default `/tmp/gnockpit.db`) — SQLite database storing VAPID keys and push subscriptions. Set to a persistent path in production (e.g. `/var/lib/gnockpit/gnockpit.db`). **If VAPID keys are lost (database deleted or `/tmp` cleared on reboot), all existing browser subscriptions become invalid and users must re-subscribe.**
+- `--db-path` (default `/tmp/gnockpit.db`) — SQLite database storing VAPID keys and push subscriptions, beside what its row in [Flags](#flags) lists. Set to a persistent path in production (e.g. `/var/lib/gnockpit/gnockpit.db`). **If VAPID keys are lost (database deleted or `/tmp` cleared on reboot), all existing browser subscriptions become invalid and users must re-subscribe.**
 - `--chain-stuck-secs` (default `30`) — Seconds without a new block before the chain-stuck alert fires.
 
 **Available alerts:**
@@ -349,18 +349,129 @@ power this, auto-downloaded and refreshed monthly (CC-BY-4.0):
 
 - **City Lite** (`--geoip-db`) → coordinates + country.
 - **ASN Lite** (`--asn-db`) → autonomous system → cloud provider (AWS, GCP,
-  Hetzner, OVH, …), falling back to the raw AS-org name for unknown hosts.
+  Hetzner, OVH, …), falling back to the AS-org name, white space around it
+  trimmed, for unknown hosts.
 
 Only public IPs are geolocated; peers that expose no usable public address are
 grouped under an "Unknown" entry in the country and provider lists. Country and
 provider are known only for nodes one of the sources is connected to; validators
 are matched to a connected peer, so validators no source is peered with show
-none — connecting more sources widens coverage. Set either flag to empty to
-disable that lookup.
+none, unless their operator's declared location shows (see
+[Declared locations](#declared-locations)) —
+connecting more sources widens coverage. Set either flag to empty to disable
+that lookup.
+
+An operator whose validator gnockpit cannot locate by its IP can declare where
+it runs, with a document signed by its operator key (see
+[Declared locations](#declared-locations)). A stored declaration shows while
+the operator's valopers profile names a signing key in the current set and
+gnockpit locates no peer of that key by its IP, which each `/ws` message and
+each API answer reads anew: it stands for the validator's location in `/ws`
+(`declared`), `/api/status` (`location_declared`), `/api/stats` (its counts)
+and `/api/validator` (`location.source: "declared"`), and gives way to the IP
+location whenever gnockpit has one.
+
+The dashboard draws a declared validator where it is declared: on the map, in
+its country's validator cluster (its provider's in Provider mode), whose
+popover adds a row `<name> (declared)` beside its provider (its country); in
+the side list, counted in its country and provider, its own peers counted
+nowhere; in the Validators table, in its Country and Provider cells, the
+country's popover reading `<country> · declared by the operator` and the
+provider's ⓘ `declared by the operator` with the declaration's day, a phone
+card writing ` (declared)` after both; on its [validator page](#validator-page),
+in its status line, with its coordinates and the declaration's day, and in its
+Location section, the page's last, its signed document folded under a
+**Signed document** toggle. A declaration naming no provider
+shows an unknown provider.
 
 A configured source reached over `localhost` or a private address has no public
 IP of its own; gnockpit then uses its own public egress IP for that source's map
 location, which is accurate when gnockpit runs alongside the node.
+
+## Declared locations
+
+The operator of a validator gnockpit cannot locate by its IP declares, on the
+validator's [page](#validator-page), where its signing node runs. The page's
+Location section, its last, offers it while the operator's valopers profile names a
+signing key in the current set and gnockpit locates no peer of that key by its
+IP: **Declare its location**, or, once declared, **Update** and **Remove**. A
+validator gnockpit locates by its IP shows that location and offers neither;
+its stored declaration shows again once gnockpit has no IP location for it (see
+[Network Map](#network-map--cloud-providers)).
+
+1. **Declare its location** opens the form (**Update** opens it filled with the
+   declared location), under a notice naming the operator's address, its
+   "operator key" in bold:
+   `Only this validator's operator can declare its location: gnockpit accepts the document only when the operator key of <operator address> signs it.`
+   A click on the map sets the latitude and longitude,
+   which can be typed too; each is rounded to one decimal, the 0.1° grid (about
+   11 km), as the click or the change sets it. The click also selects the
+   country the point lies in, from the country borders of
+   [Natural Earth](https://www.naturalearthdata.com/) (1:50m, public domain),
+   which the page reads the first time the form opens (and again at the next
+   opening when that read failed); a point at sea, a click before the borders
+   arrive or once their read failed, and typed coordinates
+   leave the country as it is, and a country selected by hand stands until the
+   next click inside a country. The country is required; the
+   provider is optional, a choice of **Not specified**, **On premise**
+   (`on-premise`, the operator's own hardware), the providers the page lists
+   (the peers' and the shown declarations', as the dashboard's last message
+   gives them when the form opens and at each **Continue**, except a peer's spelling gnockpit refuses), or **Other…**, which shows a **Provider
+   name** field for one it does not list. **Update** chooses the declared
+   provider, under **Other…** when the page does not list it. **Continue**
+   drops white space at either end of the name. A name that matches a listed
+   one once case, spaces and punctuation are ignored becomes the listed name;
+   gnockpit matches it again against its own list, wider than the page's: it
+   adds the stored declarations' providers that do not show (see
+   [`POST /api/location`](#post-apilocation)). A name gnockpit refuses (over
+   64 characters, a control or format character, no letter or digit), or
+   **Other…** with no name, stops **Continue**, which says why.
+2. **Continue** builds the unsigned document, its record timed on gnockpit's
+   clock whatever the browser's reads, and shows the commands that sign it,
+   which hold it, for a POSIX shell (bash or zsh) on the machine whose gnokey
+   holds the **operator key**, as the page's step 1 says, those words in bold; **Remove** shows the commands that sign the
+   document of the removal instead, under the same notice, as a removal takes
+   the same signature. Under the buttons, the section says so
+   until the form opens again:
+   `document built: sign it with the commands below` (`removal built: …`).
+   The commands have a **⧉ copy**, named `copy the commands that sign it`:
+
+    ```sh
+    command \cat >| gnockpit-location.json <<'EOF'
+    { …the document… }
+    EOF
+    gnokey sign -tx-path gnockpit-location.json -chainid gnockpit-location -account-number 0 -account-sequence 0 <operator> && command \cat gnockpit-location.json
+    ```
+
+    They write the document to `gnockpit-location.json`, sign it in place with
+    the key of the operator's address, and print it once signed only: a failed
+    sign prints no unsigned document to paste back. `command \cat` is the
+    system's `cat`, whatever alias or function a shell names `cat`.
+
+3. Paste the signed document gnokey printed and **Submit**, which sends it
+   once, disabled until gnockpit answers, or 10 s pass. Once gnockpit stores
+   it, the page reads its report again, says `declaration stored`
+   (`removal stored`) under its title, focuses **Update**
+   (**Declare its location** after a removal) and shows the status line,
+   which holds the declared location; a page closed, or showing another
+   validator, by the time gnockpit answers stays as it is. A refusal shows
+   why; a 503, gnockpit not having read the chain id, the validator set or
+   the operator's profile yet, adds that nothing was stored, to try again
+   shortly. Without an answer within 10 s, gnockpit may still store the
+   document, and the page says so:
+   `gnockpit did not answer within 10 s; the declaration may be stored: reopen this page to check`.
+
+gnockpit stores a document only when it verifies, as
+[`POST /api/location`](#post-apilocation) details with each refusal: one send
+whose signer is the record's operator, signed with the operator's key for chain
+id `gnockpit-location`, account number 0 and sequence 0; a record for the chain
+gnockpit serves, on the 0.1° grid, newer than the operator's stored declaration
+and at most 5 minutes ahead of gnockpit's clock; an operator whose validator is
+in the current set and not located by its IP. Only a gnokey secp256k1 key
+verifies: an operator account that is a multisig cannot declare. gnockpit keeps
+the signed document in its canonical Amino JSON form, which the Location
+section shows under its **Signed document** toggle, to copy or download, so
+that anyone can verify it.
 
 ## Peers
 
@@ -459,15 +570,16 @@ signing address>` opens it directly. Back, Esc, × or the backdrop close it, and
 **⧉ link** copies its link, which names the operator once gnockpit knows it.
 The page reads [`/api/validator`](#apivalidator).
 
-| Section    | What                                                                                                                                                                                                         | Source                                                                                   | Scored                                                                                                                            |
-| ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
-| Status     | in the set since (a key rotation is no break once its events are read) or not in it since, "since before" the history's first day when its join is older; power and share; country, with its flag · provider | the node's current set; the block history's set changes for since; its matched peer      | no                                                                                                                                |
-| Profile    | description (its markdown rendered, links opening in a new tab), server type, operator, signing address and key, keep running, last rotation                                                                 | the valopers realm, read every 15 min; keep running and last rotation through `vm/qeval` | no                                                                                                                                |
-| Uptime     | per UTC day, of the blocks it was in the set for: signed (a nil vote signs), absent, other block; outages (10+ in a row absent or for another block, recovery runs left out)                                 | every block's commit                                                                     | signed ÷ blocks in the set, recovery runs left out of both (50 %), and outages (20 %), over the 30 complete UTC days before today |
-| Proposals  | per UTC day: the rounds it was the expected proposer of until the block was made, and those it missed                                                                                                        | block headers and each round's expected proposer                                         | missed ÷ expected on the heights it signed, restart heights left out (10 %), over the same window                                 |
-| Recovery   | after a restart, how long it took to sign again; a sample only when it was in the set and signing before, and signs again; one still absent shows as pending                                                 | restarts and absences                                                                    | the median of its last 3 samples within the 180 complete UTC days before today (20 %)                                             |
-| Vote delay | its precommits' delay from each commit's voting-power-weighted median time                                                                                                                                   | the daily vote-delay histograms; the live window for the last 100 blocks                 | no                                                                                                                                |
-| Timeline   | joins, leaves, power changes, key rotations, outages, recoveries and a pending one, newest first                                                                                                             | set changes and their events, absences, restarts                                         | its outages and recoveries                                                                                                        |
+| Section    | What                                                                                                                                                                                                                                                                                                                                                                                                | Source                                                                                                                                                                | Scored                                                                                                                            |
+| ---------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| Status     | in the set since (a key rotation is no break once its events are read) or not in it since, "since before" the history's first day when its join is older; power and share; country, with its flag · provider, and for a declared location its coordinates and "declared by the operator on" its day                                                                                                 | the node's current set; the block history's set changes for since; its matched peer, or its operator's declaration (see [Network Map](#network-map--cloud-providers)) | no                                                                                                                                |
+| Profile    | description (its markdown rendered, links opening in a new tab), server type, operator, signing address and key, keep running, last rotation                                                                                                                                                                                                                                                        | the valopers realm, read every 15 min; keep running and last rotation through `vm/qeval`                                                                              | no                                                                                                                                |
+| Uptime     | per UTC day, of the blocks it was in the set for: signed (a nil vote signs), absent, other block; outages (10+ in a row absent or for another block, recovery runs left out)                                                                                                                                                                                                                        | every block's commit                                                                                                                                                  | signed ÷ blocks in the set, recovery runs left out of both (50 %), and outages (20 %), over the 30 complete UTC days before today |
+| Proposals  | per UTC day: the rounds it was the expected proposer of until the block was made, and those it missed                                                                                                                                                                                                                                                                                               | block headers and each round's expected proposer                                                                                                                      | missed ÷ expected on the heights it signed, restart heights left out (10 %), over the same window                                 |
+| Recovery   | after a restart, how long it took to sign again; a sample only when it was in the set and signing before, and signs again; one still absent shows as pending                                                                                                                                                                                                                                        | restarts and absences                                                                                                                                                 | the median of its last 3 samples within the 180 complete UTC days before today (20 %)                                             |
+| Vote delay | its precommits' delay from each commit's voting-power-weighted median time                                                                                                                                                                                                                                                                                                                          | the daily vote-delay histograms; the live window for the last 100 blocks                                                                                              | no                                                                                                                                |
+| Timeline   | joins, leaves, power changes, key rotations, outages, recoveries and a pending one, newest first                                                                                                                                                                                                                                                                                                    | set changes and their events, absences, restarts                                                                                                                      | its outages and recoveries                                                                                                        |
+| Location   | the page's last, shown while its location is declared or its operator may declare it: **Declare its location**, or **Update** and **Remove**, to declare, update or remove it (see [Declared locations](#declared-locations)); the document its operator signed, folded under a **Signed document** toggle, which **⧉ copy** copies and **⤓ download** saves as `gnockpit-location-<operator>.json` | its operator's declaration, in its canonical Amino JSON form ([`POST /api/location`](#post-apilocation))                                                              | no                                                                                                                                |
 
 **Scored** is the rule and weight the validator scoring gives a datum. The
 scored figures apply the scoring's filters: uptime and outages leave recovery
@@ -737,17 +849,18 @@ The JSON endpoints below are CORS-open, for building external
 badges/dashboards; `/ws` is a WebSocket open to any origin, and `/badge.svg` a
 CORS-open SVG image.
 
-| Endpoint         | Description                                                                                                                                                                                                          |
-| ---------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `/api/status`    | Health summary (`status`/`chain`/`height`/`reason`/`time`) plus live network state, the last 100 blocks with signing status, and per-peer / per-validator column data; see [`/api/status`](#apistatus).              |
-| `/api/stats`     | Aggregate stats: per-validator missed-block windows, cloud-provider and country aggregates, validator-set health, and the Nakamoto coefficient; see [`/api/stats`](#apistats).                                       |
-| `/api/eta`       | Block ETAs: when a height is expected, which height a time reaches, or the scheduled halt; see [`/api/eta`](#apieta).                                                                                                |
-| `/api/history`   | The block history: how far back it reaches, the blocks of a range of heights with the validators that did not sign each for it, daily vote delays, and the validator set changes; see [`/api/history`](#apihistory). |
-| `/api/validator` | One validator's page data: status, keys, profile, timeline, daily series, recoveries, scoring-window summary and live figures; see [`/api/validator`](#apivalidator).                                                |
-| `/api/ranking`   | The daily validator ranking: its state, and the latest day published with every operator's inputs, sub-scores and rank; 404 while `--ranking` is off; see [`/api/ranking`](#apiranking).                             |
-| `/ws`            | The dashboard's live feed (unstable shape, following the dashboard): a WebSocket of JSON messages, open to any origin; see [`/ws`](#ws).                                                                             |
-| `/api`           | Raw internal snapshot dump (unstable shape; for debugging).                                                                                                                                                          |
-| `/badge.svg`     | SVG status badge.                                                                                                                                                                                                    |
+| Endpoint         | Description                                                                                                                                                                                                                    |
+| ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `/api/status`    | Health summary (`status`/`chain`/`height`/`reason`/`time`) plus live network state, the last 100 blocks with signing status, and per-peer / per-validator column data; see [`/api/status`](#apistatus).                        |
+| `/api/stats`     | Aggregate stats: per-validator missed-block windows, cloud-provider and country aggregates, validator-set health, and the Nakamoto coefficient; see [`/api/stats`](#apistats).                                                 |
+| `/api/eta`       | Block ETAs: when a height is expected, which height a time reaches, or the scheduled halt; see [`/api/eta`](#apieta).                                                                                                          |
+| `/api/history`   | The block history: how far back it reaches, the blocks of a range of heights with the validators that did not sign each for it, daily vote delays, and the validator set changes; see [`/api/history`](#apihistory).           |
+| `/api/validator` | One validator's page data: status, keys, profile, timeline, daily series, recoveries, scoring-window summary and live figures; see [`/api/validator`](#apivalidator).                                                          |
+| `/api/ranking`   | The daily validator ranking: its state, and the latest day published with every operator's inputs, sub-scores and rank; 404 while `--ranking` is off; see [`/api/ranking`](#apiranking).                                       |
+| `/api/location`  | `POST` only: an operator's signed declaration of where its validator runs, for a validator gnockpit cannot locate by its IP; answers the stored location, or why it refuses it; see [`POST /api/location`](#post-apilocation). |
+| `/ws`            | The dashboard's live feed (unstable shape, following the dashboard): a WebSocket of JSON messages, open to any origin; see [`/ws`](#ws).                                                                                       |
+| `/api`           | Raw internal snapshot dump (unstable shape; for debugging).                                                                                                                                                                    |
+| `/badge.svg`     | SVG status badge.                                                                                                                                                                                                              |
 
 ### `/api/eta`
 
@@ -793,9 +906,15 @@ curl -s 'http://localhost:8080/api/eta?time=<RFC 3339 time after the newest bloc
 ### `/api/status`
 
 Each peer and validator has `name`, and where its IP resolves, `country`,
-`city`, `lat`/`lon` and cloud `provider`; a validator's are its matched peer's.
+`city`, `lat`/`lon` and cloud `provider`; a validator's are its matched peer's
+(of two peers carrying its key, the one located by its IP, as on
+[`/api/validator`](#apivalidator)), or, while its operator's declaration shows
+(see [Network Map](#network-map--cloud-providers)), the declaration's
+`country`, `lat`/`lon` and `provider`, without `city`, and
+`location_declared: true`.
 Unknown fields are omitted; `lat` and `lon` come together, only when the IP is
-located, and one of them can be 0 (the equator, the prime meridian). Each peer
+located or the location declared, and one of them can be 0 (the equator, the
+prime meridian). Each peer
 also has `node_id`, `reachable` (its RPC answered), `connected_ms` (the
 longest current connection to it among the sources, in ms; omitted when no
 source reports one) and `presence`: `listed` of `polls`, the gnockpit polls over
@@ -825,6 +944,12 @@ exceeds a third of the set's; 0 when every voting power reads as a number and
 none is above 0. It is null before the first snapshot, while the snapshot has
 no validator set (its read failed, or every source is down), and while any
 validator's voting power reads as no number.
+
+A validator counts in `providers` and `countries` by its matched peer's
+provider and country, or, while its operator's declaration shows (see
+[Network Map](#network-map--cloud-providers)), by the declared ones instead (in
+no provider when the declaration names none), its misses of the last 24 h in
+its provider's `missed_24h`. The `peers` counts are the peers' alone.
 
 Before the first snapshot the answer holds `time`; `validators` with every
 count 0 and `nakamoto_coefficient`, `window_blocks` and `missed` null;
@@ -867,7 +992,7 @@ RFC 3339 UTC to the millisecond, days `YYYY-MM-DD`.
 | `chain`, `now`, `address`, `operator`, `moniker` | `now` is the server's time the report is as of: the `summary` and `recoveries[]` windows end before its UTC day, while `days[]` includes that day's row when it has one. `address` is the one asked.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
 | `status`                                         | `in_set`; `since_height` and `since_time`: in the set, its latest join with no leave after (a key rotation is none), out of it, its latest leave; in the set with no join or leave stored, the stored history's first block with `since_before` true (it joined before); left out while the stored history contradicts the current set; `signing_address`, its key in the set; `power` and `share` of the set's total power, each null while unknown: `power` while its own reads as no number, `share` while any member's does. Left out until the node's current set is known.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
 | `keys[]`                                         | Its signing keys: `address`, `from` (0: before the stored history) and `to` (left out: still its key). From the set events (a power change keeps a key's span), with the profile's signing key when no event names it; an unlinked key alone.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
-| `location`                                       | Its matched peer's `country`, `city` and `provider`; left out without one.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| `location`                                       | Where it runs, and `source`, where gnockpit has it from: its signing key's (the one in the set, else the newest) located peer's `country`, `city`, `lat`, `lon` and `provider`, `source` `ip`; else its operator's shown declaration (see [Network Map](#network-map--cloud-providers)): `country`, `lat`, `lon` and `provider` (left out when none), `source` `declared`, and `declared`: `at` (the record's time, as [`POST /api/location`](#post-apilocation) answers it) and `signed` (the signed document, in its canonical Amino JSON form); else that key's matched peer's fields, `source` `ip`. Left out without any.                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
 | `profile`                                        | Its valopers profile: `moniker`, `description`, `server_type`, `operator`, `signing_address`, `signing_pubkey`, and `keep_running` and `last_rotation_height` when the node answered `vm/qeval`. Left out without a profile.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
 | `timeline[]`                                     | Newest first, each with `kind`, `height`, `time` and its kind's fields: `recovered` (`restart_height`, `duration_ms`; `height` is the first height signed again), `recovering` (`restart_height`, at the restart: not signed since), `outage` (`to`, `blocks`, `end_time`, `ongoing`), `power` (`before`, `after`), `rotated` (`old_address`, `new_address`), `joined`, `left` and `genesis` (`power`). A rotation reads as a `left` and a `joined` until its events are read.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
 | `vote_delay_edges_ms`                            | The vote-delay buckets' edges, as in `/api/history`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
@@ -875,6 +1000,7 @@ RFC 3339 UTC to the millisecond, days `YYYY-MM-DD`.
 | `recoveries[]`                                   | Its samples, ascending: a restart it was in the set and signing before, with fewer than 10 absences up to it. `restart_height` (b: block b+1 came over 2 minutes after block b), `restart_time` (block b+1's), `signed_at`, `duration_ms`, `pending` (block `signed_at`+1, which times it, is not stored yet; `signed_at` and `duration_ms` are 0) and `scored` (one of the last 3 of the 180 complete UTC days before today).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
 | `summary`                                        | Over the 30 complete UTC days before today (`first_day`, `last_day`): `in_set`, `signed`, `absent`, `nil`, `other_block` and `votes` summed over the days, `vote_delay_mean_ms` their mean, and `outages` (one counts once 10 of its heights are inside, recovery runs left out). `recovering` is the heights inside the window that belong to recovery runs (up to 24 h of block time after a restart's block b+1, decided per validator across its keys); uptime is `signed` ÷ (`in_set` − `recovering`). `longest_absence` is the longest run of absences inside the window, in heights, recovery runs left out, runs under 10 included. `in_set_ms` is the milliseconds of block time in the set over the window, 0 when the validator has no stored key or block in it. `proposals_expected` and `proposals_missed` count only the heights the validator signed, restart heights b left out, where each day's in `days[]` counts every height. `recovery`: the `samples` within the 180 complete UTC days before today, `median_ms` of the last 3 and `slowest_ms` of all. |
 | `live`                                           | The validators table's: `vote_delay_ms` (null without one), `missed_100`, `nil_100`, `other_block_100`, `missed_24h`, `missed_proposals_24h` and `expected_proposals_24h`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| `declarable`                                     | Whether its operator may declare its validator's location ([`POST /api/location`](#post-apilocation)): its valopers profile's signing key is in the current set and gnockpit locates no peer of that key by its IP. False while the chain id, the validator set or the profile is unread, and for a key without an operator.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
 
 Errors come as `{"error": "…"}`: 400 when `val` is not a g1 address, 404 for
 one gnockpit knows nothing of, 500 when the database read fails.
@@ -934,6 +1060,87 @@ Each entry holds:
 curl -s http://localhost:8080/api/ranking
 ```
 
+### `POST /api/location`
+
+An operator declares where its validator runs, for a validator gnockpit cannot
+locate by its IP. The body is the signed document itself, at most 16 KB, sent
+within 10 s of the request's headers: the Amino JSON transaction gnokey signs,
+holding one send whose sender is the operator (such as `1ugnot` to itself),
+its memo carrying the record. gnokey signs it offline, for chain id
+`gnockpit-location`, account number 0 and sequence 0: no chain runs under that
+id, so the signed document is never a transaction a chain accepts. Only the
+signature of a gnokey secp256k1 key verifies: an operator account that is a
+multisig cannot declare.
+
+The answers are CORS-open, as the other JSON endpoints', but a cross-origin
+browser POST works only without a preflight, with a simple content type such
+as `text/plain`: `OPTIONS`, as any method but `POST`, gets the 405.
+
+The validator page builds the unsigned document: a `/bank.MsgSend` of
+`1ugnot` from the operator to itself, fee `gas_wanted` 1 and `gas_fee`
+`1ugnot`, no signature, and the memo. Its shape, on one line, `<operator>`
+being the operator's g1 address:
+
+```text
+{"msg":[{"@type":"/bank.MsgSend","from_address":"<operator>","to_address":"<operator>","amount":"1ugnot"}],"fee":{"gas_wanted":"1","gas_fee":"1ugnot"},"signatures":null,"memo":"gnockpit-location/v1 {\"chain\":\"<chain id>\",\"operator\":\"<operator>\",\"lat\":1.3,\"lon\":103.8,\"country\":\"SG\",\"provider\":\"OVH SAS\",\"at\":\"2026-11-26T12:00:00Z\"}"}
+```
+
+The memo is `gnockpit-location/v1 ` then one JSON object, a location or its
+removal:
+
+```text
+gnockpit-location/v1 {"chain":"<chain id>","operator":"<operator>","lat":1.3,"lon":103.8,"country":"SG","provider":"OVH SAS","at":"2026-11-26T12:00:00Z"}
+gnockpit-location/v1 {"chain":"<chain id>","operator":"<operator>","clear":true,"at":"2026-11-26T12:00:00Z"}
+```
+
+The record is read strictly: an unknown or duplicate key and a null value are
+refused; `clear` is `true` or absent, and a removal holds no location or
+provider; `lat` (−90 to 90) and `lon` (−180 to 180) hold at most one decimal
+(the 0.1° grid); `country` is an ISO 3166-1 alpha-2 code (or `XK`); `provider`
+is optional (`on-premise` for the operator's own hardware), at most 64
+characters, with no control or format character and no white space at either
+end, and a letter or a digit unless empty; `at` is RFC 3339 in UTC, ending in
+`Z`, between 1678 and 2262.
+
+With the unsigned document saved as `gnockpit-location.json`, gnokey signs it
+in place, and curl sends it:
+
+```bash
+gnokey sign -tx-path gnockpit-location.json -chainid gnockpit-location -account-number 0 -account-sequence 0 <key name>
+curl --data-binary @gnockpit-location.json http://localhost:8080/api/location
+```
+
+The checks, in order, and their answers (`{"error": "<reason>"}`):
+
+| Status | Reason                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| ------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 405    | `method not allowed`, with `Allow: POST`, to any other method.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| 503    | `location declarations unavailable` without a store (the shipped binary always has one); `chain id unknown` while the block history has not read the chain id.                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| 400    | `the document is larger than 16 KB`; `could not read the document`, its body not sent within 10 s included.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| 400    | The document does not verify: not a transaction, not one message, no signature (`the document holds no signature: sign it with gnokey sign`) or several, a malformed record (`the record: <reason>`, such as `the record: provider must not start or end with white space`), a message other than a send, a signer other than the record's operator, a signature without its key or by a key other than a gnokey secp256k1 key or than the operator's, or a signature over other sign bytes (`the signature does not verify: sign with gnokey sign -chainid gnockpit-location -account-number 0 -account-sequence 0`). |
+| 400    | `this gnockpit serves chain <chain id>, the record is for <chain>`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| 503    | `validator set unknown` with no validator set read (at start, or every source down); `validator profiles not read yet` while the operator's profile is unread: before the first read of the valopers registry, or missed by a partial one. What gnockpit has not read refuses nothing.                                                                                                                                                                                                                                                                                                                                 |
+| 400    | `<operator> has no valopers profile`; `<operator>'s validator is not in the current set` (its profile's signing key); `gnockpit locates <operator>'s validator by its IP: a declared location applies only to a validator it cannot locate`, for a removal too.                                                                                                                                                                                                                                                                                                                                                        |
+| 400    | `the record's time is more than 5 minutes ahead of this gnockpit's clock`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| 400    | `a declaration as recent or more recent is stored for <operator> (at <time>)`: each declaration must be newer than the operator's stored one.                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| 500    | `internal error`: the store failed, or got no connection to the database within 10 s; gnockpit logs why.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+
+A provider that matches a listed one once case, spaces and punctuation are
+ignored is stored as the listed name: the listed are the peers' providers, the
+stored declarations' and `on-premise`, sorted, a peer's spelling the record
+refuses (an AS-org name may be over 64 characters, or hold a format character)
+left out, the first match winning. A
+declaration shows its provider matched again against the list of the moment,
+so a provider a peer lists only once the declaration is stored shows, and
+counts, under the peer's name. The store keeps one declaration per chain and
+operator, with its signed document in its canonical Amino JSON form (not the
+bytes as submitted: white space and fields the signature does not cover are
+dropped); a removal stays stored, so no older document brings the location
+back. The answer is 200 with the stored declaration:
+`{"operator", "country", "lat", "lon", "provider", "at"}` (`provider` left out
+when none), or `{"operator", "removed": true, "at"}` for a removal; `at` is the
+record's time, RFC 3339 in UTC to the nanosecond, trailing zeros dropped.
+
 ### `/ws`
 
 The dashboard's own feed: its shape follows the dashboard, with no stability
@@ -941,14 +1148,15 @@ promise. A client gets a `snapshot` message on connecting, once gnockpit has
 polled its sources, then an `update` at each refresh (`-interval`). Both are
 `{"type": …, "data": …}` with the same `data`:
 
-| Field     | Content                                                                                                                                                                                                                                                                                              |
-| --------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `time`    | When the sources were polled: `HH:MM:SS`, in the server's local time.                                                                                                                                                                                                                                |
-| `status`  | The freshest source's `/status`; null while every source is down.                                                                                                                                                                                                                                    |
-| `peers`   | Every source's peers, merged, located as in `/api/status`, with each peer's `connected_ms` and `presence`; `[]` when the sources see no peer, null while every source is down.                                                                                                                       |
-| `votes`   | The round in progress: `height`, `round`, `step`, `proposer` and each validator's votes and signing figures; null without a consensus state.                                                                                                                                                         |
-| `checks`  | `apphash_last`, the freshest source's `val_address` and `val_pubkey`, `hide_sources`, and `system`: `node_time`, the server's time as the message is built (RFC 3339 UTC to the millisecond; the dashboard sets its clock by it and warns when the drift rounds to 3 s or more), and `genesis_time`. |
-| `signing` | The signing of the last 100 blocks: `recent_blocks`, `validator_signing`, the active count and the margin; left out without it.                                                                                                                                                                      |
+| Field      | Content                                                                                                                                                                                                                                                                                              |
+| ---------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `time`     | When the sources were polled: `HH:MM:SS`, in the server's local time.                                                                                                                                                                                                                                |
+| `status`   | The freshest source's `/status`; null while every source is down.                                                                                                                                                                                                                                    |
+| `peers`    | Every source's peers, merged, located as in `/api/status`, with each peer's `connected_ms` and `presence`; `[]` when the sources see no peer, null while every source is down.                                                                                                                       |
+| `votes`    | The round in progress: `height`, `round`, `step`, `proposer` and each validator's votes and signing figures; null without a consensus state.                                                                                                                                                         |
+| `checks`   | `apphash_last`, the freshest source's `val_address` and `val_pubkey`, `hide_sources`, and `system`: `node_time`, the server's time as the message is built (RFC 3339 UTC to the millisecond; the dashboard sets its clock by it and warns when the drift rounds to 3 s or more), and `genesis_time`. |
+| `signing`  | The signing of the last 100 blocks: `recent_blocks`, `validator_signing`, the active count and the margin; left out without it.                                                                                                                                                                      |
+| `declared` | The declared locations that show (see [Network Map](#network-map--cloud-providers)), by their validator's signing key: `name`, `operator`, `country`, `lat`, `lon`, `provider` (left out when none) and `at` (as [`POST /api/location`](#post-apilocation) answers it); `{}` when none.              |
 
 ## Features
 
@@ -956,12 +1164,12 @@ polled its sources, then an `update` at each refresh (`-interval`). Both are
 - Multi-source consolidation — query several RPC endpoints; peers unioned & deduped, freshest source drives chain state
 - Consensus monitoring — height, round, step, prevotes, precommits per validator
 - Peer management — validator detection, connection time, 30-day presence, RPC reachability
-- Network map — IP-geolocated peers, per-country list, Country + cloud-Provider columns
+- Network map — IP-geolocated peers and validators placed where their operators declared them, per-country list, Country + cloud-Provider columns
 - Signing stats — per-validator blocks missed in the last 100 (absent or other block; nil votes shown apart, counted as signed), vote delay, proposals missed in the last 24 h, and missed-block counts over 1h/24h/7d/30d/total
-- Validator page — a validator's status, valopers profile, uptime, proposals, recoveries after restarts, vote delay and timeline, with what the scoring counts (`/api/validator`)
+- Validator page — a validator's status, declared location and its signed document (its operator declares, updates or removes it there), valopers profile, uptime, proposals, recoveries after restarts, vote delay and timeline, with what the scoring counts (`/api/validator`)
 - Validator ranking — the community validator operators ranked once a day by a fixed formula anyone can recompute from chain data, shown as the validators card's Ranking view (`--ranking`, `/api/ranking`)
 - Block ETA — when a height will be produced (or which height at a given time), with 80%/95% ranges and drift from the original estimate; countdown cards for shared links and for the halt scheduled on chain
-- HTTP API — CORS-open `/api/status`, `/api/stats`, `/api/eta`, `/api/history`, `/api/validator` and `/api/ranking` for external badges, dashboards and scripts
+- HTTP API — CORS-open `/api/status`, `/api/stats`, `/api/eta`, `/api/history`, `/api/validator` and `/api/ranking` for external badges, dashboards and scripts, and `POST /api/location` for declared locations
 - Alerts — browser push (PWA) and external notifications (Discord, Telegram, …, each webhook its own alerts) for chain-stuck, missed blocks, validator set changes and coordinated halts, a per-device reminder before an ETA card's height, and a daily validator ranking for webhooks (`ranking`)
 - Recent blocks — the last 100 blocks with signing visualization
 - Block history — every block since genesis: proposer, round, the validators that did not sign it for the block and how, vote delays, expected round proposers and validator set changes, shown as a timeline (`/api/history`)
@@ -973,6 +1181,8 @@ Requirements: Go, and Node 24 (`web/.nvmrc`), for `make test` and `make typechec
 `make test` runs the Go tests, which need no browser. A few check the page's scripts with `node` and fail, naming it, when it is not on `PATH`.
 
 `go test -tags discord -count=1 -run TestDiscordExamples ./web/push/` posts every alert, then a set change caught up after downtime and an escaping check of hostile names, to the webhook in `.ignore/dev/discord-test-url`, is skipped without the file, and `make test` never runs it. The file holds the webhook's secret, and this repository's `.gitignore` does not list `.ignore/`: keep it out of commits (a global gitignore, or `.git/info/exclude`).
+
+`make test-gnokey` signs with real gnokeys and needs the module proxy or the cache: it builds gnokey v1.1.0 and v1.7.1 (`GNOKEY_VERSIONS`) into a temporary directory, writes the location document `web/js/location-record.js` builds with the commands it gives, signs it with each, with the flags of its gnokey command, and posts it to `/api/location`. With `GNOKEY_VERSIONS` empty it builds none and fails. `make test` never runs it.
 
 The binary serves the page's modules from `/js/` with `Cache-Control: no-cache` and a content ETag: a browser revalidates each on load, downloads only one that changed, and so runs the scripts of the deploy that served the page.
 

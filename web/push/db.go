@@ -22,18 +22,27 @@ type Subscriber struct {
 	Lead          Lead // halt_approaching's
 }
 
+// foreignKeys is the DSN parameter that turns foreign keys on as each
+// connection opens: the pragma holds per connection, and the pool replaces a
+// connection it drops, as it drops one whose statement was interrupted.
+const foreignKeys = "_pragma=foreign_keys(1)"
+
 // OpenDB opens (or creates) the SQLite database at path and initializes the schema.
-// Use ":memory:" for tests.
+// Use ":memory:" for tests. An empty path is refused: its DSN would be the
+// foreign keys parameter alone, which SQLite takes for a file name.
 func OpenDB(path string) (*DB, error) {
-	db, err := sql.Open("sqlite", path)
+	if path == "" {
+		return nil, errors.New("a database path is required")
+	}
+	sep := "?"
+	if strings.Contains(path, "?") {
+		sep = "&"
+	}
+	db, err := sql.Open("sqlite", path+sep+foreignKeys)
 	if err != nil {
 		return nil, fmt.Errorf("open sqlite: %w", err)
 	}
 	db.SetMaxOpenConns(1)
-	if _, err := db.Exec("PRAGMA foreign_keys = ON"); err != nil {
-		db.Close()
-		return nil, fmt.Errorf("enable foreign keys: %w", err)
-	}
 	if err := initSchema(db); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("init schema: %w", err)

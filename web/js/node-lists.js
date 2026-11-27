@@ -2,6 +2,7 @@
 // viewer picks, and a card view for narrow screens.
 
 /** @import { Peer, Presence, VoteInfo } from '../types/node.js' */
+/** @import { DeclaredNode } from '../types/server.js' */
 /** @import { PopRow } from './popover.js' */
 
 import { compareSortValues } from './collate.js'
@@ -46,6 +47,16 @@ import { storageGet, storageSet } from './storage.js'
  * @property {string} [copy]
  * @property {Array<{ text: string, cls: string }>} [tags]
  * @property {PopRow[] | undefined} [rows]
+ */
+/**
+ * Where a validator runs, as its row and card show it: its country and
+ * provider, '' when unknown, and the IP they were guessed from; or, with its
+ * declaration, the declared ones, no IP.
+ * @typedef {object} ValidatorLoc
+ * @property {string} country
+ * @property {string} provider
+ * @property {string} ip
+ * @property {DeclaredNode | null} declared
  */
 
 // Sortable table columns — the validators and peers tables each keep
@@ -120,14 +131,18 @@ function createCell(cellDef) {
     return td
 }
 
-// countryCell builds a peers-table cell showing the peer's country:
-// flag + full name, collapsing to the ISO code as the column narrows
-// (CSS container query). data-cc cross-links it to the network map.
+// countryCell builds a table cell showing a node's country: flag +
+// full name, collapsing to the ISO code as the column narrows (CSS
+// container query). data-cc cross-links it to the network map. Its
+// popover names the country, and says so of one an operator
+// declared.
 /**
  * @param {string} code
+ * @param {DeclaredNode | null} [declared] the declaration the country is
+ *   from
  * @returns {HTMLTableCellElement}
  */
-function countryCell(code) {
+function countryCell(code, declared) {
     const td = document.createElement('td')
     td.className = 'country-cell'
     if (!code) {
@@ -136,7 +151,10 @@ function countryCell(code) {
     }
     td.setAttribute('data-cc', code)
     td.setAttribute('data-copy', countryName(code))
-    td.setAttribute('data-popover', countryName(code))
+    td.setAttribute(
+        'data-popover',
+        countryName(code) + (declared ? ' · declared by the operator' : '')
+    )
     td.classList.add('tap-popover')
     const inner = mkEl('span', null, 'cc-inner')
     inner.appendChild(mkEl('span', countryFlag(code), 'cc-flag'))
@@ -158,15 +176,34 @@ function countryShowsCode(body) {
     return !!(el && getComputedStyle(el).display === 'none')
 }
 
-// providerCell builds a cell showing the guessed cloud provider with
-// an info icon whose popover reveals the IP it was guessed from.
+// declaredDay is the day, in UTC, of declaration d, as the tables
+// show it.
+/**
+ * @param {DeclaredNode} d
+ * @returns {string}
+ */
+function declaredDay(d) {
+    return d.at.slice(0, 10)
+}
+
+// providerCell builds a cell showing the cloud provider with an info
+// icon whose popover reveals where it is from: the IP it was guessed
+// from, or the day its operator declared it.
 /**
  * @param {string} provider
  * @param {string} ip
+ * @param {DeclaredNode | null} [declared] the declaration the provider is
+ *   from
  * @returns {HTMLTableCellElement}
  */
-function providerCell(provider, ip) {
-    if (!provider && !ip) {
+function providerCell(provider, ip, declared) {
+    /** @type {PopRow[] | undefined} */
+    const rows = declared
+        ? [[null, 'declared by the operator', declaredDay(declared)]]
+        : ip
+          ? [[null, 'guessed from IP', ip]]
+          : undefined
+    if (!provider && !rows) {
         const empty = document.createElement('td')
         empty.textContent = '—'
         return empty
@@ -174,7 +211,7 @@ function providerCell(provider, ip) {
     const td = createCell({
         text: provider || 'unknown',
         style: 'font-size:11px;color:var(--fg2)',
-        rows: ip ? [[null, 'guessed from IP', ip]] : undefined,
+        rows: rows,
         copy: provider || ip,
     })
     if (provider) td.setAttribute('data-prov', provider)
@@ -324,6 +361,12 @@ function nodeListsFingerprint() {
                 p.catching_up,
                 p.source,
             ]
+        }),
+        // A declaration's key, country, provider and day: its time
+        // within the day, its place and its name the tables do not
+        // show.
+        Object.entries(live.declared).map(function ([key, d]) {
+            return [key, d.country, d.provider, declaredDay(d)]
         }),
     ])
 }
@@ -540,6 +583,32 @@ export function renderNodeLists() {
             null
         )
     }
+    // Where validator v runs: its declared location, which the
+    // server sends only while no IP locates v, else its node's.
+    /**
+     * @param {VoteInfo} v
+     * @returns {ValidatorLoc}
+     */
+    function locOf(v) {
+        const declared =
+            (Object.hasOwn(live.declared, v.address) &&
+                live.declared[v.address]) ||
+            null
+        if (declared)
+            return {
+                country: declared.country,
+                provider: declared.provider || '',
+                ip: '',
+                declared: declared,
+            }
+        const mp = nodeOf(v)
+        return {
+            country: (mp && mp.country) || '',
+            provider: (mp && mp.provider) || '',
+            ip: (mp && (mp.remote_ip || mp.external_address)) || '',
+            declared: null,
+        }
+    }
     /** @type {Set<Peer>} */
     const usedPeers = new Set()
     // The validators in the table's order, which the cards follow.
@@ -588,10 +657,8 @@ export function renderNodeLists() {
                 va = a.address || ''
                 vb = b.address || ''
             } else if (valSortKey === 'country' || valSortKey === 'provider') {
-                const mca = nodeOf(a)
-                const mcb = nodeOf(b)
-                va = (mca && mca[valSortKey]) || null
-                vb = (mcb && mcb[valSortKey]) || null
+                va = locOf(a)[valSortKey] || null
+                vb = locOf(b)[valSortKey] || null
                 // Match the display: sort by full name unless the
                 // column is collapsed to the ISO code.
                 if (valSortKey === 'country' && !valCountryShowsCode) {
@@ -640,14 +707,11 @@ export function renderNodeLists() {
                 })
             )
 
-            // Country + provider (from the validator's connected peer)
-            tr.appendChild(countryCell(mp ? mp.country || '' : ''))
-            tr.appendChild(
-                providerCell(
-                    mp ? mp.provider || '' : '',
-                    mp ? mp.remote_ip || mp.external_address || '' : ''
-                )
-            )
+            // Country + provider (declared, else from the validator's
+            // connected peer)
+            const loc = locOf(v)
+            tr.appendChild(countryCell(loc.country, loc.declared))
+            tr.appendChild(providerCell(loc.provider, loc.ip, loc.declared))
 
             // Voting Power
             const vpTd = document.createElement('td')
@@ -905,8 +969,8 @@ export function renderNodeLists() {
         /**
          * A card's data: its key, for the focus keeper; its name, a
          * validator's linking its page (valAddress); a peer's minimal
-         * fields, or a validator's; the RPC footer's; and what a click
-         * copies.
+         * fields, or a validator's, its country and provider declared
+         * or not; the RPC footer's; and what a click copies.
          * @typedef {object} CardData
          * @property {string} key
          * @property {string} name
@@ -920,6 +984,7 @@ export function renderNodeLists() {
          * @property {string} [address]
          * @property {string} [country]
          * @property {string} [provider]
+         * @property {boolean} [declared]
          * @property {string} [connected]
          * @property {string} [online]
          * @property {string} [firstSeen]
@@ -999,11 +1064,19 @@ export function renderNodeLists() {
                       ['first seen', { text: data.firstSeen, row: true }],
                   ]
                 : // A validator's: signing on its own row, then
-                  // pairs, the missed counts on the left.
+                  // pairs, the missed counts on the left. A declared
+                  // country and provider, longer for their mark, wrap
+                  // in the narrow columns.
                   [
                       ['signing', { text: data.address, row: true }],
-                      ['country', data.country || '-'],
-                      ['provider', data.provider || '-'],
+                      [
+                          'country',
+                          { text: data.country, wrap: !!data.declared },
+                      ],
+                      [
+                          'provider',
+                          { text: data.provider, wrap: !!data.declared },
+                      ],
                       ['vp', data.vp || '-'],
                       [
                           'spof',
@@ -1106,7 +1179,9 @@ export function renderNodeLists() {
         if (votes && votes.validators && votes.validators.length > 0) {
             for (const v of sortedVals) {
                 const { name: cleanName, isUs } = validatorName(v.name)
-                const mp = nodeOf(v)
+                const loc = locOf(v)
+                // A declared country and provider are marked so.
+                const mark = loc.declared ? ' (declared)' : ''
                 const vpNum = powerOf(v)
 
                 const missed100 =
@@ -1124,13 +1199,18 @@ export function renderNodeLists() {
                         address: shortAddr(v.address),
                         fullAddress: v.address,
                         pubKey: v.pub_key || '',
-                        country:
-                            mp && mp.country
-                                ? countryFlag(mp.country) +
-                                  ' ' +
-                                  countryName(mp.country)
-                                : '-',
-                        provider: mp ? mp.provider || '-' : '-',
+                        declared: loc.declared !== null,
+                        country: loc.country
+                            ? countryFlag(loc.country) +
+                              ' ' +
+                              countryName(loc.country) +
+                              mark
+                            : '-',
+                        // A declaration naming no provider leaves it
+                        // unknown, as the table writes it.
+                        provider: loc.declared
+                            ? (loc.provider || 'unknown') + mark
+                            : loc.provider || '-',
                         missed100: missed100 !== null ? String(missed100) : '-',
                         missed100Cls:
                             missed100 !== null

@@ -5,12 +5,15 @@ package web
 import (
 	"math"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/mxschmitt/playwright-go"
 
+	"github.com/gnoverse/gnockpit/location"
 	"github.com/gnoverse/gnockpit/node"
 )
 
@@ -238,6 +241,53 @@ func TestPageMapClusters(t *testing.T) {
 		e.must(us.ToHaveAttribute("cx", "57.67"))
 		e.must(us.ToHaveAttribute("cy", "42.39"))
 	})
+}
+
+// TestPageMapClustersAtOnePoint checks that clusters of two groups at one
+// point, with nothing else near, part along x, each tied to the point by a
+// leader line and each under the pointer by itself: in Provider mode, a
+// peer at AWS and one at GCP in one city.
+func TestPageMapClustersAtOnePoint(t *testing.T) {
+	e := openPage(t, desktop, mapScenario(
+		mapLocated(fullPeer("sg-a"), 1.3, 103.8, "SG", "AWS"),
+		mapLocated(fullPeer("sg-g"), 1.3, 103.8, "SG", "GCP"),
+	))
+	mapPressMode(e, "Provider")
+	aws, gcp := mapDots+`[data-prov="AWS"]`, mapDots+`[data-prov="GCP"]`
+	e.must(e.expect(aws).ToHaveAttribute("cx", "279.98"))
+	e.must(e.expect(gcp).ToHaveAttribute("cx", "287.62"))
+	for _, dot := range []string{aws, gcp} {
+		e.must(e.expect(dot).ToHaveAttribute("cy", "88.70"))
+	}
+	mapAttrs(e, "#map-points line", "x1", "283.80", "283.80")
+	mapExpectPopover(e, aws, "☁️ AWS · 1 peer", []string{"🇸🇬 Singapore"}, []string{"1 peer"})
+	mapExpectPopover(e, gcp, "☁️ GCP · 1 peer", []string{"🇸🇬 Singapore"}, []string{"1 peer"})
+}
+
+// TestPageMapValidatorsAndPeersAtOnePoint checks that a group's validator
+// cluster and its peer cluster at one point, with nothing else near, part
+// along x, each tied to the point by its leader line and each under the
+// pointer by itself: in Country mode, a full node and a validator's node in
+// one city.
+func TestPageMapValidatorsAndPeersAtOnePoint(t *testing.T) {
+	val := fullPeer("bravo")
+	val.Role, val.ValAddress = "val", valBravo.address()
+	e := openPage(t, desktop, mapScenario(
+		mapLocated(fullPeer("sg-full"), 1.3, 103.8, "SG", ""),
+		mapLocated(val, 1.3, 103.8, "SG", ""),
+	))
+	peers, vals := mapDots+`:not(.is-val)[data-cc="SG"]`, mapDots+`.is-val[data-cc="SG"]`
+	// The page lists bravo's node first, by name: its cluster parts left.
+	e.must(e.expect(vals).ToHaveAttribute("cx", "279.98"))
+	e.must(e.expect(peers).ToHaveAttribute("cx", "287.62"))
+	for _, dot := range []string{peers, vals} {
+		e.must(e.expect(dot).ToHaveAttribute("cy", "88.70"))
+	}
+	mapAttrs(e, "#map-points line", "class", "map-leader-val", "map-leader-peer")
+	mapAttrs(e, "#map-points line", "x1", "283.80", "283.80")
+	for _, dot := range []string{peers, vals} {
+		mapExpectPopover(e, dot, "🇸🇬 Singapore · 1 val · 1 peer", []string{"☁️ Unknown"}, []string{"1 val · 1 peer"})
+	}
 }
 
 // TestPageMapPopover checks a cluster's popover: titled with its group and
@@ -714,4 +764,227 @@ func TestPageMapHighlightFollowsThePointer(t *testing.T) {
 			t.Error("right after the redraw, the map is dimmed with the pointer off DE")
 		}
 	})
+}
+
+// mapExpectPopover opens the popover of the cluster sel matches and checks
+// its title and its rows' labels and values; on a touch screen, where it
+// stays open, a second tap on the cluster then closes it.
+func mapExpectPopover(e *pageEnv, sel, title string, labels, values []string) {
+	e.T.Helper()
+	e.showPopover(e.Page.Locator(sel))
+	e.must(e.expect(pagePopover + " .t").ToHaveText(title))
+	e.must(e.expect(pagePopover + " td.l").ToHaveText(labels))
+	e.must(e.expect(pagePopover + " td.v").ToHaveText(values))
+	if e.profile.touch() {
+		e.must(e.Page.Locator(sel).Tap())
+		e.must(e.expect(pagePopover).ToBeHidden())
+	}
+}
+
+// TestPageMapDeclared checks that a declared location places its validator
+// as an IP location places a peer: charlie, declared in Singapore at OVH,
+// is a validator cluster of SG at x = 103.8 + 180, y = 90 − 1.3, of OVH in
+// Provider mode. Its cluster's popover counts it, and after the branches
+// names it, marked declared, its branch beside it. The side list counts it
+// in its country and provider, and its peer, unlocated, in neither.
+func TestPageMapDeclared(t *testing.T) {
+	onProfiles(t, []profile{desktop, phone}, func(t *testing.T, p profile) {
+		sc := declaredNetwork(t)
+		sc.declarations = []location.Declaration{charlieInSingapore(t)}
+		e := openPage(t, p, sc)
+
+		sg := mapDots + `.is-val[data-cc="SG"]`
+		e.must(e.expect(sg).ToHaveAttribute("cx", "283.80"))
+		e.must(e.expect(sg).ToHaveAttribute("cy", "88.70"))
+		mapExpectPopover(e, sg, "🇸🇬 Singapore · 1 val", []string{"☁️ OVH", "charlie (declared)"}, []string{"1 val", "☁️ OVH"})
+		e.must(e.expect(mapRows + " .country-name").ToHaveText([]string{"Germany", "United States", "Singapore", "Unknown"}))
+		e.must(e.expect(mapRows + " .country-count").ToHaveText([]string{"2", "2", "1", "2"}))
+
+		mapPressMode(e, "Provider")
+		ovh := mapDots + `.is-val[data-prov="OVH"]`
+		e.must(e.expect(ovh).ToHaveCount(1))
+		mapExpectPopover(e, ovh, "☁️ OVH · 1 val", []string{"🇸🇬 Singapore", "charlie (declared)"}, []string{"1 val", "🇸🇬 Singapore"})
+		e.must(e.expect(mapRows + " .country-name").ToHaveText([]string{"Hetzner", "AWS", "OVH", "Unknown"}))
+		e.must(e.expect(mapRows + " .country-count").ToHaveText([]string{"2", "1", "1", "3"}))
+	})
+}
+
+// TestPageMapDeclaredHiddenWhileIPLocated checks that a declaration of a
+// validator gnockpit locates by its IP does not show: bravo, declared in
+// France, stays at its peer's place in Germany; once its peer loses its
+// location, the declaration places it in France.
+func TestPageMapDeclaredHiddenWhileIPLocated(t *testing.T) {
+	sc := declaredNetwork(t)
+	sc.declarations = []location.Declaration{declaration(t, declOpBravo, location.Record{
+		Chain: pageChainID, Operator: keyAddress(declOpBravo),
+		Lat: 48.9, Lon: 2.4, Country: "FR", Provider: "OVH", At: pageNow.Add(-time.Hour),
+	})}
+	e := openPage(t, desktop, sc)
+	e.must(e.expect(mapDots + `.is-val[data-cc="DE"]`).ToHaveCount(1))
+	e.must(e.expect(`[data-cc="FR"]`).ToHaveCount(0))
+
+	unlocated := declaredNetwork(t).snap
+	unlocate(unlocated, valBravo)
+	e.publish(unlocated)
+	e.must(e.expect(mapDots + `.is-val[data-cc="FR"]`).ToHaveCount(1))
+	e.must(e.expect(mapDots + `.is-val[data-cc="DE"]`).ToHaveCount(0))
+}
+
+// TestPageMapDeclaredWithoutProvider checks that a declaration naming no
+// provider places its validator under the unknown provider: charlie,
+// declared in Singapore with none.
+func TestPageMapDeclaredWithoutProvider(t *testing.T) {
+	sc := declaredNetwork(t)
+	sc.declarations = []location.Declaration{charlieWithoutProvider(t)}
+	e := openPage(t, desktop, sc)
+	mapExpectPopover(e, mapDots+`.is-val[data-cc="SG"]`, "🇸🇬 Singapore · 1 val",
+		[]string{"☁️ Unknown", "charlie (declared)"}, []string{"1 val", "☁️ Unknown"})
+
+	mapPressMode(e, "Provider")
+	e.must(e.expect(mapDots + `.is-val:not([data-prov])`).ToHaveCount(1))
+	e.must(e.expect(mapRows + " .country-name").ToHaveText([]string{"Hetzner", "AWS", "Unknown"}))
+	e.must(e.expect(mapRows + " .country-count").ToHaveText([]string{"2", "1", "4"}))
+}
+
+// TestPageMapDeclaredNameOrder checks that a cluster's popover lists its
+// declared validators in the order of their names: charlie before yankee,
+// bravo renamed, though bravo's signing key comes first.
+func TestPageMapDeclaredNameOrder(t *testing.T) {
+	sc := declaredNetwork(t)
+	sc.names[valBravo.address()] = "yankee"
+	unlocate(sc.snap, valBravo)
+	sc.declarations = []location.Declaration{charlieInSingapore(t), bravoInSingapore(t, "OVH")}
+	e := openPage(t, desktop, sc)
+	mapExpectPopover(e, mapDots+`.is-val[data-cc="SG"]`, "🇸🇬 Singapore · 2 vals",
+		[]string{"☁️ OVH", "charlie (declared)", "yankee (declared)"}, []string{"2 vals", "☁️ OVH", "☁️ OVH"})
+}
+
+// TestPageMapDeclaredPropertyNames checks that providers named as an
+// object's properties, as an operator may declare them, count, cluster and
+// show as any other: charlie declared at "constructor" and bravo, its peer
+// unlocated, at "__proto__", both in Singapore.
+func TestPageMapDeclaredPropertyNames(t *testing.T) {
+	sc := declaredNetwork(t)
+	unlocate(sc.snap, valBravo)
+	charlie := charlieInSingapore(t).Record
+	charlie.Provider = "constructor"
+	sc.declarations = []location.Declaration{declaration(t, declOpCharlie, charlie), bravoInSingapore(t, "__proto__")}
+	e := openPage(t, desktop, sc)
+	mapExpectPopover(e, mapDots+`.is-val[data-cc="SG"]`, "🇸🇬 Singapore · 2 vals",
+		[]string{"☁️ __proto__", "☁️ constructor", "bravo (declared)", "charlie (declared)"},
+		[]string{"1 val", "1 val", "☁️ __proto__", "☁️ constructor"})
+	e.must(e.expect(mapRows + " .country-name").ToHaveText([]string{"Singapore", "United States", "Germany", "Unknown"}))
+	e.must(e.expect(mapRows + " .country-count").ToHaveText([]string{"2", "2", "1", "2"}))
+
+	mapPressMode(e, "Provider")
+	e.must(e.expect(mapRows + " .country-name").ToHaveText([]string{"__proto__", "AWS", "constructor", "Hetzner", "Unknown"}))
+	e.must(e.expect(mapRows + " .country-count").ToHaveText([]string{"1", "1", "1", "1", "3"}))
+	for _, c := range []struct{ prov, name string }{{"constructor", "charlie"}, {"__proto__", "bravo"}} {
+		mapExpectPopover(e, mapDots+`.is-val[data-prov="`+c.prov+`"]`, "☁️ "+c.prov+" · 1 val",
+			[]string{"🇸🇬 Singapore", c.name + " (declared)"}, []string{"1 val", "🇸🇬 Singapore"})
+	}
+}
+
+// TestPageMapDeclaredRedraws checks that a declaration the server comes to
+// show redraws the map, the peers as they were: charlie, declared in
+// Singapore once the page is open.
+func TestPageMapDeclaredRedraws(t *testing.T) {
+	e := openPage(t, desktop, declaredNetwork(t))
+	e.must(e.expect(mapDots + `.is-val[data-cc="DE"]`).ToHaveCount(1))
+	e.must(e.expect(mapDots + `[data-cc="SG"]`).ToHaveCount(0))
+	if err := e.Srv.Locations.Put(t.Context(), charlieInSingapore(t)); err != nil {
+		t.Fatal(err)
+	}
+	e.publish(declaredNetwork(t).snap)
+	e.must(e.expect(mapDots + `.is-val[data-cc="SG"]`).ToHaveCount(1))
+}
+
+// TestPageMapDeclaredKeepsItsDrawing checks that a re-declaration changing
+// nothing the map draws, its time alone, leaves the map as it is, an open
+// cluster's popover open; one moving the validator draws it again.
+func TestPageMapDeclaredKeepsItsDrawing(t *testing.T) {
+	sc := declaredNetwork(t)
+	declared := charlieInSingapore(t)
+	sc.declarations = []location.Declaration{declared}
+	e := openPage(t, desktop, sc)
+	sg := mapDots + `.is-val[data-cc="SG"]`
+	e.showPopover(e.Page.Locator(sg))
+	e.must(e.expect(pagePopover + " .t").ToHaveText("🇸🇬 Singapore · 1 val"))
+	old, err := e.Page.Locator(sg).ElementHandle()
+	e.must(err)
+
+	// Later, with us-node connected for 2 min: the Peers table, drawn after
+	// the map, shows the message is in.
+	later := declared.Record
+	later.At = later.At.Add(30 * time.Minute)
+	e.declare(declOpCharlie, later)
+	snap := declaredNetwork(t).snap
+	snap.Peers[slices.IndexFunc(snap.Peers, func(p node.Peer) bool { return p.Moniker == "us-node" })].ConnectedMs = 2 * time.Minute.Milliseconds()
+	e.publish(snap)
+	e.must(e.expect(peerEntry(desktop, "us-node") + " td:nth-child(5)").ToHaveText("2 min"))
+	if v, err := old.Evaluate(`(el) => el.isConnected`); err != nil || v != true {
+		t.Fatalf("the cluster is out of the page (%v, %v): the map was drawn again", v, err)
+	}
+	e.must(e.expect(pagePopover).ToBeVisible())
+	e.must(e.expect(pagePopover + " .t").ToHaveText("🇸🇬 Singapore · 1 val"))
+
+	moved := later
+	moved.Lat, moved.At = 1.4, later.At.Add(time.Minute)
+	e.declare(declOpCharlie, moved)
+	e.publish(declaredNetwork(t).snap)
+	e.must(e.expect(sg).ToHaveAttribute("cy", "88.60"))
+}
+
+// TestPageMapDeclaredFollowsItsData checks that each value of a declaration
+// the map draws redraws it when it alone changes: charlie's longitude,
+// provider and country, its name in the registry, and the validator it
+// stands for (bravo, its peer unlocated, named as charlie is), whose peer
+// leaves the counts while charlie's comes back.
+func TestPageMapDeclaredFollowsItsData(t *testing.T) {
+	network := func() *node.Snapshot {
+		snap := declaredNetwork(t).snap
+		unlocate(snap, valBravo)
+		return snap
+	}
+	sc := declaredNetwork(t)
+	sc.snap = network()
+	r := charlieInSingapore(t).Record
+	sc.declarations = []location.Declaration{declaration(t, declOpCharlie, r)}
+	e := openPage(t, desktop, sc)
+	redeclare := func(change func(r *location.Record)) {
+		t.Helper()
+		change(&r)
+		r.At = r.At.Add(time.Minute)
+		e.declare(declOpCharlie, r)
+		e.publish(network())
+	}
+	sg := mapDots + `.is-val[data-cc="SG"]`
+	e.must(e.expect(sg).ToHaveAttribute("cx", "283.80"))
+
+	redeclare(func(r *location.Record) { r.Lon = 103.9 })
+	e.must(e.expect(sg).ToHaveAttribute("cx", "283.90"))
+	redeclare(func(r *location.Record) { r.Provider = "AWS" })
+	e.must(e.expect(sg).ToHaveAttribute("data-pop-rows", regexp.MustCompile(`"charlie \(declared\)","☁️ AWS"`)))
+	redeclare(func(r *location.Record) { r.Country = "MY" })
+	my := mapDots + `.is-val[data-cc="MY"]`
+	e.must(e.expect(my).ToHaveCount(1))
+
+	e.Srv.Client.Names.Reset()
+	e.Srv.Client.Names.Register(valCharlie.address(), "carol")
+	e.Srv.Client.Names.Register(valBravo.address(), "carol")
+	e.publish(network())
+	e.must(e.expect(my).ToHaveAttribute("data-pop-rows", regexp.MustCompile(`"carol \(declared\)"`)))
+	e.must(e.expect(mapRows + " .country-name").ToHaveText([]string{"Germany", "United States", "Malaysia", "Unknown"}))
+	e.must(e.expect(mapRows + " .country-count").ToHaveText([]string{"2", "2", "1", "2"}))
+
+	// Charlie's removal and bravo's declaration of the same place, named
+	// alike: only the validator differs.
+	removal := location.Record{Chain: r.Chain, Operator: r.Operator, Clear: true, At: r.At.Add(time.Minute)}
+	e.declare(declOpCharlie, removal)
+	bravo := r
+	bravo.Operator = keyAddress(declOpBravo)
+	e.declare(declOpBravo, bravo)
+	e.publish(network())
+	e.must(e.expect(mapRows + " .country-name").ToHaveText([]string{"United States", "Germany", "Malaysia", "Unknown"}))
+	e.must(e.expect(mapRows + " .country-count").ToHaveText([]string{"2", "1", "1", "3"}))
 }

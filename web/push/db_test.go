@@ -1,7 +1,11 @@
 package push_test
 
 import (
+	"context"
 	"database/sql"
+	"database/sql/driver"
+	"errors"
+	"os"
 	"path/filepath"
 	"slices"
 	"testing"
@@ -15,6 +19,63 @@ func TestOpenDB_CreatesSchema(t *testing.T) {
 		t.Fatalf("OpenDB: %v", err)
 	}
 	defer db.Close()
+}
+
+// TestOpenDBTurnsForeignKeysOnForEveryConnection checks that a connection the
+// pool opens after dropping one, as it drops a connection whose statement was
+// interrupted, enforces foreign keys too: the ON DELETE CASCADEs rely on them.
+func TestOpenDBTurnsForeignKeysOnForEveryConnection(t *testing.T) {
+	for _, c := range []struct{ name, path string }{
+		{"a file path", "push.db"},
+		{"a URI with its own parameters", "file:push.db?mode=rwc"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			t.Chdir(t.TempDir())
+			db, err := push.OpenDB(c.path)
+			if err != nil {
+				t.Fatalf("OpenDB(%q): %v", c.path, err)
+			}
+			defer db.Close()
+			conn, err := db.SQL().Conn(context.Background())
+			if err != nil {
+				t.Fatal(err)
+			}
+			// A driver.ErrBadConn out of Raw makes the pool close the connection.
+			if err := conn.Raw(func(any) error { return driver.ErrBadConn }); !errors.Is(err, driver.ErrBadConn) {
+				t.Fatalf("drop the connection: %v", err)
+			}
+			if open := db.SQL().Stats().OpenConnections; open != 0 {
+				t.Fatalf("open connections after the drop = %d, want 0", open)
+			}
+
+			var on int
+			if err := db.SQL().QueryRow("PRAGMA foreign_keys").Scan(&on); err != nil {
+				t.Fatal(err)
+			}
+			if on != 1 {
+				t.Errorf("PRAGMA foreign_keys on a new connection = %d, want 1", on)
+			}
+			if _, err := os.Stat("push.db"); err != nil {
+				t.Errorf("the database file: %v", err)
+			}
+		})
+	}
+}
+
+// TestOpenDBRefusesAnEmptyPath checks that an empty path opens nothing: its
+// DSN would be the parameter alone, which SQLite takes for a file name.
+func TestOpenDBRefusesAnEmptyPath(t *testing.T) {
+	t.Chdir(t.TempDir())
+	db, err := push.OpenDB("")
+	if err == nil {
+		db.Close()
+	}
+	if err == nil || err.Error() != "a database path is required" {
+		t.Errorf("OpenDB(\"\") = %v, want a database path is required", err)
+	}
+	if files, err := os.ReadDir("."); err != nil || len(files) != 0 {
+		t.Errorf("files made in the working directory = %v (%v), want none", files, err)
+	}
 }
 
 func TestDB_VAPIDKeys_RoundTrip(t *testing.T) {

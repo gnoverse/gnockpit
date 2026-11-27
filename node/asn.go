@@ -197,8 +197,11 @@ var providerPatterns = []struct {
 }
 
 // Provider maps an AS-organization name to a canonical cloud-provider label,
-// falling back to the raw organization name when no known provider matches.
+// falling back to the organization name, white space around it trimmed, when
+// no known provider matches: a declared location's provider may hold none
+// there, and the page and the server list this one.
 func Provider(asOrg string) string {
+	asOrg = strings.TrimSpace(asOrg)
 	if asOrg == "" {
 		return ""
 	}

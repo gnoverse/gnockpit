@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/gnoverse/gnockpit/location"
 	"github.com/gnoverse/gnockpit/node"
 )
 
@@ -64,9 +65,10 @@ type NetworkState struct {
 	CatchingUp bool   `json:"catching_up"`
 }
 
-// nodeLocation is where a node runs, resolved from its public IP: geolocation
-// and cloud provider. Embedded in StatusPeer and StatusValidator, its fields
-// serialize inline; unknown ones are omitted.
+// nodeLocation is where a node runs: resolved from its public IP
+// (geolocation and cloud provider), or, for a validator, declared by its
+// operator (declaredLocationOf). Embedded in StatusPeer, StatusValidator and
+// validatorLocation, its fields serialize inline; unknown ones are omitted.
 type nodeLocation struct {
 	Country  string   `json:"country,omitempty"`
 	City     string   `json:"city,omitempty"`
@@ -78,6 +80,28 @@ type nodeLocation struct {
 // locationOf returns the location resolved for peer p.
 func locationOf(p node.Peer) nodeLocation {
 	return nodeLocation{Country: p.Country, City: p.City, Lat: p.Lat, Lon: p.Lon, Provider: p.Provider}
+}
+
+// declaredLocationOf returns the location declaration d holds: its country,
+// coordinates and provider; a declaration names no city.
+func declaredLocationOf(d location.Declaration) nodeLocation {
+	lat, lon := d.Lat, d.Lon
+	return nodeLocation{Country: d.Country, Lat: &lat, Lon: &lon, Provider: d.Provider}
+}
+
+// validatorLocationOf returns the location of the validator signing with key:
+// its shown declaration's (declared true), from declared, by signing key;
+// else its matched peer's, from byAddr (peersByValAddr); else none. A
+// declaration shows only while no peer of key is located, so it never hides
+// an IP location.
+func validatorLocationOf(key string, declared map[string]location.Declaration, byAddr map[string]node.Peer) (loc nodeLocation, isDeclared bool) {
+	if d, ok := declared[key]; ok {
+		return declaredLocationOf(d), true
+	}
+	if p, ok := byAddr[key]; ok {
+		return locationOf(p), false
+	}
+	return nodeLocation{}, false
 }
 
 // StatusPeer is a peer's column data in the public status payload. Its
@@ -92,13 +116,16 @@ type StatusPeer struct {
 }
 
 // StatusValidator is a validator's column data in the public status payload.
-// Its location fields come from the embedded nodeLocation, copied from the
-// peer matched to its address.
+// Its location fields come from the embedded nodeLocation, copied from its
+// operator's shown declaration, else from the peer matched to its address.
 type StatusValidator struct {
 	Name    string `json:"name,omitempty"`
 	Address string `json:"address"`
 	nodeLocation
-	VotingPower string `json:"voting_power,omitempty"`
+	// LocationDeclared tells that its location is its operator's shown
+	// declaration.
+	LocationDeclared bool   `json:"location_declared,omitempty"`
+	VotingPower      string `json:"voting_power,omitempty"`
 	// SPOF tells whether losing it drops the rest below quorum; nil while
 	// the total voting power is unknown.
 	SPOF      *bool `json:"spof,omitempty"`
@@ -138,13 +165,18 @@ func isSPOF(vp, totalVP int) bool {
 }
 
 // peersByValAddr indexes peers by the validator address they've been correlated
-// to, for looking up a validator's location.
+// to, for looking up a validator's location: of the peers of one address, the
+// first gnockpit locates by its IP, as locatedPeer takes it, else the last.
 func peersByValAddr(peers []node.Peer) map[string]node.Peer {
 	m := make(map[string]node.Peer)
 	for _, p := range peers {
-		if p.ValAddress != "" {
-			m[p.ValAddress] = p
+		if p.ValAddress == "" {
+			continue
 		}
+		if held, ok := m[p.ValAddress]; ok && locatesValidator(held) {
+			continue
+		}
+		m[p.ValAddress] = p
 	}
 	return m
 }
@@ -177,6 +209,8 @@ func (s *Server) buildStatusReport(snap *node.Snapshot, now time.Time) StatusRep
 			rep.Network.CatchingUp = snap.Status.SyncInfo.CatchingUp
 		}
 		byAddr := peersByValAddr(snap.Peers)
+		valopers, _ := s.Valopers()
+		declared := s.shownDeclarations(snap, valopers)
 		// Voting power as the payload lists it, each validator's from the
 		// set, parsed once, by its place. While one is unknown (unreadable,
 		// or a validator out of the set) so is the total, and so is each
@@ -211,9 +245,7 @@ func (s *Server) buildStatusReport(snap *node.Snapshot, now time.Time) StatusRep
 				spof := isSPOF(vps[i], totalVP)
 				sv.SPOF = &spof
 			}
-			if p, ok := byAddr[vi.Address]; ok {
-				sv.nodeLocation = locationOf(p)
-			}
+			sv.nodeLocation, sv.LocationDeclared = validatorLocationOf(vi.Address, declared, byAddr)
 			rep.Validators = append(rep.Validators, sv)
 		}
 	}

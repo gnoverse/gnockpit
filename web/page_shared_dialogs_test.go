@@ -170,6 +170,12 @@ func sectionInfo(key string) string {
 	return "#val-body [data-section=" + key + "] > h3 > .info-btn"
 }
 
+// validatorStatusSpans are the parts of the validator page's status line:
+// the status, then the location.
+func (e *pageEnv) validatorStatusSpans() playwright.Locator {
+	return e.Page.Locator("#val-body .val-status > span")
+}
+
 // statItem is an item of a stats line as shown: its label, its value,
 // and its value's band class, "" for none.
 type statItem struct{ label, value, band string }

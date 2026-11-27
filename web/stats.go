@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/gnoverse/gnockpit/blocks"
+	"github.com/gnoverse/gnockpit/location"
 	"github.com/gnoverse/gnockpit/node"
 )
 
@@ -64,7 +65,8 @@ type ValidatorMissed struct {
 }
 
 // ProviderStat aggregates peers and (known) validators hosted on one cloud
-// provider. Validator figures cover only validators this node is peered with.
+// provider. Validator figures cover only validators a source is peered with
+// or whose operator's declaration shows.
 type ProviderStat struct {
 	Provider   string `json:"provider"`
 	Peers      int    `json:"peers"`
@@ -72,7 +74,9 @@ type ProviderStat struct {
 	Missed24h  int    `json:"missed_24h"`
 }
 
-// CountryStat aggregates peers and (known) validators in one country.
+// CountryStat aggregates peers and (known) validators in one country: a
+// validator counts when a source is peered with it or its operator's
+// declaration shows.
 type CountryStat struct {
 	Country    string `json:"country"`
 	Peers      int    `json:"peers"`
@@ -124,9 +128,10 @@ func nakamotoCoefficient(vals []node.Validator) *int {
 	return &count
 }
 
-// buildStats assembles the /api/stats payload from the latest snapshot and the
-// block history (which may be nil when it is disabled).
-func buildStats(ctx context.Context, snap *node.Snapshot, hist *blocks.Store, now time.Time) Stats {
+// buildStats assembles the /api/stats payload from the latest snapshot, the
+// block history (which may be nil when it is disabled) and the declarations
+// that show with the snapshot, by signing key.
+func buildStats(ctx context.Context, snap *node.Snapshot, hist *blocks.Store, declared map[string]location.Declaration, now time.Time) Stats {
 	st := Stats{Time: now.UTC().Format(time.RFC3339)}
 	if snap == nil {
 		return st
@@ -198,7 +203,8 @@ func buildStats(ctx context.Context, snap *node.Snapshot, hist *blocks.Store, no
 	st.Validators = vs
 
 	// Provider / country aggregates: peer counts are complete; validator counts
-	// cover only validators this node is peered with (matched via ValAddress).
+	// cover only validators with a shown declaration, which stands for their
+	// peer's location, or a matched peer (via ValAddress).
 	peerByValAddr := peersByValAddr(snap.Peers)
 	provAgg := make(map[string]*ProviderStat)
 	ctryAgg := make(map[string]*CountryStat)
@@ -215,17 +221,14 @@ func buildStats(ctx context.Context, snap *node.Snapshot, hist *blocks.Store, no
 		}
 	}
 	for _, v := range snap.Validators {
-		p, ok := peerByValAddr[v.Address]
-		if !ok {
-			continue
-		}
-		if p.Provider != "" {
-			ps := prov(provAgg, p.Provider)
+		loc, _ := validatorLocationOf(v.Address, declared, peerByValAddr)
+		if loc.Provider != "" {
+			ps := prov(provAgg, loc.Provider)
 			ps.Validators++
 			ps.Missed24h += missed24h[v.Address]
 		}
-		if p.Country != "" {
-			ctry(ctryAgg, p.Country).Validators++
+		if loc.Country != "" {
+			ctry(ctryAgg, loc.Country).Validators++
 		}
 	}
 
@@ -270,7 +273,9 @@ func ctry(m map[string]*CountryStat, code string) *CountryStat {
 // handleStats serves aggregate network statistics as JSON. CORS-open so third
 // parties can build their own dashboards from it.
 func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
-	st := buildStats(r.Context(), s.getSnapshot(), s.Blocks, s.now())
+	snap := s.getSnapshot()
+	valopers, _ := s.Valopers()
+	st := buildStats(r.Context(), snap, s.Blocks, s.shownDeclarations(snap, valopers), s.now())
 	body, err := json.MarshalIndent(st, "", "  ")
 	if err != nil {
 		log.Printf("stats: encode: %v", err)

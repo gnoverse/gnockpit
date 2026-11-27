@@ -46,12 +46,6 @@ func (e *pageEnv) valPageValue(i int) playwright.Locator {
 	return e.Page.Locator("#val-body .kv .v").Nth(i)
 }
 
-// valPageStatusSpans are the parts of the modal's status line: the status,
-// then the location.
-func (e *pageEnv) valPageStatusSpans() playwright.Locator {
-	return e.Page.Locator("#val-body .val-status > span")
-}
-
 // valPageTimelineButton is the Validators card's button to its Timeline
 // view.
 func (e *pageEnv) valPageTimelineButton() playwright.Locator {

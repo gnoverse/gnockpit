@@ -5,10 +5,12 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/gnoverse/gnockpit/location"
 	"github.com/gnoverse/gnockpit/node"
 )
 
@@ -394,5 +396,99 @@ func TestStatusPeersCarryConnectionAndPresence(t *testing.T) {
 		if strings.Contains(string(body.Peers[1]), key) {
 			t.Errorf("peer without figures = %s, want no %s", body.Peers[1], key)
 		}
+	}
+}
+
+// TestStatusUsesDeclaredLocation checks that a validator with a shown
+// declaration takes its location, marked declared, in place of its matched
+// peer's, its provider the declared one or none, and that a validator
+// located by its IP keeps its peer's, its operator's stored declaration
+// aside.
+func TestStatusUsesDeclaredLocation(t *testing.T) {
+	k1, k2 := locationAddr("K1"), locationAddr("K2")
+	k2Location := map[string]any{"country": "DE", "lat": 50.1, "lon": 8.7, "provider": "Hetzner Online GmbH"}
+	for _, c := range []struct {
+		name     string
+		provider string         // the provider A declares
+		want     map[string]any // K1's location fields, location_declared included
+	}{
+		{"a provider", "Equinix", map[string]any{"country": "SG", "lat": 1.3, "lon": 103.8, "provider": "Equinix", "location_declared": true}},
+		{"no provider", "", map[string]any{"country": "SG", "lat": 1.3, "lon": 103.8, "location_declared": true}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			srv := locationServer(t)
+			declareOK(t, srv, signedLocation(t, "A", locationWith("A", c.provider), location.Legacy))
+			storeDeclaration(t, srv, locationAt("B", locationT))
+			snap := *srv.getSnapshot()
+			snap.Consensus = &node.ConsensusState{Votes: []node.VoteInfo{{Address: k1}, {Address: k2}}}
+
+			body, err := json.Marshal(srv.buildStatusReport(&snap, seamNow))
+			if err != nil {
+				t.Fatal(err)
+			}
+			var payload struct {
+				Validators []map[string]any `json:"validators"`
+			}
+			if err := json.Unmarshal(body, &payload); err != nil {
+				t.Fatal(err)
+			}
+			rows := map[string]map[string]any{}
+			for _, r := range payload.Validators {
+				rows[r["address"].(string)] = r
+			}
+			for key, want := range map[string]map[string]any{k1: c.want, k2: k2Location} {
+				got := map[string]any{}
+				for _, k := range []string{"country", "city", "lat", "lon", "provider", "location_declared"} {
+					if v, ok := rows[key][k]; ok {
+						got[k] = v
+					}
+				}
+				if !reflect.DeepEqual(got, want) {
+					t.Errorf("%s's location = %v, want %v", key, got, want)
+				}
+			}
+		})
+	}
+}
+
+// TestStatusPrefersALocatedPeer checks the location of a validator whose key
+// two peers carry, one located by its IP and one not: the located one's,
+// whichever comes last, as /api/validator takes it; its operator's stored
+// declaration gives way to it.
+func TestStatusPrefersALocatedPeer(t *testing.T) {
+	k1, k2 := locationAddr("K1"), locationAddr("K2")
+	lat, lon := 10.0, 20.0
+	located := node.Peer{NodeID: "k1-node", ValAddress: k1, Lat: &lat, Lon: &lon, Country: "FR", Provider: "Scaleway"}
+	unlocated := node.Peer{NodeID: "k1-namesake", ValAddress: k1, Provider: "OVH SAS"}
+	for _, c := range []struct {
+		name  string
+		peers []node.Peer
+	}{
+		{"the located peer first", []node.Peer{located, unlocated}},
+		{"the located peer last", []node.Peer{unlocated, located}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			srv := locationServer(t)
+			storeDeclaration(t, srv, locationAt("A", locationT))
+			snap := *srv.getSnapshot()
+			snap.Peers = append(c.peers, snap.Peers[1]) // then K2's peer
+			snap.Consensus = &node.ConsensusState{Votes: []node.VoteInfo{{Address: k1}, {Address: k2}}}
+
+			var got *StatusValidator
+			rep := srv.buildStatusReport(&snap, seamNow)
+			for i := range rep.Validators {
+				if rep.Validators[i].Address == k1 {
+					got = &rep.Validators[i]
+				}
+			}
+			if got == nil {
+				t.Fatalf("/api/status lists no K1: %+v", rep.Validators)
+			}
+			if got.Country != "FR" || got.Lat == nil || *got.Lat != lat || got.Lon == nil || *got.Lon != lon ||
+				got.Provider != "Scaleway" || got.LocationDeclared {
+				t.Errorf("/api/status K1's location = %+v, declared %t; want FR (10, 20) at Scaleway, not declared",
+					got.nodeLocation, got.LocationDeclared)
+			}
+		})
 	}
 }

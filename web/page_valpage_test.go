@@ -476,7 +476,7 @@ func TestPageValidatorStaleAnswerIsDropped(t *testing.T) {
 
 	e.expectValidatorReport("alpha")
 	e.valPageExpectURL("/?val=" + valAlpha.address())
-	e.must(e.Expect.Locator(e.valPageStatusSpans().First()).ToHaveText("in the set since 2026-11-15 (2 d) · power 10 (28.6 %)ⓘ"))
+	e.must(e.Expect.Locator(e.validatorStatusSpans().First()).ToHaveText("in the set since 2026-11-15 (2 d) · power 10 (28.6 %)ⓘ"))
 }
 
 // ---- Status line
@@ -547,7 +547,7 @@ func TestPageValidatorStatusLine(t *testing.T) {
 					e.navigate("/?val=" + l.val)
 					e.must(e.expect("#val-body [data-section=profile]").ToBeVisible())
 					e.must(e.expect("#val-title").ToHaveText(l.title))
-					e.must(e.Expect.Locator(e.valPageStatusSpans()).ToHaveText(l.spans))
+					e.must(e.Expect.Locator(e.validatorStatusSpans()).ToHaveText(l.spans))
 					dot := e.expect("#val-body .val-status .dot")
 					e.must(dot.ToHaveClass(l.dot))
 					e.must(dot.ToHaveCSS("background-color", l.dotColor))
@@ -585,7 +585,7 @@ func TestPageValidatorPowersUseThousandsSeparators(t *testing.T) {
 	onProfiles(t, []profile{desktop, phone}, func(t *testing.T, p profile) {
 		e := openPage(t, p, setChangesNetwork(t, 100_000), withURL("/?val="+opBravo))
 		e.expectValidatorReport("bravo")
-		e.must(e.Expect.Locator(e.valPageStatusSpans().First()).ToHaveText("in the set since 2026-11-16 (1 d) · power 1,000,000 (28.6 %)ⓘ"))
+		e.must(e.Expect.Locator(e.validatorStatusSpans().First()).ToHaveText("in the set since 2026-11-16 (1 d) · power 1,000,000 (28.6 %)ⓘ"))
 		e.must(e.expect("#val-body .vt-row .w").ToHaveText([]string{"power 800,000 → 1,000,000", "joined power 800,000"}))
 	})
 }
@@ -600,7 +600,7 @@ func TestPageValidatorAgesReadServerTime(t *testing.T) {
 		// time.
 		e.press(e.validatorNameLink("bravo"))
 		e.expectValidatorReport("bravo")
-		e.must(e.Expect.Locator(e.valPageStatusSpans().First()).ToHaveText("in the set since 2026-11-16 (1 d) · power 10 (28.6 %)ⓘ"))
+		e.must(e.Expect.Locator(e.validatorStatusSpans().First()).ToHaveText("in the set since 2026-11-16 (1 d) · power 10 (28.6 %)ⓘ"))
 		e.must(e.expect("#val-body .vt-row .h").ToHaveText([]string{"#3,001 · 22 h ago", "#2,001 · 39 h ago"}))
 
 		e.press(e.Page.Locator("#val-close"))
@@ -621,7 +621,7 @@ func TestPageValidatorAgesReadTheReportTime(t *testing.T) {
 		ws := e.hold("/ws")
 		e.navigate("/?val=" + valBravo.address())
 		e.expectValidatorReport("bravo")
-		e.must(e.Expect.Locator(e.valPageStatusSpans().First()).ToHaveText("in the set since 2026-11-16 (1 d) · power 10 (28.6 %)ⓘ"))
+		e.must(e.Expect.Locator(e.validatorStatusSpans().First()).ToHaveText("in the set since 2026-11-16 (1 d) · power 10 (28.6 %)ⓘ"))
 		e.must(e.expect("#val-body .vt-row .h").ToHaveText([]string{"#3,001 · 22 h ago", "#2,001 · 39 h ago"}))
 		ws.release()
 	})
@@ -950,7 +950,7 @@ func TestPageValidatorMarkupStaysText(t *testing.T) {
 		e.expectValidatorReport(markup)
 		e.must(e.Expect.Locator(e.valPageValue(0)).ToHaveText(markup))
 		e.must(e.Expect.Locator(e.valPageValue(1)).ToHaveText(markup))
-		e.must(e.Expect.Locator(e.valPageStatusSpans().Last()).ToHaveText("🇩🇪 Germany · " + markup + "ⓘ"))
+		e.must(e.Expect.Locator(e.validatorStatusSpans().Last()).ToHaveText("🇩🇪 Germany · " + markup + "ⓘ"))
 		e.must(e.expect("#val-page img").ToHaveCount(0))
 		e.must(e.expect("#val-title *").ToHaveCount(0))
 	})
@@ -1055,8 +1055,9 @@ func TestPageValidatorSections(t *testing.T) {
 	onProfiles(t, []profile{desktop, phone}, func(t *testing.T, p profile) {
 		e := openPage(t, p, setChangesNetwork(t, 1), withURL("/?val="+opBravo))
 		e.expectValidatorReport("bravo")
-		e.must(e.expect("#val-body h3").ToHaveText([]string{"Profileⓘ", "Uptimeⓘ", "Proposalsⓘ", "Recoveryⓘ", "Vote delayⓘ", "Timelineⓘ"}))
-		sections := []string{"profile", "uptime", "proposals", "recovery", "delay", "timeline"}
+		// Bravo's operator may declare its location: no peer locates it.
+		e.must(e.expect("#val-body h3").ToHaveText([]string{"Profileⓘ", "Uptimeⓘ", "Proposalsⓘ", "Recoveryⓘ", "Vote delayⓘ", "Timelineⓘ", "Locationⓘ"}))
+		sections := []string{"profile", "uptime", "proposals", "recovery", "delay", "timeline", "location"}
 		for i, key := range sections {
 			e.must(e.Expect.Locator(e.Page.Locator("#val-body [data-section]").Nth(i)).ToHaveAttribute("data-section", key))
 		}
@@ -1064,8 +1065,8 @@ func TestPageValidatorSections(t *testing.T) {
 		e.must(e.expect("#val-body .val-scored > .val-glabel").ToHaveText("scored by the ranking" + "ⓘ"))
 
 		infos := e.Page.Locator("#val-body .info-btn")
-		e.must(e.Expect.Locator(infos).ToHaveCount(9))
-		for i := range 9 {
+		e.must(e.Expect.Locator(infos).ToHaveCount(10))
+		for i := range 10 {
 			e.must(e.Expect.Locator(infos.Nth(i)).ToHaveAttribute("data-popover", info))
 		}
 		charts := []string{"uptime", "proposals", "recovery", "delay"}
