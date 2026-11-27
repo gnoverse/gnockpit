@@ -3,6 +3,7 @@ package web
 import (
 	"bytes"
 	"cmp"
+	"context"
 	"crypto/ecdh"
 	"crypto/rand"
 	"encoding/base64"
@@ -19,6 +20,7 @@ import (
 	"reflect"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -1485,5 +1487,52 @@ func TestWSMessagesStampTheServerTime(t *testing.T) {
 		if tc.system != nil && tc.system.NodeTime != fetched {
 			t.Errorf("snapshot node time = %q after building the messages, want %q kept", tc.system.NodeTime, fetched)
 		}
+	}
+}
+
+func TestHaltParamComesFromTheETATracker(t *testing.T) {
+	s := &Server{ETA: staticETA{eta.View{HaltParam: 1000}}}
+	if got := s.haltParam(); got != 1000 {
+		t.Errorf("haltParam() = %d, want 1000", got)
+	}
+	if got := (&Server{}).haltParam(); got != 0 {
+		t.Errorf("haltParam() without an ETA tracker = %d, want 0", got)
+	}
+}
+
+func TestPublishTellsTheHaltReachedNotice(t *testing.T) {
+	var (
+		mu     sync.Mutex
+		bodies []string
+	)
+	ext := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		mu.Lock()
+		bodies = append(bodies, string(b))
+		mu.Unlock()
+	}))
+	defer ext.Close()
+	quietLog(t)
+	mgr := newPushManager(t, 30, 5)
+	if err := mgr.SetNotifyConfig(notifyTo("generic+http://" + strings.TrimPrefix(ext.URL, "http://") + "/hook")); err != nil {
+		t.Fatal(err)
+	}
+	s := &Server{ETA: staticETA{eta.View{HaltParam: 1000}}, PushManager: mgr}
+	snap := func() *node.Snapshot {
+		return &node.Snapshot{Status: &node.Status{
+			NodeInfo: node.NodeInfo{Network: "test-1"},
+			SyncInfo: node.SyncInfo{LatestBlockHeight: "1000"},
+		}}
+	}
+
+	s.publish(context.Background(), snap())
+	mgr.OverrideLastHeightChange(time.Now().Add(-31 * time.Second))
+	s.publish(context.Background(), snap())
+
+	want := "📣 test-1 — Coordinated halt reached at #1000\nThe chain stopped at the scheduled height, as planned."
+	mu.Lock()
+	defer mu.Unlock()
+	if !slices.Equal(bodies, []string{want}) {
+		t.Errorf("target bodies after publishing the chain stopped at its halt = %q, want %q", bodies, want)
 	}
 }

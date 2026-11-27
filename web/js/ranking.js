@@ -26,6 +26,7 @@ import {
     howButton,
     inSetHours,
     MIN_HOURS,
+    openExplainer,
     partHelp,
     scoreHelp,
     waitHelp,
@@ -37,13 +38,16 @@ import { boundedRead, failureMessage } from './read.js'
 // show and hide are what rankingShown and rankingHidden do: start
 // sets them, as the view's reads live in start. Before start, or
 // after a start that failed, they do nothing.
+/** @type {(explain: boolean) => void} */
 let show = function () {}
 let hide = function () {}
 
 // rankingShown reads the ranking at once, and again every 60 s
-// until rankingHidden.
-export function rankingShown() {
-    show()
+// until rankingHidden. With explain (?explain), the "How is this
+// ranked?" dialog opens on the first ranking this showing draws.
+/** @param {boolean} [explain] */
+export function rankingShown(explain = false) {
+    show(explain)
 }
 
 // rankingHidden stops the view's reads, giving up the one in flight.
@@ -79,6 +83,12 @@ export function start() {
     // was drawn from: a read that changes neither leaves the panel,
     // and the focus in it, as it is.
     let shown = ''
+    // explains is whether the dialog opens on the next ranking drawn:
+    // the showing ?explain asked for sets it, and the next showing or
+    // hiding of the view takes it back.
+    let explains = false
+    // explainSpent is whether that wait has ended in this page load.
+    let explainSpent = false
 
     // load reads the ranking. The read is given up past the bound,
     // or once ends, its chain's signal, aborts.
@@ -133,7 +143,34 @@ export function start() {
         }, POLL_MS)
         render()
     }
-    show = function () {
+    // endExplain ends the wait for ?explain, if one is on, and takes
+    // explain out of the page's address (dropExplain).
+    function endExplain() {
+        if (!explains) return
+        explains = false
+        explainSpent = true
+        dropExplain()
+    }
+    // dropExplain takes explain out of the page's address, keeping
+    // view=: it asks for one opening, and the links built from the
+    // address (a validator page's, the ETA card's) must not ask again.
+    // The entry is replaced, its state kept: the validator page's
+    // entries carry theirs.
+    function dropExplain() {
+        const url = new URL(location.href)
+        if (!url.searchParams.has('explain')) return
+        url.searchParams.delete('explain')
+        history.replaceState(history.state, '', url)
+    }
+    // An entry the wait did not end on, such as the one below a
+    // validator page opened during it, holds explain still: going
+    // back or forward to it, once the wait is spent, takes it out.
+    window.addEventListener('popstate', function () {
+        if (explainSpent) dropExplain()
+    })
+    show = function (explain) {
+        endExplain()
+        explains = explain
         clearTimeout(timer)
         chain.abort()
         chain = new AbortController()
@@ -141,6 +178,7 @@ export function start() {
         refresh(gen, chain.signal)
     }
     hide = function () {
+        endExplain()
         clearTimeout(timer)
         chain.abort()
         gen++
@@ -157,8 +195,10 @@ export function start() {
         if (now === shown) return
         /** @type {HTMLElement[]} */
         let out
+        let ranked = false
         try {
             out = drawn()
+            ranked = Boolean(answer && answer.ranking)
         } catch (e) {
             out = [
                 mkEl(
@@ -172,6 +212,15 @@ export function start() {
         panel.replaceChildren(...out)
         focusPlace(focused)
         shown = now
+        // Only a ranking drawn fills the dialog's figures: a failed
+        // read, a state without a ranking or a draw that throws keeps
+        // the wait. Another dialog open (a validator's page, the
+        // alerts, the planner) ends it with the dialog closed: opened
+        // beside it, the two would each hold the focus.
+        if (ranked && explains) {
+            endExplain()
+            if (!document.querySelector('.eta-modal.open')) openExplainer()
+        }
     }
     // drawn builds the panel's content: the last read's error, the
     // ranking's state, and the ranking published.

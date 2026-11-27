@@ -802,7 +802,7 @@ func (s *Server) refreshMissed(ctx context.Context) {
 func (s *Server) publish(ctx context.Context, snap *node.Snapshot) {
 	if s.PushManager != nil {
 		s.PushManager.ReloadNotifyConfigIfChanged()
-		s.PushManager.EvaluateAndNotify(snap)
+		s.PushManager.EvaluateAndNotify(snap, s.haltParam())
 	}
 	// Active-validator count and the down set depend on the detector's
 	// hysteretic state, so derive them after EvaluateAndNotify has updated it.

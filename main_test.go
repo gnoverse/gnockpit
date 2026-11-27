@@ -134,3 +134,28 @@ func TestCheckRankingFlags(t *testing.T) {
 		})
 	}
 }
+
+// TestCheckPublicURL checks that --public-url is empty or an absolute http(s)
+// URL of at most 512 bytes with a host, and that anything else is refused,
+// naming the flag.
+func TestCheckPublicURL(t *testing.T) {
+	long := "https://x.example/" + strings.Repeat("a", 512-len("https://x.example/"))
+	for _, s := range []string{"", "https://gnockpit.example.com", "http://localhost:8080/", long} {
+		if err := checkPublicURL(s); err != nil {
+			t.Errorf("checkPublicURL(%q) = %v, want nil", s, err)
+		}
+	}
+	for _, s := range []string{
+		"gnockpit.example.com", "ftp://x.example", "https://", "https://:8080",
+		"https://x.example/a b", "https://x.example/a\tb", " https://x.example", "https://x.example:99999", "https://x.example:0", "https://x.example:",
+	} {
+		want := fmt.Sprintf(`--public-url %q: want an absolute http or https URL, such as https://gnockpit.example.com`, s)
+		if err := checkPublicURL(s); err == nil || err.Error() != want {
+			t.Errorf("checkPublicURL(%q) = %v, want %q", s, err, want)
+		}
+	}
+	want := "--public-url is 513 bytes: want at most 512"
+	if err := checkPublicURL(long + "a"); err == nil || err.Error() != want {
+		t.Errorf("checkPublicURL(a URL of 513 bytes) = %v, want %q", err, want)
+	}
+}

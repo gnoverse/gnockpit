@@ -123,6 +123,23 @@ func rankingExpectView(e *pageEnv, view string) {
 	}
 }
 
+// rankingDialogName is the "How is this ranked?" dialog's accessible name.
+const rankingDialogName = "How the ranking works"
+
+// rankingDialog returns the "How is this ranked?" dialog and its Close
+// button.
+func rankingDialog(e *pageEnv) (dialog, closeBtn playwright.Locator) {
+	dialog = e.Page.GetByRole("dialog", playwright.PageGetByRoleOptions{Name: rankingDialogName, Exact: playwright.Bool(true)})
+	closeBtn = dialog.GetByRole("button", playwright.LocatorGetByRoleOptions{Name: "Close", Exact: playwright.Bool(true)})
+	return dialog, closeBtn
+}
+
+// rankingDialogSentence returns the dialog's list item that starts with
+// lead.
+func rankingDialogSentence(dialog playwright.Locator, lead string) playwright.Locator {
+	return dialog.Locator("li").Filter(playwright.LocatorFilterOptions{HasText: lead})
+}
+
 // ---- The view
 
 // TestPageRankingOfferedOnlyWhenOn checks that the validators card offers
@@ -1113,7 +1130,7 @@ func TestPageRankingHiddenPopover(t *testing.T) {
 // no heights.
 func TestPageRankingExplainer(t *testing.T) {
 	const (
-		dialogName = "How the ranking works"
+		dialogName = rankingDialogName
 		formula    = "A fixed formula. Every weight and threshold is fixed in gnockpit's code, never a setting. This is formula v%d; any change raises the version."
 		window     = "A fixed window. The 30 complete UTC days before today; for this ranking, " + rankingWindowSpan + "%s. " +
 			"A block counts on the UTC day of its header time. The ranking is recomputed daily, as soon as the first block after 00:00 UTC is stored."
@@ -1122,16 +1139,13 @@ func TestPageRankingExplainer(t *testing.T) {
 	open := func(e *pageEnv) (dialog, closeBtn, how playwright.Locator) {
 		e.T.Helper()
 		how = e.Page.Locator(rankingMeta + " button.rk-how")
-		dialog = e.Page.GetByRole("dialog", playwright.PageGetByRoleOptions{Name: dialogName, Exact: playwright.Bool(true)})
-		closeBtn = dialog.GetByRole("button", playwright.LocatorGetByRoleOptions{Name: "Close", Exact: playwright.Bool(true)})
+		dialog, closeBtn = rankingDialog(e)
 		e.press(how)
 		e.must(e.Expect.Locator(dialog).ToBeVisible())
 		e.must(e.Expect.Locator(closeBtn).ToBeFocused())
 		return dialog, closeBtn, how
 	}
-	sentence := func(dialog playwright.Locator, lead string) playwright.Locator {
-		return dialog.Locator("li").Filter(playwright.LocatorFilterOptions{HasText: lead})
-	}
+	sentence := rankingDialogSentence
 	onProfiles(t, []profile{desktop, phone}, func(t *testing.T, p profile) {
 		e := openPage(t, p, rankingNetwork(t), rankingShown())
 		pub := rankingPublished(e)
@@ -1180,5 +1194,365 @@ func TestPageRankingExplainer(t *testing.T) {
 		e := openPage(t, desktop, rankingTodayOnly(), rankingShown())
 		dialog, _, _ := open(e)
 		e.must(e.Expect.Locator(sentence(dialog, "A fixed window.")).ToHaveText(fmt.Sprintf(window, ", which holds no block")))
+	})
+}
+
+// rankingExplainOpensFilled waits for the dialog to open and fails when it
+// opens before its figures are filled: the formula it reads is the one the
+// ranking shown publishes.
+func rankingExplainOpensFilled(e *pageEnv) {
+	e.T.Helper()
+	h, err := e.Page.WaitForFunction(`() => {
+		const m = document.getElementById('ranking-modal')
+		if (!m.classList.contains('open')) return false
+		return { formula: document.getElementById('ranking-formula').textContent }
+	}`, nil)
+	if err != nil {
+		e.T.Fatalf("wait for the dialog to open: %v", err)
+	}
+	v, err := h.JSONValue()
+	if err != nil {
+		e.T.Fatalf("read the dialog's formula: %v", err)
+	}
+	if got, want := decodeValue[map[string]string](e.T, v)["formula"], strconv.Itoa(rankingPublished(e).Formula); got != want {
+		e.T.Errorf("the dialog opened with the formula %q, want %q: it opens once its figures are filled", got, want)
+	}
+}
+
+// TestPageRankingExplainFromTheURL checks ?explain: beside ?view=ranking it
+// opens the Ranking view with the "How is this ranked?" dialog open once
+// the first ranking is drawn, the focus on its Close button, takes ?explain
+// out of the address and saves nothing; closing it leaves the address, and
+// a click on the switch takes ?view= out of it. Without the ranking on, or
+// beside another view or none, the dialog stays hidden.
+func TestPageRankingExplainFromTheURL(t *testing.T) {
+	onProfiles(t, []profile{desktop, phone}, func(t *testing.T, p profile) {
+		e := openPage(t, p, rankingHealthy(), withURL("/?view=ranking&explain&foo=1"))
+		rankingExpectView(e, "ranking")
+		dialog, closeBtn := rankingDialog(e)
+		rankingExplainOpensFilled(e)
+		e.must(e.Expect.Locator(dialog).ToBeVisible())
+		e.must(e.Expect.Locator(closeBtn).ToBeFocused())
+		e.must(e.Expect.Page(e.Page).ToHaveURL(e.ts.URL + "/?view=ranking&foo=1"))
+		pub := rankingPublished(e)
+		e.must(e.Expect.Locator(rankingDialogSentence(dialog, "A fixed formula.")).
+			ToContainText(fmt.Sprintf("This is formula v%d;", pub.Formula)))
+		if got, ok := e.storage(validatorsViewKey); ok {
+			t.Errorf("localStorage %s = %q, want it unset", validatorsViewKey, got)
+		}
+
+		how := e.Page.Locator(rankingMeta + " button.rk-how")
+		e.press(closeBtn)
+		e.must(e.expect(rankingModal).ToBeHidden())
+		e.must(e.Expect.Locator(how).ToBeFocused())
+		e.must(e.Expect.Page(e.Page).ToHaveURL(e.ts.URL + "/?view=ranking&foo=1"))
+
+		e.press(e.Page.Locator(validatorsLiveToggle))
+		rankingExpectView(e, "live")
+		expectStored(e, validatorsViewKey, "live")
+		e.must(e.Expect.Page(e.Page).ToHaveURL(e.ts.URL + "/?foo=1"))
+		if _, err := e.Page.Reload(); err != nil {
+			t.Fatalf("reload: %v", err)
+		}
+		rankingExpectView(e, "live")
+		e.must(e.expect(rankingModal).ToBeHidden())
+	})
+	for _, tc := range []struct {
+		name, url, stored string
+		off               bool
+		want              string
+	}{
+		{name: "ranking off", url: "/?view=ranking&explain", off: true, want: "live"},
+		{name: "no view, ranking saved", url: "/?explain", stored: "ranking", want: "ranking"},
+		{name: "timeline", url: "/?view=timeline&explain", want: "timeline"},
+		{name: "no explain", url: "/?view=ranking", want: "ranking"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			onProfiles(t, []profile{desktop, phone}, func(t *testing.T, p profile) {
+				sc := rankingHealthy()
+				if tc.off {
+					sc.ranking = nil
+				}
+				opts := []pageOption{withURL(tc.url)}
+				if tc.stored != "" {
+					opts = append(opts, withStorage(map[string]string{validatorsViewKey: tc.stored}))
+				}
+				e := openPage(t, p, sc, opts...)
+				e.must(e.expect("#page-title").ToHaveText(rankingTitle))
+				if !tc.off {
+					e.must(e.expect(rankingToggle).ToBeVisible())
+				}
+				rankingExpectView(e, tc.want)
+				if tc.want == "ranking" {
+					e.must(e.expect(rankingMeta).ToBeVisible())
+				}
+				e.must(e.expect(rankingModal).ToBeHidden())
+			})
+		})
+	}
+}
+
+// TestPageRankingExplainWaitsForTheRanking checks that ?explain opens the
+// dialog once the first ranking is drawn, not before: while the read is
+// held the Ranking view shows, the dialog stays hidden and ?explain stays
+// in the address; the answer opens it with its figures filled and takes
+// ?explain out, the entry replaced, its state kept.
+func TestPageRankingExplainWaitsForTheRanking(t *testing.T) {
+	onProfiles(t, []profile{desktop, phone}, func(t *testing.T, p profile) {
+		e := openPage(t, p, rankingHealthy(), noNavigate(), withInstalledClock())
+		read := e.hold(rankingRead)
+		e.navigate("/?view=ranking&explain")
+		e.must(e.expect(rankingToggle).ToBeVisible())
+		rankingExpectView(e, "ranking")
+		e.must(e.expect(rankingModal).ToBeHidden())
+		e.must(e.Expect.Page(e.Page).ToHaveURL(e.ts.URL + "/?view=ranking&explain"))
+		before, err := e.Page.Evaluate(`() => { history.replaceState({ kept: 1 }, ''); return history.length }`)
+		if err != nil {
+			t.Fatalf("mark the entry's state: %v", err)
+		}
+		read.release()
+		rankingExplainOpensFilled(e)
+		dialog, closeBtn := rankingDialog(e)
+		e.must(e.Expect.Locator(dialog).ToBeVisible())
+		e.must(e.Expect.Locator(closeBtn).ToBeFocused())
+		e.must(e.Expect.Page(e.Page).ToHaveURL(e.ts.URL + "/?view=ranking"))
+		after, err := e.Page.Evaluate(`() => [history.length, history.state && history.state.kept]`)
+		if err != nil {
+			t.Fatalf("read the history: %v", err)
+		}
+		if got := decodeValue[[]int](t, after); !slices.Equal(got, []int{decodeValue[int](t, before), 1}) {
+			t.Errorf("history.length and the entry's state's kept = %v, want %v, 1: the entry replaced, its state kept", got, before)
+		}
+	})
+}
+
+// TestPageRankingExplainClickEndsTheWait checks that a click on the switch
+// before the first ranking is drawn ends the wait for ?explain, taking
+// ?view= and ?explain out of the address: the Ranking view shown after
+// opens no dialog.
+func TestPageRankingExplainClickEndsTheWait(t *testing.T) {
+	onProfiles(t, []profile{desktop, phone}, func(t *testing.T, p profile) {
+		e := openPage(t, p, rankingHealthy(), noNavigate(), withInstalledClock())
+		read := e.hold(rankingRead)
+		e.navigate("/?view=ranking&explain")
+		rankingExpectView(e, "ranking")
+		e.must(e.gate.awaitHeld(rankingRead, 1))
+		e.press(e.Page.Locator(validatorsLiveToggle))
+		read.awaitAbandoned()
+		rankingExpectView(e, "live")
+		e.must(e.Expect.Page(e.Page).ToHaveURL(e.ts.URL + "/"))
+		e.press(e.Page.Locator(rankingToggle))
+		rankingExpectView(e, "ranking")
+		e.must(e.expect(rankingMeta).ToBeVisible())
+		e.must(e.expect(rankingModal).ToBeHidden())
+	})
+}
+
+// rankingFlipOn turns the server's ranking off, with a nil publisher, or on
+// again, as /api/boot answers. The page's poll, 5 s of its clock on, is held
+// while the field is written and answered after: the hold orders the write
+// before the handler's read of it, so the held poll itself reports it.
+func rankingFlipOn(e *pageEnv, pub *ranking.Publisher) {
+	e.T.Helper()
+	boot := e.hold("/api/boot")
+	e.runFor(5 * time.Second)
+	e.must(e.gate.awaitHeld("/api/boot", 1))
+	e.Srv.Ranking = pub
+	boot.release()
+	e.must(e.gate.awaitHeld("/api/boot", 0))
+}
+
+// TestPageRankingExplainOnce checks that ?explain opens the dialog once per
+// page load: the Ranking view that comes back after the server's ranking
+// went off and on again opens without it.
+func TestPageRankingExplainOnce(t *testing.T) {
+	sc := rankingHealthy()
+	fill := &settableFill{p: sc.fill}
+	sc.fillFrom = fill
+	e := openPage(t, desktop, sc, withURL("/?view=ranking&explain"), withInstalledClock())
+	pub := e.Srv.Ranking
+	_, closeBtn := rankingDialog(e)
+	rankingExplainOpensFilled(e)
+	e.press(closeBtn)
+	e.must(e.expect(rankingModal).ToBeHidden())
+
+	// While the ranking is off the answer changes, so the view drawn again
+	// when it comes back is a new drawing, not the one it left.
+	rankingFlipOn(e, nil)
+	rankingExpectView(e, "live")
+	fill.set(rankingFillingProgress(0))
+	if err := pub.Refresh(t.Context()); err != nil {
+		t.Fatalf("Refresh: %v", err)
+	}
+	rankingFlipOn(e, pub)
+	rankingExpectView(e, "ranking")
+	e.must(e.expect(rankingState).ToBeVisible())
+	fill.set(rankingHealthy().fill)
+	if err := pub.Refresh(t.Context()); err != nil {
+		t.Fatalf("Refresh: %v", err)
+	}
+	e.runFor(rankingPoll)
+	e.must(e.expect(rankingState).ToHaveCount(0))
+	e.must(e.expect(rankingMeta).ToBeVisible())
+	e.must(e.expect(rankingModal).ToBeHidden())
+}
+
+// TestPageRankingFallsBackToLive checks that a Ranking view shown while
+// /api/boot turns the ranking off gives way to Live, without the Ranking
+// button and the saved view untouched, and comes back when it is on again.
+func TestPageRankingFallsBackToLive(t *testing.T) {
+	onProfiles(t, []profile{desktop, phone}, func(t *testing.T, p profile) {
+		e := openPage(t, p, rankingHealthy(), rankingShown(), withInstalledClock())
+		pub := e.Srv.Ranking
+		rankingExpectView(e, "ranking")
+		e.must(e.expect(rankingMeta).ToBeVisible())
+
+		rankingFlipOn(e, nil)
+		rankingExpectView(e, "live")
+		e.must(e.expect(rankingToggle).ToBeHidden())
+		expectStored(e, validatorsViewKey, "ranking")
+
+		rankingFlipOn(e, pub)
+		e.must(e.expect(rankingToggle).ToBeVisible())
+		rankingExpectView(e, "ranking")
+		e.must(e.expect(rankingMeta).ToBeVisible())
+	})
+}
+
+// TestPageRankingExplainAfterAFailedRead checks that the wait for ?explain
+// lasts while the Ranking view shows: a first read without an answer, which
+// draws only its error line, leaves the dialog closed, and the poll that
+// draws the ranking opens it, filled.
+func TestPageRankingExplainAfterAFailedRead(t *testing.T) {
+	e := openPage(t, desktop, rankingHealthy(), noNavigate(), withInstalledClock())
+	stuck := e.hold(rankingRead)
+	e.navigate("/?view=ranking&explain")
+	e.must(e.gate.awaitHeld(rankingRead, 1))
+	e.runFor(rankingReadBound)
+	stuck.awaitAbandoned()
+	e.must(e.expect(rankingError).ToBeVisible())
+	e.must(e.expect(rankingModal).ToBeHidden())
+
+	e.runFor(rankingPoll)
+	rankingExplainOpensFilled(e)
+	e.must(e.expect(rankingError).ToHaveCount(0))
+}
+
+// TestPageRankingExplainAfterAStateWithoutARanking checks that the wait for
+// ?explain lasts through an answer that holds no ranking: a first answer in
+// the filling state shows its line and leaves the dialog closed, and the
+// read that draws the ranking opens it, filled.
+func TestPageRankingExplainAfterAStateWithoutARanking(t *testing.T) {
+	sc := rankingHealthy()
+	healthy := sc.fill
+	fill := &settableFill{p: rankingFillingProgress(0)}
+	sc.fillFrom = fill
+	e := openPage(t, desktop, sc, withURL("/?view=ranking&explain"), withInstalledClock())
+	e.must(e.expect(rankingState).ToBeVisible())
+	e.must(e.expect(rankingMeta).ToHaveCount(0))
+	e.must(e.expect(rankingModal).ToBeHidden())
+
+	fill.set(healthy)
+	if err := e.Srv.Ranking.Refresh(t.Context()); err != nil {
+		t.Fatalf("Refresh: %v", err)
+	}
+	e.runFor(rankingPoll)
+	rankingExplainOpensFilled(e)
+	e.must(e.expect(rankingState).ToHaveCount(0))
+}
+
+// TestPageRankingExplainUnderAnotherDialog checks that ?explain opens no
+// dialog over another one: the validator page ?val= opens at load is still
+// open when the ranking is drawn, so the "How is this ranked?" dialog stays
+// closed, the validator page keeps the focus, and ?explain, spent, leaves
+// the address.
+func TestPageRankingExplainUnderAnotherDialog(t *testing.T) {
+	onProfiles(t, []profile{desktop, phone}, func(t *testing.T, p profile) {
+		e := openPage(t, p, rankingNetwork(t), withURL("/?view=ranking&explain&val="+opBravo))
+		e.must(e.expect("#val-modal").ToContainClass("open"))
+		e.must(e.expect("#val-title").ToHaveText("bravo"))
+		rankingExpectView(e, "ranking")
+		// The view opens the dialog in the task that draws the meta line.
+		e.must(e.expect(rankingMeta).ToBeAttached())
+		e.must(e.expect(rankingModal).ToBeHidden())
+		e.must(e.expect("#val-close").ToBeFocused())
+		e.must(e.Expect.Page(e.Page).ToHaveURL(e.ts.URL + "/?view=ranking&val=" + opBravo))
+	})
+}
+
+// TestPageRankingExplainHidesAPopover checks that the dialog ?explain opens
+// hides a popover opened while it waited, which would show over it. The
+// popover is the proposer's, a span: a tap leaves it unfocused, so the focus
+// the dialog takes does not hide it.
+func TestPageRankingExplainHidesAPopover(t *testing.T) {
+	onProfiles(t, []profile{desktop, phone}, func(t *testing.T, p profile) {
+		sc := rankingHealthy()
+		sc.snap.Consensus.Proposer = valDelta.address()
+		e := openPage(t, p, sc, noNavigate(), withInstalledClock())
+		read := e.hold(rankingRead)
+		e.navigate("/?view=ranking&explain")
+		rankingExpectView(e, "ranking")
+		e.must(e.gate.awaitHeld(rankingRead, 1))
+		// The Network State draws in an animation frame, which the
+		// installed clock holds until it moves.
+		e.runFor(time.Second)
+		e.showPopover(e.Page.Locator("#ns-proposer .tap-popover"))
+		read.release()
+		rankingExplainOpensFilled(e)
+		e.must(e.expect(pagePopover).ToBeHidden())
+	})
+}
+
+// TestPageRankingExplainClosesToAFoldedSection checks where Close gives the
+// focus when the Validators section is folded, the "How is this ranked?"
+// button with it: to the section's title, which unfolds it, not to the page.
+func TestPageRankingExplainClosesToAFoldedSection(t *testing.T) {
+	onProfiles(t, []profile{desktop, phone}, func(t *testing.T, p profile) {
+		e := openPage(t, p, rankingHealthy(), noNavigate(), withInstalledClock())
+		read := e.hold(rankingRead)
+		e.navigate("/?view=ranking&explain")
+		rankingExpectView(e, "ranking")
+		e.must(e.gate.awaitHeld(rankingRead, 1))
+		e.press(e.Page.Locator(sectionToggle("validators")))
+		expectSectionFolded(e, "validators", true)
+		read.release()
+		rankingExplainOpensFilled(e)
+		_, closeBtn := rankingDialog(e)
+		e.press(closeBtn)
+		e.must(e.expect(rankingModal).ToBeHidden())
+		e.must(e.expect(sectionToggle("validators")).ToBeFocused())
+	})
+}
+
+// TestPageRankingExplainLeavesTheHistory checks that ?explain, spent, leaves
+// every entry of the history the reader comes back to: a validator page
+// opened from the Live view while the first /api/boot answer is held pushes
+// an entry that holds ?explain over the one that does; the ranking drawn
+// under that page opens no dialog and spends the wait, and closing the page
+// goes back to the entry below, which loses ?explain too.
+func TestPageRankingExplainLeavesTheHistory(t *testing.T) {
+	onProfiles(t, []profile{desktop, phone}, func(t *testing.T, p profile) {
+		e := openPage(t, p, rankingHealthy(), noNavigate(), withInstalledClock())
+		boot := e.hold("/api/boot")
+		e.navigate("/?view=ranking&explain")
+		rankingExpectView(e, "live")
+		// The Live view draws in an animation frame, which the installed
+		// clock holds until it moves; /api/boot's 4 s bound stays far.
+		e.runFor(time.Second)
+		e.press(e.validatorNameLink("bravo"))
+		e.must(e.expect("#val-modal").ToContainClass("open"))
+		// The validator page writes the parameters back as a query string:
+		// explain= for explain.
+		e.must(e.Expect.Page(e.Page).ToHaveURL(regexp.MustCompile(`/\?view=ranking&explain=?&val=[^&]+$`)))
+
+		boot.release()
+		rankingExpectView(e, "ranking")
+		e.must(e.expect(rankingMeta).ToBeAttached())
+		e.must(e.expect(rankingModal).ToBeHidden())
+		e.must(e.Expect.Page(e.Page).ToHaveURL(regexp.MustCompile(`/\?view=ranking&val=[^&]+$`)))
+
+		e.press(e.Page.Locator("#val-close"))
+		e.must(e.expect("#val-modal").Not().ToContainClass("open"))
+		e.must(e.Expect.Page(e.Page).ToHaveURL(e.ts.URL + "/?view=ranking"))
 	})
 }

@@ -45,9 +45,16 @@ func (m *Manager) SendTestNotify(index int, message string) error {
 	if index < 0 || index >= len(targets) {
 		return fmt.Errorf("notify target index %d out of range (%d configured)", index, len(targets))
 	}
-	for _, err := range targets[index].sender.Send(message, nil) {
-		if err != nil {
-			return fmt.Errorf("send test notification: %s", m.notifyErrorText(err, targetURLs(targets)))
+	t := targets[index]
+	messages := []string{message}
+	if t.discord != nil {
+		messages = discordMessages(t, discordTest(message))
+	}
+	for _, msg := range messages {
+		for _, err := range t.sender.Send(msg, nil) {
+			if err != nil {
+				return fmt.Errorf("send test notification: %s", m.notifyErrorText(err, targetURLs(targets)))
+			}
 		}
 	}
 	return nil

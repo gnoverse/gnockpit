@@ -7,25 +7,55 @@ import (
 	"strings"
 )
 
-// Digest writes the notification of a published day: a title naming the
-// window and formula, and a body listing the ranked operators in order, each
-// with its score and its change since prev, then the count of operators not
-// ranked yet. An operator without a name shows its address shortened, as the
-// page shows it. Operators sharing a rank repeat its number. Excluded
-// operators are neither listed nor counted.
+// Digest is the notification of a published day: a title naming the window
+// and formula, the ranked operators in order, and notes; beside them, the
+// day, window and formula, and the counts of the operators the rows leave
+// out, for a service that lays them out itself.
+type Digest struct {
+	Title string
+	Rows  []DigestRow
+	Notes []string
+	// Day is the day published, FirstDay and LastDay its window's first and
+	// last days: YYYY-MM-DD, UTC.
+	Day, FirstDay, LastDay string
+	Formula                int // the formula version the day is ranked by
+	// Excluded counts the operators on the exclusion list, NotRankedYet those
+	// not ranked yet; neither is in Rows.
+	Excluded, NotRankedYet int
+}
+
+// DigestRow is one ranked operator of a Digest. Name is the operator's name,
+// or its address shortened as the page shows it. Score is written by
+// scoreText. Change since the previous ranking is "▲n" or "▼n" places, "="
+// or "new"; "" when the ranks are not comparable. Operators sharing a rank
+// repeat its number.
+type DigestRow struct {
+	Rank                int
+	Name, Score, Change string
+}
+
+// DigestOf writes the notification of the published day cur: its day,
+// window and formula, its ranked operators with their change since prev,
+// the counts of excluded operators and of those not ranked yet, then the
+// notes: the count not ranked yet, and, when the changes are not shown, why.
+// Excluded operators are counted, never listed.
 //
 // Changes are comparable only against a prev of the same formula and
-// exclusion list: against any other prev, or none, the body shows no change
-// and ends with a line saying why.
-func Digest(cur Published, prev *Published) (title, body string) {
-	title = fmt.Sprintf("Validator ranking, %s – %s UTC (formula v%d)", cur.FirstDay, cur.LastDay, cur.Formula)
-	var lines []string
+// exclusion list: against any other prev, or none, the rows show no change
+// and a note says why.
+func DigestOf(cur Published, prev *Published) Digest {
+	d := Digest{
+		Title:    fmt.Sprintf("Validator ranking, %s – %s UTC (formula v%d)", cur.FirstDay, cur.LastDay, cur.Formula),
+		Day:      cur.Day,
+		FirstDay: cur.FirstDay,
+		LastDay:  cur.LastDay,
+		Formula:  cur.Formula,
+	}
 	reason := incomparable(cur, prev)
 	var before map[string]int
 	if reason == "" {
 		before = ranksOf(*prev)
 	}
-	waiting := 0
 	for _, e := range cur.Entries {
 		switch e.Status {
 		case Ranked:
@@ -33,22 +63,38 @@ func Digest(cur Published, prev *Published) (title, body string) {
 			if name == "" {
 				name = shortAddress(e.Operator)
 			}
-			line := fmt.Sprintf("#%d %s %s", e.Rank, name, scoreText(e.Score))
+			row := DigestRow{Rank: e.Rank, Name: name, Score: scoreText(e.Score)}
 			if reason == "" {
-				line += " " + change(e.Rank, before[e.Operator])
+				row.Change = change(e.Rank, before[e.Operator])
 			}
-			lines = append(lines, line)
+			d.Rows = append(d.Rows, row)
+		case Excluded:
+			d.Excluded++
 		case NotRankedYet:
-			waiting++
+			d.NotRankedYet++
 		}
 	}
-	if waiting > 0 {
-		lines = append(lines, fmt.Sprintf("Not ranked yet: %d", waiting))
+	if d.NotRankedYet > 0 {
+		d.Notes = append(d.Notes, fmt.Sprintf("Not ranked yet: %d", d.NotRankedYet))
 	}
 	if reason != "" {
-		lines = append(lines, "Rank changes not shown: "+reason)
+		d.Notes = append(d.Notes, "Rank changes not shown: "+reason)
 	}
-	return title, strings.Join(lines, "\n")
+	return d
+}
+
+// Body writes the digest as lines: each row as "#<rank> <name> <score>",
+// then its change when it has one, then the notes.
+func (d Digest) Body() string {
+	lines := make([]string, 0, len(d.Rows)+len(d.Notes))
+	for _, r := range d.Rows {
+		line := fmt.Sprintf("#%d %s %s", r.Rank, r.Name, r.Score)
+		if r.Change != "" {
+			line += " " + r.Change
+		}
+		lines = append(lines, line)
+	}
+	return strings.Join(append(lines, d.Notes...), "\n")
 }
 
 // scoreText writes a score to one decimal, rounded down as the page's

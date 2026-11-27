@@ -52,7 +52,9 @@ func (m *Manager) evaluateHalt(s Schedule) {
 }
 
 // sendOnce sends a to each device and target subscribed to it whose lead due
-// accepts, once per key.
+// accepts, once per key. A device has one lead and a target a series: a
+// target's route with leads records every lead due under key and the lead,
+// and gets one message when any of them was new.
 func (m *Manager) sendOnce(a Alert, key string, due func(Lead) bool) {
 	subs, err := m.db.SubscribersForAlert(a.Type, "")
 	if err != nil {
@@ -65,7 +67,26 @@ func (m *Manager) sendOnce(a Alert, key string, due func(Lead) bool) {
 	}
 	targets := m.currentTargets()
 	for _, t := range targets {
-		if t.route.Wants(a) && due(t.route.Alerts[a.Type].Lead) && m.markSent("target:"+t.fingerprint, a.Type, key) {
+		if !t.route.Wants(a) {
+			continue
+		}
+		owner := "target:" + t.fingerprint
+		leads := t.route.Alerts[a.Type].Leads
+		// An alert without leads (halt_scheduled) is sent once per key; a parsed
+		// halt_approaching always has at least one lead.
+		if len(leads) == 0 {
+			if m.markSent(owner, a.Type, key) {
+				m.sendTarget(t, a, targets)
+			}
+			continue
+		}
+		fresh := false
+		for _, l := range leads {
+			if due(l) && m.markSent(owner, a.Type, key+":"+l.String()) {
+				fresh = true
+			}
+		}
+		if fresh {
 			m.sendTarget(t, a, targets)
 		}
 	}
@@ -93,20 +114,27 @@ func blocksText(n int64) string {
 }
 
 // haltBody tells the halt's minimum version and, when the model gives it,
-// the time to it ("in about 5 h", or with suffix "left", "about 5 h left").
-func haltBody(s Schedule, suffix string) string {
-	var parts []string
+// the time to it ("Expected in about 5 h.", or with suffix "left", "About
+// 5 h left."), the time and the version bold; nil when it knows neither.
+func haltBody(s Schedule, suffix string) Body {
+	var b Body
 	if left, ok := s.TimeLeft(s.Halt.Height); ok {
 		if suffix == "" {
-			parts = append(parts, fmt.Sprintf("Expected in about %s.", about(left)))
+			b = append(b, plain("Expected in about "), bold(about(left)), plain("."))
 		} else {
-			parts = append(parts, fmt.Sprintf("About %s %s.", about(left), suffix))
+			b = append(b, plain("About "), bold(about(left)), plain(" "+suffix+"."))
 		}
 	}
 	if s.Halt.MinVersion != "" {
-		parts = append(parts, fmt.Sprintf("Minimum version %s.", s.Halt.MinVersion))
+		lead := "Minimum version "
+		if len(b) > 0 {
+			// The space between the sentences stays in this plain span, so no
+			// bold span carries it.
+			lead = " " + lead
+		}
+		b = append(b, plain(lead), bold(s.Halt.MinVersion), plain("."))
 	}
-	return strings.Join(parts, " ")
+	return b
 }
 
 // NotifyValsetChange sends the alert of a validator set change to its
@@ -115,33 +143,58 @@ func (m *Manager) NotifyValsetChange(c blocks.ValsetChange, name func(address st
 	m.NotifyAlert(valsetChangeAlert(c, name, m.now()))
 }
 
-// valsetChangeAlert says what changed in the set, one line each, and when
-// the change is more than 5 minutes old (caught up after downtime), when.
+// valsetChangeAlert tells a set change in titled sections (who joined, who
+// left, the size, voting power, rotated keys), each only when it holds an
+// entry, and when it happened if it was caught up after downtime. A title,
+// count included, is one bold span. A validator reads as its name, cut to
+// alertNameLimit, else its short address.
 func valsetChangeAlert(c blocks.ValsetChange, name func(string) string, now time.Time) Alert {
 	label := func(addr string) string {
 		if n := name(addr); n != addr {
-			return n
+			return cutName(n, alertNameLimit)
 		}
 		return short(addr)
 	}
-	var lines []string
+	var body Body
+	paragraph := func(spans ...Span) {
+		if body != nil {
+			body = append(body, plain("\n\n"))
+		}
+		body = append(body, spans...)
+	}
+	section := func(title string, lines []string) {
+		if len(lines) > 0 {
+			paragraph(bold(title), plain("\n"+strings.Join(lines, "\n")))
+		}
+	}
+	var joined, left, repowered, rotated []string
 	for _, m := range c.Added {
-		lines = append(lines, fmt.Sprintf("+ %s joined (power %d)", label(m.Address), m.Power))
+		joined = append(joined, fmt.Sprintf("%s (power %d)", label(m.Address), m.Power))
 	}
 	for _, m := range c.Removed {
-		lines = append(lines, fmt.Sprintf("− %s left (power %d)", label(m.Address), m.Power))
+		left = append(left, fmt.Sprintf("%s (power %d)", label(m.Address), m.Power))
 	}
 	for _, p := range c.Repowered {
-		lines = append(lines, fmt.Sprintf("↕ %s power %d → %d", label(p.Address), p.Before, p.After))
+		repowered = append(repowered, fmt.Sprintf("%s %d → %d", label(p.Address), p.Before, p.After))
 	}
 	for _, r := range c.Rotated {
-		lines = append(lines, fmt.Sprintf("⇄ %s rotated its key %s → %s", label(r.NewAddress), short(r.OldAddress), short(r.NewAddress)))
+		rotated = append(rotated, fmt.Sprintf("%s %s → %s", label(r.NewAddress), short(r.OldAddress), short(r.NewAddress)))
 	}
-	lines = append(lines, fmt.Sprintf("Validators: %d → %d", c.SizeBefore, c.SizeAfter))
+	section(fmt.Sprintf("Joined (%d)", len(joined)), joined)
+	section(fmt.Sprintf("Left (%d)", len(left)), left)
+	if d := c.SizeAfter - c.SizeBefore; d != 0 {
+		sign, mag := "+", d
+		if d < 0 {
+			sign, mag = "−", -d
+		}
+		section(fmt.Sprintf("Validator set size (%s%d)", sign, mag), []string{fmt.Sprintf("%d → %d", c.SizeBefore, c.SizeAfter)})
+	}
+	section(fmt.Sprintf("Voting power changed (%d)", len(repowered)), repowered)
+	section(fmt.Sprintf("Rotated signing key (%d)", len(rotated)), rotated)
 	if age := now.Sub(c.Time); age > 5*time.Minute {
-		lines = append(lines, fmt.Sprintf("At %s (%s ago)", c.Time.UTC().Format("2006-01-02 15:04 UTC"), about(age)))
+		paragraph(plain(fmt.Sprintf("At %s (%s ago)", c.Time.UTC().Format("2006-01-02 15:04 UTC"), about(age))))
 	}
-	return Alert{Type: AlertValsetChanged, Firing: true, Notice: true, Title: fmt.Sprintf("Validator set changed at #%d", c.Height), Body: strings.Join(lines, "\n")}
+	return Alert{Type: AlertValsetChanged, Firing: true, Notice: true, Title: fmt.Sprintf("Validator set changed at #%d", c.Height), Body: body}
 }
 
 // short shortens an address to its first 8 and last 4 characters.

@@ -97,7 +97,7 @@ func testSendPushRemovesStaleSubscription(t *testing.T, statusCode int) {
 
 	m.NotifyAlert(push.Alert{
 		Type: push.AlertChainStuck, EntityID: "", Firing: true,
-		Title: "Test", Body: "test",
+		Title: "Test", Body: push.Body{{Text: "test"}},
 	})
 
 	subs, err := db.AllSubscriptions()
@@ -245,7 +245,7 @@ func TestManager_EvaluateAndNotify_CapturesChainName(t *testing.T) {
 		},
 		Consensus: &node.ConsensusState{},
 	}
-	m.EvaluateAndNotify(snap)
+	m.EvaluateAndNotify(snap, 0)
 	if m.ChainName() != "mychain" {
 		t.Errorf("ChainName() = %q, want %q", m.ChainName(), "mychain")
 	}

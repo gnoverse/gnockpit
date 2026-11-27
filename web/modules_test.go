@@ -686,9 +686,10 @@ console.log(JSON.stringify({
 // rankingStub is the document, the fetch and the timers the Ranking view
 // runs on in node: the panel and the dialog's figures, elements that record
 // their children and attributes, a fetch answering answer, and setTimeout
-// recording each delay asked, running nothing; and the observer and the
-// media query the popover's module, which the view's explanations import,
-// sets up as it loads.
+// recording each delay asked, running nothing; the observer and the media
+// query the popover's module, which the view's explanations import, sets up
+// as it loads; and the window's addEventListener, which takes the view's
+// popstate listener and never calls it.
 const rankingStub = `class Element {}
 class HTMLElement extends Element {
     constructor(tag) {
@@ -719,7 +720,7 @@ class HTMLElement extends Element {
 }
 globalThis.HTMLElement = HTMLElement
 globalThis.MutationObserver = class {}
-globalThis.window = { matchMedia: () => ({ matches: false }) }
+globalThis.window = { matchMedia: () => ({ matches: false }), addEventListener: () => {} }
 const panel = new HTMLElement('div')
 const figures = new Map(['ranking-window', 'ranking-heights', 'ranking-formula'].map((id) => [id, new HTMLElement('span')]))
 globalThis.document = {

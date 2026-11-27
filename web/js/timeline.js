@@ -56,6 +56,11 @@ export function start() {
     // The card waits to show the Ranking view until the server's word
     // that the ranking is on; a view the viewer picks ends the wait.
     let rankingWaits = false
+    // The dialog "How is this ranked?" opens with the first ranking
+    // drawn, when the address asked for it with ?explain beside the
+    // Ranking view the card waits for: the card passes the wait to the
+    // view it shows (rankingShown), which ends it.
+    let explainWaits = false
     /** @type {HistoryChange[]} */
     let changes = []
     let moreBelow = false // the history holds changes below the last page read
@@ -519,11 +524,15 @@ export function start() {
                 }, VALSET_POLL_MS)
         })
     }
-    // setView shows view v. It saves nothing: only the viewer's click
-    // on the switch does, so neither ?view= nor a view the card shows
-    // on its own changes the view saved.
-    /** @param {string} v */
-    function setView(v) {
+    // setView shows view v, the Ranking view with the wait for ?explain
+    // when explain. It saves nothing: only the viewer's click on the
+    // switch does, so neither ?view= nor a view the card shows on its
+    // own changes the view saved.
+    /**
+     * @param {string} v
+     * @param {boolean} [explain]
+     */
+    function setView(v, explain = false) {
         view = v
         card.classList.toggle('view-timeline', v === 'timeline')
         card.classList.toggle('view-ranking', v === 'ranking')
@@ -533,11 +542,11 @@ export function start() {
         clearTimeout(timer)
         gen++
         if (v === 'timeline') poll(gen)
-        if (v === 'ranking') rankingShown()
+        if (v === 'ranking') rankingShown(explain)
         else rankingHidden()
     }
     // A click on the switch is the viewer's choice: it saves the view,
-    // and takes ?view= out of the page's address, so a reload opens the
+    // and takes ?view= and ?explain out of the page's address, so a reload opens the
     // view clicked, not the link's. The entry is replaced, its state
     // kept: the validator page's entries carry theirs.
     seg.addEventListener('click', function (e) {
@@ -545,12 +554,14 @@ export function start() {
         const b = e.target.closest('button')
         if (!b) return
         rankingWaits = false
+        explainWaits = false
         // Each of the view's buttons carries data-view (index.html).
         const v = /** @type {string} */ (b.dataset.view)
         storageSet(VIEW_KEY, v)
         const url = new URL(location.href)
-        if (url.searchParams.has('view')) {
+        if (url.searchParams.has('view') || url.searchParams.has('explain')) {
             url.searchParams.delete('view')
+            url.searchParams.delete('explain')
             history.replaceState(history.state, '', url)
         }
         setView(v)
@@ -576,20 +587,21 @@ export function start() {
     // The card opens on the view ?view= names, else on the one saved,
     // else on Live. The Ranking view waits for /api/boot's word:
     // Live shows meanwhile.
+    const params = new URLSearchParams(location.search)
     const wanted =
-        [
-            new URLSearchParams(location.search).get('view'),
-            storageGet(VIEW_KEY),
-        ].find(function (v) {
+        [params.get('view'), storageGet(VIEW_KEY)].find(function (v) {
             return v !== null && VIEWS.includes(v)
         }) || 'live'
     rankingWaits = wanted === 'ranking'
+    // ?explain counts only beside ?view=ranking.
+    explainWaits = params.get('view') === 'ranking' && params.has('explain')
     setView(rankingWaits ? 'live' : wanted)
     offer = function (on) {
         rankingButton.hidden = !on
         if (on && rankingWaits) {
             rankingWaits = false
-            setView('ranking')
+            setView('ranking', explainWaits)
+            explainWaits = false
         } else if (!on && view === 'ranking') {
             rankingWaits = true
             setView('live')

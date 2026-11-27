@@ -7,7 +7,7 @@
 /** @import { Entry, Part, Published } from '../types/server.js' */
 /** @import { PopRow } from './popover.js' */
 
-import { $, mkEl } from './dom.js'
+import { $, $in, mkEl } from './dom.js'
 import { keepFocusIn } from './focus.js'
 import {
     durationText,
@@ -22,7 +22,7 @@ import {
     weightText,
 } from './format.js'
 import { shortAddr } from './names.js'
-import { popRows } from './popover.js'
+import { hidePopover, popRows } from './popover.js'
 import { present } from './present.js'
 
 /** @typedef {'uptime' | 'outages' | 'recovery' | 'proposals'} PartKey */
@@ -451,16 +451,28 @@ export function howButton() {
     return mkEl('button', 'How is this ranked?', 'rk-how', { type: 'button' })
 }
 
+// openExplainer opens the dialog, the focus on its Close button. A
+// popover open on the page would stay over the dialog: it hides first.
+export function openExplainer() {
+    hidePopover()
+    $('ranking-modal').classList.add('open')
+    $('ranking-close').focus()
+}
+
 export function start() {
     const modal = $('ranking-modal')
     $('ranking-origin').textContent = location.origin
     // close closes the dialog and gives the focus back to the button
     // that opens it, the one the view shows: a read that changed the
-    // ranking meanwhile drew it anew.
+    // ranking meanwhile drew it anew. When the page shows none (the
+    // Validators section folded, or the view left), the section's
+    // title takes the focus, the control nearest the button.
     function close() {
         modal.classList.remove('open')
         const how = document.querySelector('button.rk-how')
-        if (how instanceof HTMLElement) how.focus()
+        if (how instanceof HTMLElement && how.getClientRects().length > 0)
+            how.focus()
+        else $in($('validators-header'), 'button').focus()
     }
     // A click on "How is this ranked?" opens the dialog, the focus on
     // its Close button. One listener serves every button the view
@@ -468,8 +480,7 @@ export function start() {
     document.addEventListener('click', function (e) {
         if (!(e.target instanceof Element)) return
         if (!e.target.closest('button.rk-how')) return
-        modal.classList.add('open')
-        $('ranking-close').focus()
+        openExplainer()
     })
     $('ranking-close').addEventListener('click', close)
     modal.addEventListener('click', function (e) {

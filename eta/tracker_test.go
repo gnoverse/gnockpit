@@ -21,6 +21,7 @@ type fakeChain struct {
 	head    int64
 	floor   int64 // heights below are refused, as a node that cannot serve them
 	halt    node.Halt
+	haltErr error             // returned by HaltParams when set
 	fail    map[int64][]error // errors returned, in order, before serving a height
 	fetched []int64
 	onFetch func(h int64) // called before serving each height
@@ -60,6 +61,9 @@ func (c *fakeChain) BlockTime(_ context.Context, h int64) (time.Time, error) {
 func (c *fakeChain) HaltParams(context.Context) (node.Halt, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if c.haltErr != nil {
+		return node.Halt{}, c.haltErr
+	}
 	return c.halt, nil
 }
 
@@ -426,5 +430,48 @@ func TestTrackerFloorAcrossPasses(t *testing.T) {
 
 	if floor, _ := tr.store.Floor(context.Background()); floor != 1000 {
 		t.Errorf("Floor() = %d, want 1000", floor)
+	}
+}
+
+func TestTrackerKeepsTheHaltParamOnceReached(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		halt int64
+		want int64
+	}{
+		{"reached", 1042, 1042},
+		{"passed", 900, 900},
+		{"none", 0, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			chain := newFakeChain(1042)
+			chain.halt = node.Halt{Height: tc.halt}
+			tr, _, _ := testTracker(t, chain)
+			syncAll(t, tr)
+			v := tr.View()
+			if v.Halt != nil {
+				t.Errorf("View().Halt = %+v for a halt not above the head, want none", v.Halt)
+			}
+			if v.HaltParam != tc.want {
+				t.Errorf("View().HaltParam = %d for halt %d, want %d", v.HaltParam, tc.halt, tc.want)
+			}
+		})
+	}
+}
+
+func TestTrackerDropsTheHaltParamOfAnotherChain(t *testing.T) {
+	chain := newFakeChain(1042)
+	chain.halt = node.Halt{Height: 1042}
+	tr, _, _ := testTracker(t, chain)
+	syncAll(t, tr)
+	if got := tr.View().HaltParam; got != 1042 {
+		t.Fatalf("View().HaltParam = %d, want 1042", got)
+	}
+
+	chain.chainID = "gnoland-2"
+	chain.haltErr = errors.New("halt params unavailable")
+	syncAll(t, tr)
+	if got := tr.View().HaltParam; got != 0 {
+		t.Errorf("View().HaltParam = %d after a chain change with the halt read failing, want 0", got)
 	}
 }

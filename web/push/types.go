@@ -3,6 +3,7 @@ package push
 import (
 	"fmt"
 	"slices"
+	"strings"
 )
 
 // AlertType identifies a category of push notification alert.
@@ -26,11 +27,39 @@ type Alert struct {
 	Type     AlertType
 	EntityID string // empty for global alerts, EntityIDLocal for local node, NodeID for peers
 	Firing   bool   // true = problem detected, false = recovery
-	Notice   bool   // a one-off event, Firing: no recovery follows
+	Notice   bool   // told as information rather than a fault: a one-off event, or the chain stopping at its scheduled halt, whose recovery still follows
 	Title    string
-	Body     string
+	Body     Body
 	Link     string // the page a tap on the notification opens, from the site's root; "": the dashboard
 }
+
+// Body is what an alert says under its title, as spans of text: each key
+// fact, such as a validator's name, a count or a version, is a bold span.
+// Text targets and browser push get its String, the text without emphasis.
+type Body []Span
+
+// Span is a run of a Body's text, bold or plain.
+type Span struct {
+	Text string
+	Bold bool
+}
+
+// String returns b's text, its spans' text joined; "" for none.
+func (b Body) String() string {
+	var sb strings.Builder
+	for _, s := range b {
+		sb.WriteString(s.Text)
+	}
+	return sb.String()
+}
+
+// plain returns s as a plain span.
+func plain(s string) Span { return Span{Text: s} }
+
+// bold returns s as a bold span, a key fact. s may hold spaces at either end
+// or line breaks, as a name a peer or a profile writes can: the Discord
+// renderer (markdownLines) keeps them outside the bold.
+func bold(s string) Span { return Span{Text: s, Bold: true} }
 
 // Subscription represents a browser push subscription for one device.
 type Subscription struct {

@@ -23,7 +23,7 @@ func everyAlert(urls ...string) NotifyConfig {
 	for _, u := range urls {
 		cfg.Targets = append(cfg.Targets, NotifyRoute{URL: u, Alerts: map[AlertType]AlertOptions{
 			AlertChainStuck: {}, AlertValidatorMissingBlocks: {}, AlertValsetChanged: {}, AlertHaltScheduled: {},
-			AlertHaltApproaching: {Lead: Lead{Time: time.Hour}},
+			AlertHaltApproaching: {Leads: []Lead{{Time: time.Hour}}},
 		}})
 	}
 	return cfg
@@ -230,19 +230,51 @@ func rankingManager(t *testing.T) (*Manager, func() []string, func() []string) {
 	return m, rankingBodies, otherBodies
 }
 
+var oneRowDigest = ranking.Digest{Title: "Validator ranking", Rows: []ranking.DigestRow{{Rank: 1, Name: "A", Score: "99.0"}}}
+
+// longDigest is a digest of n rows, each of a 40-character name, and its
+// lines.
+func longDigest(n int) (ranking.Digest, []string) {
+	d := ranking.Digest{Title: "Validator ranking"}
+	var lines []string
+	for i := 0; i < n; i++ {
+		name := strings.Repeat("n", 40)
+		d.Rows = append(d.Rows, ranking.DigestRow{Rank: i + 1, Name: name, Score: "99.0", Change: "="})
+		lines = append(lines, fmt.Sprintf("#%d %s 99.0 =", i+1, name))
+	}
+	return d, lines
+}
+
 func TestNotifyRankingSendsOncePerKey(t *testing.T) {
 	m, got, other := rankingManager(t)
-	m.NotifyRanking("gnoland-1:2026-11-25", "Validator ranking", "#1 A 99.0")
-	m.NotifyRanking("gnoland-1:2026-11-25", "Validator ranking", "#1 A 99.0")
+	m.NotifyRanking("gnoland-1:2026-11-25", oneRowDigest)
+	m.NotifyRanking("gnoland-1:2026-11-25", oneRowDigest)
 	if n := len(got()); n != 1 {
 		t.Errorf("NotifyRanking twice with one key sent %d messages, want 1", n)
 	}
-	m.NotifyRanking("gnoland-1:2026-11-26", "Validator ranking", "#1 A 99.0")
+	m.NotifyRanking("gnoland-1:2026-11-26", oneRowDigest)
 	if n := len(got()); n != 2 {
 		t.Errorf("NotifyRanking with a new key sent %d messages in all, want 2", n)
 	}
 	if n := len(other()); n != 0 {
 		t.Errorf("NotifyRanking sent %d messages to a target not listing it, want 0", n)
+	}
+}
+
+// TestNotifyRankingCutsALongName checks that a text target's ranking quotes
+// a name as every alert does, cut to alertNameLimit runes, and leaves the
+// digest it is given intact.
+func TestNotifyRankingCutsALongName(t *testing.T) {
+	m, got, _ := rankingManager(t)
+	long := strings.Repeat("é", 100)
+	d := ranking.Digest{Title: "Validator ranking", Rows: []ranking.DigestRow{{Rank: 1, Name: long, Score: "99.0", Change: "="}}}
+	m.NotifyRanking("gnoland-1:2026-11-25", d)
+	want := "\n#1 " + strings.Repeat("é", 63) + "… 99.0 ="
+	if bodies := got(); len(bodies) != 1 || !strings.HasSuffix(bodies[0], want) {
+		t.Errorf("NotifyRanking(a name of 100 runes) sent %q, want one message ending %q", bodies, want)
+	}
+	if d.Rows[0].Name != long {
+		t.Errorf("NotifyRanking changed the digest's name to %q, want it intact", d.Rows[0].Name)
 	}
 }
 
@@ -254,7 +286,7 @@ func TestNotifyRankingSendsNothingAgainAfterARestart(t *testing.T) {
 	if err := m.SetNotifyConfig(cfg); err != nil {
 		t.Fatal(err)
 	}
-	m.NotifyRanking("gnoland-1:2026-11-25", "Validator ranking", "#1 A 99.0")
+	m.NotifyRanking("gnoland-1:2026-11-25", oneRowDigest)
 	restarted, err := NewManager(m.db, 30, 5)
 	if err != nil {
 		t.Fatal(err)
@@ -262,7 +294,7 @@ func TestNotifyRankingSendsNothingAgainAfterARestart(t *testing.T) {
 	if err := restarted.SetNotifyConfig(cfg); err != nil {
 		t.Fatal(err)
 	}
-	restarted.NotifyRanking("gnoland-1:2026-11-25", "Validator ranking", "#1 A 99.0")
+	restarted.NotifyRanking("gnoland-1:2026-11-25", oneRowDigest)
 	if n := len(got()); n != 1 {
 		t.Errorf("NotifyRanking of one key before and after a restart sent %d messages, want 1", n)
 	}
@@ -270,15 +302,11 @@ func TestNotifyRankingSendsNothingAgainAfterARestart(t *testing.T) {
 
 func TestNotifyRankingSplitsAtLines(t *testing.T) {
 	m, got, _ := rankingManager(t)
-	lines := make([]string, 90)
-	for i := range lines {
-		lines[i] = fmt.Sprintf("#%d %s 99.0 =", i+1, strings.Repeat("n", 40))
-	}
-	body := strings.Join(lines, "\n")
-	m.NotifyRanking("gnoland-1:2026-11-25", "Validator ranking", body)
+	d, lines := longDigest(90)
+	m.NotifyRanking("gnoland-1:2026-11-25", d)
 	parts := got()
 	if len(parts) != 3 {
-		t.Fatalf("NotifyRanking of %d characters sent %d parts, want 3", len(body), len(parts))
+		t.Fatalf("NotifyRanking of %d characters sent %d parts, want 3", len(d.Body()), len(parts))
 	}
 	for i, p := range parts {
 		if n := len([]rune(p)); n > 2000 {
@@ -304,13 +332,9 @@ func TestSplitMessageCutsALongLineHard(t *testing.T) {
 func TestNotifyRankingKeepsTheLinkInsideTheCap(t *testing.T) {
 	m, got, _ := rankingManager(t)
 	m.SetPublicURL("https://x/")
-	lines := make([]string, 90)
-	for i := range lines {
-		lines[i] = fmt.Sprintf("#%d %s 99.0 =", i+1, strings.Repeat("n", 40))
-	}
-	body := strings.Join(lines, "\n")
-	m.NotifyRanking("gnoland-1:2026-11-25", "Validator ranking", body)
-	a := Alert{Type: AlertRanking, Firing: true, Notice: true, Title: "Validator ranking", Body: body, Link: rankingLink}
+	d, _ := longDigest(90)
+	m.NotifyRanking("gnoland-1:2026-11-25", d)
+	a := rankingAlert(d)
 	want := FormatAlert(m.ChainName(), "https://x/", a)
 	parts := got()
 	if joined := strings.Join(parts, "\n"); joined != want {
@@ -347,10 +371,6 @@ func TestSplitMessageKeepsBlankLines(t *testing.T) {
 	}
 }
 
-// zwsp is the zero-width space a webhook's text carries after each '@' and
-// '<', so that a name never mentions anyone.
-const zwsp = "\xe2\x80\x8b"
-
 // TestExternalNotificationsNeutraliseMentions checks the text a webhook
 // gets for names that would mention: a validator named "@everyone" missing
 // blocks, and a ranking listing it and one named "<!channel>". Each '@' and
@@ -376,8 +396,8 @@ func TestExternalNotificationsNeutraliseMentions(t *testing.T) {
 			}},
 		}
 	}
-	m.EvaluateAndNotify(snap(0))
-	m.EvaluateAndNotify(snap(5))
+	m.EvaluateAndNotify(snap(0), 0)
+	m.EvaluateAndNotify(snap(5), 0)
 	day := ranking.Published{Chain: "test-13", Day: "2026-11-25", Result: ranking.Result{
 		Formula: 1, FirstDay: "2026-10-26", LastDay: "2026-11-24",
 		Entries: []ranking.Entry{
@@ -385,11 +405,10 @@ func TestExternalNotificationsNeutraliseMentions(t *testing.T) {
 			{Operator: "g1bbb", Name: "<!channel>", Status: ranking.Ranked, Rank: 2, Score: 98},
 		},
 	}}
-	title, body := ranking.Digest(day, nil)
-	m.NotifyRanking("test-13:2026-11-25", title, body)
+	m.NotifyRanking("test-13:2026-11-25", ranking.DigestOf(day, nil))
 	want := []string{
 		"🚨 test-13 — Validator missing blocks\n@" + zwsp + "everyone missed 5 blocks in a row\nhttps://watch@gnockpit.example.com",
-		"🔔 test-13 — Validator ranking, 2026-10-26 – 2026-11-24 UTC (formula v1)\n#1 @" + zwsp + "everyone 99.0\n#2 <" + zwsp + "!channel> 98.0\n" +
+		"📣 test-13 — Validator ranking, 2026-10-26 – 2026-11-24 UTC (formula v1)\n#1 @" + zwsp + "everyone 99.0\n#2 <" + zwsp + "!channel> 98.0\n" +
 			"Rank changes not shown: no earlier ranking\nhttps://watch@gnockpit.example.com/?view=ranking",
 	}
 	if bodies := got(); !slices.Equal(bodies, want) {
@@ -398,17 +417,17 @@ func TestExternalNotificationsNeutraliseMentions(t *testing.T) {
 }
 
 // TestNotifyRankingSplitsTheTextAsSent checks that a ranking's parts stay
-// within 2,000 characters counted on the text as sent: 1,950 characters of
+// within 2,000 characters counted on the text as sent: 1,940 characters of
 // lines whose names hold '@', each written with a zero-width space after it,
 // go as two parts.
 func TestNotifyRankingSplitsTheTextAsSent(t *testing.T) {
 	m, got, _ := rankingManager(t)
-	lines := make([]string, 39)
-	for i := range lines {
-		lines[i] = fmt.Sprintf("#%02d %s 99.0", i+1, strings.Repeat("@", 40))
+	d := ranking.Digest{Title: "Validator ranking"}
+	for i := 0; i < 39; i++ {
+		d.Rows = append(d.Rows, ranking.DigestRow{Rank: i + 1, Name: strings.Repeat("@", 40), Score: "99.0"})
 	}
-	body := strings.Join(lines, "\n")
-	m.NotifyRanking("gnoland-1:2026-11-25", "Validator ranking", body)
+	body := d.Body()
+	m.NotifyRanking("gnoland-1:2026-11-25", d)
 	parts := got()
 	if len(parts) != 2 {
 		t.Fatalf("NotifyRanking of %d characters, %d '@', sent %d parts, want 2", len([]rune(body)), strings.Count(body, "@"), len(parts))
@@ -417,5 +436,55 @@ func TestNotifyRankingSplitsTheTextAsSent(t *testing.T) {
 		if n := len([]rune(p)); n > 2000 {
 			t.Errorf("part %d has %d characters, want at most 2000", i, n)
 		}
+	}
+}
+
+// chainNamed makes m's chain name test-1.
+func chainNamed(m *Manager) {
+	m.EvaluateAndNotify(&node.Snapshot{Status: &node.Status{NodeInfo: node.NodeInfo{Network: "test-1"}}}, 0)
+}
+
+func TestShowChainOnATextTarget(t *testing.T) {
+	shownHost, shown := bodyServer(t)
+	hiddenHost, hidden := bodyServer(t)
+	m := newTestManager(t, false)
+	captureLog(t)
+	alerts := map[AlertType]AlertOptions{AlertChainStuck: {}, AlertRanking: {}}
+	err := m.SetNotifyConfig(NotifyConfig{Targets: []NotifyRoute{
+		{URL: "generic+http://" + shownHost + "/a", Alerts: alerts},
+		{URL: "generic+http://" + hiddenHost + "/b", Alerts: alerts, HideChain: true},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	chainNamed(m)
+	m.NotifyAlert(Alert{Type: AlertChainStuck, Firing: true, Title: "Chain stuck", Body: stuckBody(30)})
+	m.NotifyRanking("test-1:2026-11-26", oneRowDigest)
+	wantShown := []string{"🚨 test-1 — Chain stuck\nNo new block for 30+ seconds", "📣 test-1 — Validator ranking\n#1 A 99.0"}
+	wantHidden := []string{"🚨 Chain stuck\nNo new block for 30+ seconds", "📣 Validator ranking\n#1 A 99.0"}
+	if got := shown(); !slices.Equal(got, wantShown) {
+		t.Errorf("target showing the chain got %q, want %q", got, wantShown)
+	}
+	if got := hidden(); !slices.Equal(got, wantHidden) {
+		t.Errorf("target hiding the chain got %q, want %q", got, wantHidden)
+	}
+}
+
+func TestShowChainChangeKeepsTheTarget(t *testing.T) {
+	host, bodies := bodyServer(t)
+	m := newTestManager(t, false)
+	captureLog(t)
+	route := NotifyRoute{URL: "generic+http://" + host + "/a", Alerts: map[AlertType]AlertOptions{AlertHaltScheduled: {}}}
+	if err := m.SetNotifyConfig(NotifyConfig{Targets: []NotifyRoute{route}}); err != nil {
+		t.Fatal(err)
+	}
+	m.EvaluateSchedule(halt(900, 1000))
+	route.HideChain = true
+	if err := m.SetNotifyConfig(NotifyConfig{Targets: []NotifyRoute{route}}); err != nil {
+		t.Fatal(err)
+	}
+	m.EvaluateSchedule(halt(900, 1000))
+	if n := len(bodies()); n != 1 {
+		t.Errorf("EvaluateSchedule before and after show_chain changed sent %d messages, want 1", n)
 	}
 }

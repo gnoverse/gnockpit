@@ -125,13 +125,17 @@ func (m *Manager) notifyErrorText(err error, urls []string) string {
 	return redactNotifySecrets(err.Error(), urls)
 }
 
+// OverrideLastHeightChange is for testing only: it moves the chain-stuck
+// detector's clock of the last head change.
+func (m *Manager) OverrideLastHeightChange(t time.Time) { m.detector.OverrideLastHeightChange(t) }
+
 // EvaluateAndNotify detects alert transitions from snap and delivers push notifications.
-func (m *Manager) EvaluateAndNotify(snap *node.Snapshot) {
+func (m *Manager) EvaluateAndNotify(snap *node.Snapshot, halt int64) {
 	if snap.Status != nil && snap.Status.NodeInfo.Network != "" {
 		name := snap.Status.NodeInfo.Network
 		m.chainName.Store(&name)
 	}
-	for _, a := range m.detector.Detect(snap) {
+	for _, a := range m.detector.Detect(snap, halt) {
 		m.NotifyAlert(a)
 	}
 }
@@ -174,7 +178,7 @@ func (m *Manager) SendTest(subID string) error {
 	return m.deliver(sub, Alert{
 		Firing: true,
 		Title:  "gnockpit test",
-		Body:   "Push notifications are working.",
+		Body:   Body{plain("Push notifications are working.")},
 	})
 }
 
@@ -185,13 +189,13 @@ type pushPayload struct {
 }
 
 // payloadOf is what a push of a says, its title prefixed with the chain's
-// name when known.
+// name when known, its body plain.
 func payloadOf(chain string, a Alert) pushPayload {
 	title := a.Title
 	if chain != "" {
 		title = chain + " - " + title
 	}
-	return pushPayload{Title: title, Body: a.Body, URL: a.Link}
+	return pushPayload{Title: title, Body: a.Body.String(), URL: a.Link}
 }
 
 // sendPush delivers a to sub, logging a failure: an alert goes on to its

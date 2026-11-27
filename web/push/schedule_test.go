@@ -85,7 +85,7 @@ func TestEvaluateScheduleAlertsTheApproachingHaltAtEachLead(t *testing.T) {
 	m := newTestManager(t, false)
 	captureLog(t)
 	device(t, m, host, "/dev", SubscriptionAlert{AlertType: AlertHaltApproaching, Lead: "100 blocks"})
-	sendTo(t, m, host, "/target", map[AlertType]AlertOptions{AlertHaltApproaching: {Lead: Lead{Time: time.Hour}}})
+	sendTo(t, m, host, "/target", map[AlertType]AlertOptions{AlertHaltApproaching: {Leads: []Lead{{Time: time.Hour}}}})
 	left := 2 * time.Hour
 	at := func(head int64) Schedule {
 		s := halt(head, 1000)
@@ -106,6 +106,101 @@ func TestEvaluateScheduleAlertsTheApproachingHaltAtEachLead(t *testing.T) {
 	}
 	if got := h.got(); !slices.Equal(got, []string{"/dev", "/target"}) {
 		t.Errorf("posts = %v, want the target once at 59 min, nothing twice", got)
+	}
+}
+
+func TestEvaluateScheduleSendsEachLeadOfTheSeries(t *testing.T) {
+	host, h := hookServer(t)
+	m := newTestManager(t, false)
+	captureLog(t)
+	series := map[AlertType]AlertOptions{AlertHaltApproaching: {Leads: defaultHaltLeads()}}
+	sendTo(t, m, host, "/target", series)
+	left := 25 * time.Hour
+	at := func(m *Manager, head int64) {
+		s := halt(head, 1000)
+		s.TimeLeft = func(int64) (time.Duration, bool) { return left, true }
+		m.EvaluateSchedule(s)
+	}
+	at(m, 100)
+	if got := h.got(); len(got) != 0 {
+		t.Fatalf("posts at 25 h = %v, want none", got)
+	}
+	for i, l := range []time.Duration{24*time.Hour - time.Minute, 2*time.Hour - time.Minute, time.Hour - time.Minute, 10*time.Minute - time.Minute, time.Minute - time.Second} {
+		left = l
+		at(m, 100+int64(i))
+		if got := h.got(); len(got) != i+1 {
+			t.Fatalf("posts at %v left = %v, want %d", l, got, i+1)
+		}
+	}
+	at(m, 110)
+	restarted, err := NewManager(m.db, 30, 5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sendTo(t, restarted, host, "/target", series)
+	left = 30 * time.Second
+	at(restarted, 111)
+	if got := h.got(); len(got) != 5 {
+		t.Errorf("posts = %v, want 5: each lead once, a restart sending none more", got)
+	}
+}
+
+func TestEvaluateScheduleSendsLeadsMetTogetherOnce(t *testing.T) {
+	host, h := hookServer(t)
+	m := newTestManager(t, false)
+	captureLog(t)
+	sendTo(t, m, host, "/target", map[AlertType]AlertOptions{AlertHaltApproaching: {Leads: defaultHaltLeads()}})
+	left := 50 * time.Minute
+	at := func(m *Manager, s Schedule) {
+		s.TimeLeft = func(int64) (time.Duration, bool) { return left, true }
+		m.EvaluateSchedule(s)
+	}
+	at(m, halt(500, 1000))
+	if got := h.got(); len(got) != 1 {
+		t.Fatalf("posts at 50 min on the first refresh = %v, want one for the 24h, 2h and 1h leads met together", got)
+	}
+	left = 49 * time.Minute
+	at(m, halt(501, 1000))
+	if got := h.got(); len(got) != 1 {
+		t.Fatalf("posts at 49 min = %v, want still one", got)
+	}
+	left = 9 * time.Minute
+	at(m, halt(502, 1000))
+	if got := h.got(); len(got) != 2 {
+		t.Fatalf("posts at 9 min = %v, want two", got)
+	}
+	other := newTestManager(t, false)
+	sendTo(t, other, host, "/target", map[AlertType]AlertOptions{AlertHaltApproaching: {Leads: defaultHaltLeads()}})
+	other.EvaluateSchedule(halt(999, 1000))
+	if got := h.got(); len(got) != 3 {
+		t.Errorf("posts with no estimate at the block before the halt = %v, want one more for all five leads", got)
+	}
+}
+
+func TestEvaluateScheduleSendsALeadAddedAfterItWasMet(t *testing.T) {
+	host, h := hookServer(t)
+	m := newTestManager(t, false)
+	captureLog(t)
+	left := 59 * time.Minute
+	at := func(m *Manager, head int64) {
+		s := halt(head, 1000)
+		s.TimeLeft = func(int64) (time.Duration, bool) { return left, true }
+		m.EvaluateSchedule(s)
+	}
+	sendTo(t, m, host, "/target", map[AlertType]AlertOptions{AlertHaltApproaching: {Leads: []Lead{{Time: time.Hour}}}})
+	at(m, 500)
+	if got := h.got(); len(got) != 1 {
+		t.Fatalf("posts at 59 min = %v, want one", got)
+	}
+	edited, err := NewManager(m.db, 30, 5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sendTo(t, edited, host, "/target", map[AlertType]AlertOptions{AlertHaltApproaching: {Leads: []Lead{{Time: time.Hour}, {Time: 10 * time.Minute}}}})
+	left = 9 * time.Minute
+	at(edited, 501)
+	if got := h.got(); len(got) != 2 {
+		t.Errorf("posts at 9 min with the 10m lead added = %v, want one more", got)
 	}
 }
 
@@ -144,40 +239,120 @@ func TestValsetChangeAlertSaysWhatChanged(t *testing.T) {
 	now := time.Date(2026, 11, 19, 12, 0, 0, 0, time.UTC)
 	c := blocks.ValsetChange{
 		Height: 1223188, Time: now.Add(-2 * time.Hour),
-		Added:      []blocks.Member{{Address: "g1addedaddress00000000000000000000000xyz", Power: 1}},
+		Added: []blocks.Member{
+			{Address: "g1alpha", Power: 1},
+			{Address: "g1addedaddress00000000000000000000000xyz", Power: 1},
+		},
 		Removed:    []blocks.Member{{Address: "g1gone", Power: 2}},
 		Repowered:  []blocks.PowerChange{{Address: "g1berty", Before: 1, After: 2}},
 		Rotated:    []blocks.Rotation{{Operator: "g1op", OldAddress: "g1oldkey0000000000000000000000000000abcd", NewAddress: "g1newkey0000000000000000000000000000efgh", Power: 1}},
-		SizeBefore: 54, SizeAfter: 54,
+		SizeBefore: 54, SizeAfter: 55,
 	}
-	names := map[string]string{"g1gone": "teritori", "g1berty": "berty", "g1newkey0000000000000000000000000000efgh": "aeddi"}
-	name := func(addr string) string {
-		if n, ok := names[addr]; ok {
-			return n
-		}
-		return addr
-	}
-	a := valsetChangeAlert(c, name, now)
+	a := valsetChangeAlert(c, valsetNames, now)
 	if a.Type != AlertValsetChanged || !a.Notice || !a.Firing || a.Title != "Validator set changed at #1223188" {
 		t.Errorf("alert = %+v, want a valset_changed notice titled with the height", a)
 	}
-	want := strings.Join([]string{
-		"+ g1addeda…0xyz joined (power 1)",
-		"− teritori left (power 2)",
-		"↕ berty power 1 → 2",
-		"⇄ aeddi rotated its key g1oldkey…abcd → g1newkey…efgh",
-		"Validators: 54 → 54",
-		"At 2026-11-19 10:00 UTC (2 h ago)",
-	}, "\n")
-	if a.Body != want {
-		t.Errorf("body =\n%s\nwant\n%s", a.Body, want)
+	want := "**Joined (2)**\nalpha (power 1)\ng1addeda…0xyz (power 1)\n\n" +
+		"**Left (1)**\nteritori (power 2)\n\n" +
+		"**Validator set size (+1)**\n54 → 55\n\n" +
+		"**Voting power changed (1)**\nberty 1 → 2\n\n" +
+		"**Rotated signing key (1)**\naeddi g1oldkey…abcd → g1newkey…efgh\n\n" +
+		"At 2026-11-19 10:00 UTC (2 h ago)"
+	if got := marked(a.Body); got != want {
+		t.Errorf("body =\n%s\nwant\n%s", got, want)
 	}
-	recent := valsetChangeAlert(blocks.ValsetChange{
-		Height: 5, Time: now.Add(-time.Minute), SizeBefore: 3, SizeAfter: 4,
-		Added: []blocks.Member{{Address: "g1x", Power: 1}},
-	}, name, now)
-	if strings.Contains(recent.Body, " ago)") {
-		t.Errorf("body of a fresh change = %q, want no age", recent.Body)
+	if got, want := a.Body.String(), strings.ReplaceAll(want, "**", ""); got != want {
+		t.Errorf("body text =\n%s\nwant\n%s", got, want)
+	}
+}
+
+// valsetNames names the addresses of the set-change tests, and leaves the
+// others as they are.
+func valsetNames(addr string) string {
+	names := map[string]string{
+		"g1gone": "teritori", "g1berty": "berty", "g1alpha": "alpha", "g1bravo": "bravo",
+		"g1teritori": "teritori", "g1newkey0000000000000000000000000000efgh": "aeddi",
+	}
+	if n, ok := names[addr]; ok {
+		return n
+	}
+	return addr
+}
+
+func TestValsetChangeSections(t *testing.T) {
+	now := time.Date(2026, 11, 19, 12, 0, 0, 0, time.UTC)
+	alpha := blocks.Member{Address: "g1alpha", Power: 1}
+	bravo := blocks.Member{Address: "g1bravo", Power: 1}
+	teritori := blocks.Member{Address: "g1teritori", Power: 2}
+	tests := []struct {
+		name string
+		c    blocks.ValsetChange
+		want string
+	}{
+		{"the set grows", blocks.ValsetChange{Added: []blocks.Member{alpha, bravo}, SizeBefore: 3, SizeAfter: 5},
+			"**Joined (2)**\nalpha (power 1)\nbravo (power 1)\n\n**Validator set size (+2)**\n3 → 5"},
+		{"the set shrinks", blocks.ValsetChange{Removed: []blocks.Member{teritori}, SizeBefore: 4, SizeAfter: 3},
+			"**Left (1)**\nteritori (power 2)\n\n**Validator set size (\u22121)**\n4 → 3"},
+		{"a swap keeps the size", blocks.ValsetChange{Added: []blocks.Member{alpha}, Removed: []blocks.Member{teritori}, SizeBefore: 4, SizeAfter: 4},
+			"**Joined (1)**\nalpha (power 1)\n\n**Left (1)**\nteritori (power 2)"},
+		{"power only", blocks.ValsetChange{Repowered: []blocks.PowerChange{{Address: "g1berty", Before: 1, After: 2}}, SizeBefore: 4, SizeAfter: 4},
+			"**Voting power changed (1)**\nberty 1 → 2"},
+		{"rotation only", blocks.ValsetChange{Rotated: []blocks.Rotation{{Operator: "g1op", OldAddress: "g1oldkey0000000000000000000000000000abcd", NewAddress: "g1newkey0000000000000000000000000000efgh", Power: 1}}, SizeBefore: 4, SizeAfter: 4},
+			"**Rotated signing key (1)**\naeddi g1oldkey…abcd → g1newkey…efgh"},
+		{"the size alone", blocks.ValsetChange{SizeBefore: 4, SizeAfter: 5},
+			"**Validator set size (+1)**\n4 → 5"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tt.c.Height, tt.c.Time = 5, now.Add(-time.Minute)
+			if got := marked(valsetChangeAlert(tt.c, valsetNames, now).Body); got != tt.want {
+				t.Errorf("valsetChangeAlert(%s) body =\n%q\nwant\n%q", tt.name, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestValsetChangeOfNothingStartsWithItsAge(t *testing.T) {
+	now := time.Date(2026, 11, 19, 12, 0, 0, 0, time.UTC)
+	a := valsetChangeAlert(blocks.ValsetChange{Height: 5, Time: now.Add(-2 * time.Hour), SizeBefore: 4, SizeAfter: 4}, valsetNames, now)
+	if got, want := a.Body.String(), "At 2026-11-19 10:00 UTC (2 h ago)"; got != want {
+		t.Errorf("valsetChangeAlert(empty change, 2 h old) body = %q, want %q", got, want)
+	}
+}
+
+func TestValsetChangeBreaksAMentionInATextTarget(t *testing.T) {
+	host, got := bodyServer(t)
+	m := newTestManager(t, false)
+	captureLog(t)
+	sendTo(t, m, host, "/target", map[AlertType]AlertOptions{AlertValsetChanged: {}})
+	m.NotifyValsetChange(blocks.ValsetChange{Height: 5, Time: time.Now(), SizeBefore: 1, SizeAfter: 1, Removed: []blocks.Member{{Address: "g1x", Power: 1}}},
+		func(a string) string {
+			if a == "g1x" {
+				return "@everyone"
+			}
+			return a
+		})
+	want := "📣 Validator set changed at #5\nLeft (1)\n@\u200beveryone (power 1)"
+	if bodies := got(); !slices.Equal(bodies, []string{want}) {
+		t.Errorf("NotifyValsetChange text = %q, want %q", bodies, []string{want})
+	}
+}
+
+func TestValsetChangeReachesATextTargetWithPlainTitles(t *testing.T) {
+	host, got := bodyServer(t)
+	m := newTestManager(t, false)
+	captureLog(t)
+	sendTo(t, m, host, "/target", map[AlertType]AlertOptions{AlertValsetChanged: {}})
+	m.NotifyValsetChange(blocks.ValsetChange{Height: 5, Time: time.Now(), SizeBefore: 1, SizeAfter: 2, Added: []blocks.Member{{Address: "g1x", Power: 1}}},
+		func(a string) string {
+			if a == "g1x" {
+				return "alpha"
+			}
+			return a
+		})
+	want := "📣 Validator set changed at #5\nJoined (1)\nalpha (power 1)\n\nValidator set size (+1)\n1 → 2"
+	if bodies := got(); !slices.Equal(bodies, []string{want}) {
+		t.Errorf("NotifyValsetChange text = %q, want %q", bodies, []string{want})
 	}
 }
 
@@ -195,9 +370,9 @@ func TestNotifyValsetChangeReachesItsSubscribers(t *testing.T) {
 }
 
 func TestFormatAlertMarksANotice(t *testing.T) {
-	got := FormatAlert("onyx", "", Alert{Notice: true, Firing: true, Title: "Validator set changed at #5", Body: "x"})
-	if !strings.HasPrefix(got, "🔔 onyx — Validator set changed at #5") {
-		t.Errorf("FormatAlert = %q, want a bell for a one-off event", got)
+	got := FormatAlert("onyx", "", Alert{Notice: true, Firing: true, Title: "Validator set changed at #5", Body: Body{plain("x")}})
+	if !strings.HasPrefix(got, "📣 onyx — Validator set changed at #5") {
+		t.Errorf("FormatAlert = %q, want a megaphone for a one-off event", got)
 	}
 }
 
@@ -296,7 +471,7 @@ func TestManagerSendsWhileTheChainNameChanges(t *testing.T) {
 	go func() {
 		defer close(done)
 		for range 20 {
-			m.EvaluateAndNotify(snap)
+			m.EvaluateAndNotify(snap, 0)
 		}
 	}()
 	for range 20 {
@@ -352,5 +527,40 @@ func TestAReminderOpensItsCard(t *testing.T) {
 	}
 	if p := payloadOf("onyx", r); p.URL != r.Link || p.Title != "onyx - "+r.Title {
 		t.Errorf("payload = %+v, want the link and the chain-prefixed title", p)
+	}
+}
+
+func TestHaltReachedReachesChainStuckSubscribers(t *testing.T) {
+	devHost, dev := hookServer(t)
+	host, bodies := bodyServer(t)
+	m := newTestManager(t, false)
+	captureLog(t)
+	device(t, m, devHost, "/dev", SubscriptionAlert{AlertType: AlertChainStuck})
+	sendTo(t, m, host, "/target", map[AlertType]AlertOptions{AlertChainStuck: {}})
+	snap := func(height string) *node.Snapshot {
+		return &node.Snapshot{Status: &node.Status{
+			NodeInfo: node.NodeInfo{Network: "test-1"},
+			SyncInfo: node.SyncInfo{LatestBlockHeight: height},
+		}}
+	}
+	m.EvaluateAndNotify(snap("1000"), 1000)
+	m.detector.OverrideLastHeightChange(time.Now().Add(-31 * time.Second))
+	m.EvaluateAndNotify(snap("1000"), 1000)
+	if got := dev.got(); !slices.Equal(got, []string{"/dev"}) {
+		t.Errorf("device posts at the halt = %v, want one", got)
+	}
+	want := "📣 test-1 — Coordinated halt reached at #1000\nThe chain stopped at the scheduled height, as planned."
+	if got := bodies(); !slices.Equal(got, []string{want}) {
+		t.Errorf("target bodies at the halt = %q, want %q", got, want)
+	}
+
+	m.EvaluateAndNotify(snap("1001"), 1000)
+	want = "✅ test-1 — Chain resumed\nNew block at height 1001"
+	if got := bodies(); !slices.Equal(got, []string{
+		"📣 test-1 — Coordinated halt reached at #1000\nThe chain stopped at the scheduled height, as planned.", want}) {
+		t.Errorf("target bodies after the resume = %q, want the resume after the halt", got)
+	}
+	if got := dev.got(); len(got) != 1 {
+		t.Errorf("device posts after the resume = %v, want no more", got)
 	}
 }

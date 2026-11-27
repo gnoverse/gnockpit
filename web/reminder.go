@@ -170,3 +170,12 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 	w.WriteHeader(status)
 	json.NewEncoder(w).Encode(v)
 }
+
+// haltParam is the halt height the chain's params name, 0 when there is none
+// or no ETA tracker runs.
+func (s *Server) haltParam() int64 {
+	if s.ETA == nil {
+		return 0
+	}
+	return s.ETA.View().HaltParam
+}

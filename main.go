@@ -5,10 +5,13 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"net/url"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/gnolang/gno/tm2/pkg/crypto"
 	"github.com/gnoverse/gnockpit/blocks"
@@ -137,6 +140,41 @@ func checkRankingFlags(on bool, exclude operatorList, hideExcluded bool) error {
 	return nil
 }
 
+// publicURLLimit is the most bytes of a public URL: a Discord message quotes
+// it with a path in its link line, and the ranking in a field's value, which
+// holds at most 1,024 characters.
+const publicURLLimit = 512
+
+// checkPublicURL refuses a public URL that is not empty or an absolute http
+// or https URL of at most publicURLLimit bytes with a host, no whitespace and
+// a port that is absent or in 1-65535: every external notification carries
+// it as a link, which must open from a chat.
+func checkPublicURL(s string) error {
+	if s == "" {
+		return nil
+	}
+	if len(s) > publicURLLimit {
+		return fmt.Errorf("--public-url is %d bytes: want at most %d", len(s), publicURLLimit)
+	}
+	refused := fmt.Errorf("--public-url %q: want an absolute http or https URL, such as https://gnockpit.example.com", s)
+	if strings.IndexFunc(s, unicode.IsSpace) >= 0 {
+		return refused
+	}
+	u, err := url.Parse(s)
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Hostname() == "" {
+		return refused
+	}
+	if strings.HasSuffix(u.Host, ":") {
+		return refused
+	}
+	if p := u.Port(); p != "" {
+		if n, err := strconv.Atoi(p); err != nil || n < 1 || n > 65535 {
+			return refused
+		}
+	}
+	return nil
+}
+
 func usage() {
 	fmt.Fprint(flag.CommandLine.Output(), `gnockpit — live web dashboard for gno.land validator nodes.
 
@@ -166,7 +204,7 @@ func registerFlags(fs *flag.FlagSet) {
 	fs.DurationVar(&flagSendTimeout, "send-timeout", push.DefaultSendTimeout, "how long a push notification or webhook send may take before it is given up")
 	fs.StringVar(&flagNotifyConfig, "notify-config", "", "notification config file (JSON): the Shoutrrr URLs and the alerts each receives; reread when it changes")
 	fs.BoolVar(&flagRedactSecret, "redact-secret", false, "strip notification URL secrets (tokens, webhook IDs) from logged Shoutrrr errors; off by default: errors are logged verbatim")
-	fs.StringVar(&flagPublicURL, "public-url", "", "public URL of this gnockpit instance, appended to external notification messages")
+	fs.StringVar(&flagPublicURL, "public-url", "", fmt.Sprintf("public URL of this gnockpit instance, an absolute http or https URL of at most %d bytes: the link each external notification carries, on Discord its \"Open in Gnockpit ↗\" line", publicURLLimit))
 	fs.StringVar(&flagGeoIPPath, "geoip-db", "/tmp/gnockpit-geoip.mmdb", "path for the DB-IP City Lite mmdb powering the network map; auto-downloaded and refreshed monthly. Empty disables the map.")
 	fs.StringVar(&flagASNPath, "asn-db", "/tmp/gnockpit-asn.mmdb", "path for the DB-IP ASN Lite mmdb powering cloud-provider detection; auto-downloaded and refreshed monthly. Empty disables it.")
 	fs.Var(&flagLinks, "link", `extra header link button, "Title|URL", repeatable`)
@@ -211,6 +249,10 @@ func run() error {
 	}
 
 	if err := checkRankingFlags(flagRanking, flagRankingExclude, flagRankingHideExcluded); err != nil {
+		return err
+	}
+
+	if err := checkPublicURL(flagPublicURL); err != nil {
 		return err
 	}
 
@@ -326,8 +368,7 @@ func run() error {
 			Exclude: flagRankingExclude,
 			Now:     time.Now,
 			OnPublish: func(cur ranking.Published, prev *ranking.Published) {
-				title, body := ranking.Digest(cur, prev)
-				pushMgr.NotifyRanking(cur.Chain+":"+cur.Day, title, body)
+				pushMgr.NotifyRanking(cur.Chain+":"+cur.Day, ranking.DigestOf(cur, prev))
 			},
 		}
 		srv.Ranking = pub

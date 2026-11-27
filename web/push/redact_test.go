@@ -14,8 +14,8 @@ import (
 // Notification URLs whose secrets stand in for real ones. discordURL fails
 // only on the network (see failNetwork). gotifyURL carries a malformed token
 // (Gotify's are 15 characters), which Shoutrrr accepts at startup and echoes,
-// outside any URL, on every send. malformedDiscordURL does not parse, so
-// Shoutrrr quotes it whole at startup.
+// outside any URL, on every send. malformedDiscordURL does not parse: the
+// URL parse that reads a target at startup fails on it and quotes it whole.
 const (
 	discordURL          = "discord://SECRETTOKEN@123456789"
 	gotifyURL           = "gotify://gotify.example.invalid/AGOTIFYTOKENXXXX"
@@ -204,7 +204,7 @@ func TestManager_ShoutrrrErrors(t *testing.T) {
 					t.Fatalf("SetNotifyConfig: %v", err)
 				}
 				failNetwork(t)
-				m.NotifyAlert(Alert{Type: AlertChainStuck, Firing: true, Title: "Chain stuck", Body: "test"})
+				m.NotifyAlert(Alert{Type: AlertChainStuck, Firing: true, Title: "Chain stuck", Body: Body{plain("test")}})
 				return logBuf.String()
 			},
 			secrets: sendSecrets,

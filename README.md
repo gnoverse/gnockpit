@@ -38,35 +38,35 @@ appear for the same peer, the earlier `-rpc` in flag order wins.
 
 ## Flags
 
-| Flag                      | Default                    | Description                                                                                                                                                                                                                                                                                                                                                               |
-| ------------------------- | -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `-rpc`                    | `http://127.0.0.1:26657`   | Tendermint RPC endpoint; repeatable to consolidate several sources (flag order = precedence)                                                                                                                                                                                                                                                                              |
-| `-names`                  | `/tmp/gnockpit-names.json` | Persistent name registry                                                                                                                                                                                                                                                                                                                                                  |
-| `-port`                   | `8080`                     | Web server port                                                                                                                                                                                                                                                                                                                                                           |
-| `-addr`                   | `0.0.0.0`                  | Bind address                                                                                                                                                                                                                                                                                                                                                              |
-| `--read-header-timeout`   | `10s`                      | How long a client may take to send a request's headers before gnockpit closes its connection unanswered; `0` for none, a negative value refused                                                                                                                                                                                                                           |
-| `-interval`               | `5s`                       | Dashboard refresh interval                                                                                                                                                                                                                                                                                                                                                |
-| `-v`, `--verbose`         | false                      | Verbose HTTP logging: each request to the node                                                                                                                                                                                                                                                                                                                            |
-| `--db-path`               | `/tmp/gnockpit.db`         | SQLite database for push notifications, the block history, block-ETA history and the published rankings; keep it on a persistent path (see Push Notifications, Block history, Block ETA, Ranking)                                                                                                                                                                         |
-| `--history-pace`          | `1s`                       | Wait between the batches that fill the block history, back to genesis and up to the head after downtime; `0` for none (see Block history)                                                                                                                                                                                                                                 |
-| `--history-batch`         | `100`                      | Commits asked in one JSON-RPC batch while filling the block history; halved until restart when the first `-rpc` refuses a batch, for 10 minutes when one times out; at `1`, the backfill never completes at a node's oldest block (see Block history)                                                                                                                     |
-| `--chain-stuck-secs`      | `30`                       | Seconds without a new block before the chain-stuck alert fires                                                                                                                                                                                                                                                                                                            |
-| `--notify-config`         | (none)                     | Notification config file (JSON): the Shoutrrr URLs and the alerts each receives, reread when it changes; see External Notifications                                                                                                                                                                                                                                       |
-| `--send-timeout`          | `10s`                      | How long a push notification or webhook send may take before it is given up                                                                                                                                                                                                                                                                                               |
-| `--redact-secret`         | false                      | Strip notification URL secrets from logged Shoutrrr errors; see External Notifications                                                                                                                                                                                                                                                                                    |
-| `--public-url`            | (none)                     | This gnockpit's public URL, appended to each external notification; the ranking alert links `<URL>/?view=ranking`                                                                                                                                                                                                                                                         |
-| `--max-missed-in-a-row`   | `10`                       | Consecutive blocks a validator must miss to be flagged down (alert fires + counted inactive); it recovers after signing that many in a row                                                                                                                                                                                                                                |
-| `--geoip-db`              | `/tmp/gnockpit-geoip.mmdb` | DB-IP City Lite mmdb powering the network map + country columns; auto-downloaded and refreshed monthly. Empty disables it.                                                                                                                                                                                                                                                |
-| `--asn-db`                | `/tmp/gnockpit-asn.mmdb`   | DB-IP ASN Lite mmdb powering cloud-provider detection; auto-downloaded and refreshed monthly. Empty disables it.                                                                                                                                                                                                                                                          |
-| `--hide-sources`          | false                      | Hide the configured source nodes from the peers list                                                                                                                                                                                                                                                                                                                      |
-| `--chain-name`            | (chain-id)                 | Display name for the chain in titles and the app icon; defaults to the chain-id (e.g. `test13` for chain-id `test-13`)                                                                                                                                                                                                                                                    |
-| `--link`                  | (none)                     | Extra header link button, `"Title\|URL"`; repeatable                                                                                                                                                                                                                                                                                                                      |
-| `--status-link`           | (none)                     | Header link with a live status dot, `"Title\|URL"`; repeatable. BetterStack status pages only: the dot reflects `<URL>/index.json`                                                                                                                                                                                                                                        |
-| `--analytics`             | (off)                      | Load a third-party analytics script in the dashboard; only `simple-analytics` is supported. See Analytics.                                                                                                                                                                                                                                                                |
-| `--analytics-domain`      | (none)                     | Serve the analytics script and its no-JS pixel from a custom domain (e.g. `sa.example.com`) instead of the provider's own hosts; needs `--analytics`. See Analytics.                                                                                                                                                                                                      |
-| `--ranking`               | false                      | Compute and serve the daily validator ranking at `/api/ranking`, from the block history; see Ranking                                                                                                                                                                                                                                                                      |
-| `--ranking-exclude`       | (none)                     | Operators left out of the ranking's order: operator addresses as the chain writes them (lowercase, their bech32 checksum checked), comma-separated; repeatable, each occurrence adding entries; spaces around an entry are trimmed; a malformed or empty entry stops start-up. The list is published in `/api/ranking`. Needs `--ranking`: set without it, start-up stops |
-| `--ranking-hide-excluded` | false                      | Tell the ranking's readers to hide the excluded operators; `/api/ranking` lists them either way. Needs `--ranking`: set without it, start-up stops                                                                                                                                                                                                                        |
+| Flag                      | Default                    | Description                                                                                                                                                                                                                                                                                                                                                                                                      |
+| ------------------------- | -------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `-rpc`                    | `http://127.0.0.1:26657`   | Tendermint RPC endpoint; repeatable to consolidate several sources (flag order = precedence)                                                                                                                                                                                                                                                                                                                     |
+| `-names`                  | `/tmp/gnockpit-names.json` | Persistent name registry                                                                                                                                                                                                                                                                                                                                                                                         |
+| `-port`                   | `8080`                     | Web server port                                                                                                                                                                                                                                                                                                                                                                                                  |
+| `-addr`                   | `0.0.0.0`                  | Bind address                                                                                                                                                                                                                                                                                                                                                                                                     |
+| `--read-header-timeout`   | `10s`                      | How long a client may take to send a request's headers before gnockpit closes its connection unanswered; `0` for none, a negative value refused                                                                                                                                                                                                                                                                  |
+| `-interval`               | `5s`                       | Dashboard refresh interval                                                                                                                                                                                                                                                                                                                                                                                       |
+| `-v`, `--verbose`         | false                      | Verbose HTTP logging: each request to the node                                                                                                                                                                                                                                                                                                                                                                   |
+| `--db-path`               | `/tmp/gnockpit.db`         | SQLite database for push notifications, the block history, block-ETA history and the published rankings; keep it on a persistent path (see Push Notifications, Block history, Block ETA, Ranking)                                                                                                                                                                                                                |
+| `--history-pace`          | `1s`                       | Wait between the batches that fill the block history, back to genesis and up to the head after downtime; `0` for none (see Block history)                                                                                                                                                                                                                                                                        |
+| `--history-batch`         | `100`                      | Commits asked in one JSON-RPC batch while filling the block history; halved until restart when the first `-rpc` refuses a batch, for 10 minutes when one times out; at `1`, the backfill never completes at a node's oldest block (see Block history)                                                                                                                                                            |
+| `--chain-stuck-secs`      | `30`                       | Seconds without a new block before the chain-stuck alert fires                                                                                                                                                                                                                                                                                                                                                   |
+| `--notify-config`         | (none)                     | Notification config file (JSON): the Shoutrrr URLs and the alerts each receives, reread when it changes; see External Notifications                                                                                                                                                                                                                                                                              |
+| `--send-timeout`          | `10s`                      | How long a push notification or webhook send may take before it is given up; above 0 (`0` or a negative value stops start-up)                                                                                                                                                                                                                                                                                    |
+| `--redact-secret`         | false                      | Strip notification URL secrets from logged Shoutrrr errors; see External Notifications                                                                                                                                                                                                                                                                                                                           |
+| `--public-url`            | (none)                     | This gnockpit's public URL, an absolute http or https URL of at most 512 bytes with no whitespace and, if it has one, a port from 1 to 65535 (gnockpit refuses to start otherwise): the link each external notification carries, on Discord its `Open in Gnockpit ↗` line; the ranking alert links `<URL>/?view=ranking`, and on Discord its Formula field's `More info ↗` links `<URL>/?view=ranking&explain` |
+| `--max-missed-in-a-row`   | `10`                       | Consecutive blocks a validator must miss to be flagged down (alert fires + counted inactive); it recovers after signing that many in a row                                                                                                                                                                                                                                                                       |
+| `--geoip-db`              | `/tmp/gnockpit-geoip.mmdb` | DB-IP City Lite mmdb powering the network map + country columns; auto-downloaded and refreshed monthly. Empty disables it.                                                                                                                                                                                                                                                                                       |
+| `--asn-db`                | `/tmp/gnockpit-asn.mmdb`   | DB-IP ASN Lite mmdb powering cloud-provider detection; auto-downloaded and refreshed monthly. Empty disables it.                                                                                                                                                                                                                                                                                                 |
+| `--hide-sources`          | false                      | Hide the configured source nodes from the peers list                                                                                                                                                                                                                                                                                                                                                             |
+| `--chain-name`            | (chain-id)                 | Display name for the chain in titles and the app icon; defaults to the chain-id (e.g. `test13` for chain-id `test-13`)                                                                                                                                                                                                                                                                                           |
+| `--link`                  | (none)                     | Extra header link button, `"Title\|URL"`; repeatable                                                                                                                                                                                                                                                                                                                                                             |
+| `--status-link`           | (none)                     | Header link with a live status dot, `"Title\|URL"`; repeatable. BetterStack status pages only: the dot reflects `<URL>/index.json`                                                                                                                                                                                                                                                                               |
+| `--analytics`             | (off)                      | Load a third-party analytics script in the dashboard; only `simple-analytics` is supported. See Analytics.                                                                                                                                                                                                                                                                                                       |
+| `--analytics-domain`      | (none)                     | Serve the analytics script and its no-JS pixel from a custom domain (e.g. `sa.example.com`) instead of the provider's own hosts; needs `--analytics`. See Analytics.                                                                                                                                                                                                                                             |
+| `--ranking`               | false                      | Compute and serve the daily validator ranking at `/api/ranking`, from the block history; see Ranking                                                                                                                                                                                                                                                                                                             |
+| `--ranking-exclude`       | (none)                     | Operators left out of the ranking's order: operator addresses as the chain writes them (lowercase, their bech32 checksum checked), comma-separated; repeatable, each occurrence adding entries; spaces around an entry are trimmed; a malformed or empty entry stops start-up. The list is published in `/api/ranking`. Needs `--ranking`: set without it, start-up stops                                        |
+| `--ranking-hide-excluded` | false                      | Tell the ranking's readers to hide the excluded operators; `/api/ranking` lists them either way. Needs `--ranking`: set without it, start-up stops                                                                                                                                                                                                                                                               |
 
 ## Analytics
 
@@ -141,13 +141,13 @@ gnockpit can send browser push notifications for validator monitoring alerts. Th
 
 **Available alerts:**
 
-- **Validator missing blocks** — per validator: fires when it misses N blocks in a row, and recovers once it signs N in a row (`--max-missed-in-a-row`)
-- **Chain stuck** — fires when no new block is produced for N seconds, and recovers with the next block
-- **Validator set changes** (`valset_changed`) — once per change: who joined, left, changed power or rotated its key, and the set's size before and after. A rotation is told as one once the change's events are read; before, it reads as a validator leaving and another joining. A change found while catching up after downtime says when it happened; the backfill of older blocks never alerts.
+- **Validator missing blocks** (`validator_missing_blocks`) — per validator: fires when it misses N blocks in a row, and recovers once it signs N in a row (`--max-missed-in-a-row`)
+- **Chain stuck** (`chain_stuck`) — fires when no new block is produced for N seconds, and recovers with the next block ("Chain resumed"). A stop at the halt height the chain's `halt_height` param names (the one a coordinated halt sets) is told as the notice "Coordinated halt reached at #N" instead (blue on Discord), to the same devices and webhooks; "Chain resumed" still follows.
+- **Validator set changes** (`valset_changed`) — once per change: told in titled sections, each only when it holds an entry: who joined, who left, the set's size before and after (when it changed), who changed power and who rotated its key. A rotation is told as one once the change's events are read; before, it reads as a validator leaving and another joining. A change found while catching up after downtime says when it happened; the backfill of older blocks never alerts.
 - **New coordinated halt** (`halt_scheduled`) — once per halt height the chain schedules and per device or webhook (one added while a halt is pending gets it at the next refresh), with its minimum version when the chain names one, and the time to it when estimated.
-- **Coordinated halt approaching** (`halt_approaching`) — once per halt, N blocks or N minutes before it, as each device picks. A lead in minutes needs the block-time estimate; without one, it fires at the block before the halt at the latest.
+- **Coordinated halt approaching** (`halt_approaching`) — N blocks or N minutes before the halt: once per halt for a device, at the one lead it picks (a lead changed after the send sends nothing more); once per halt and lead for a webhook target, which takes a series of leads (see External Notifications). A lead in minutes needs the block-time estimate; without one, it fires at the block before the halt at the latest.
 
-The last three are one-off events: no recovery follows. What was sent to whom is kept in `--db-path`, so a restart sends nothing twice. Names in parentheses are the ones the notification config file (External Notifications) uses.
+The last three are one-off events: no recovery follows. What was sent to whom is kept in `--db-path`, so a restart sends none of them twice. A chain already stopped when gnockpit starts is told again, as stuck or as its halt notice, once N seconds pass. An alert quotes a validator's name, which its operator or a peer sets, up to 64 characters (Unicode code points), on every service: a longer one is cut to its first 63 and `…`. Names in parentheses are the ones the notification config file (External Notifications) uses.
 
 **Per-device settings:** Each browser/device has its own subscription, kept across saves (the server knows it by its push endpoint): saving again never sends an alert twice. Unchecking every alert ends the browser's push subscription, unless the device holds an ETA reminder or an alert the menu does not show: a validator's that left the set, or any validator's while the menu cannot read the validators. Changing notification settings on mobile does not affect desktop.
 
@@ -172,14 +172,15 @@ the alerts it lists. They are set in a JSON file passed with `--notify-config`:
                 "chain_stuck",
                 "valset_changed",
                 "halt_scheduled",
-                { "halt_approaching": "1h" },
+                { "halt_approaching": ["2h", "10m"] },
                 { "validator_missing_blocks": ["g1…"] }
-            ]
+            ],
+            "show_chain": false
         },
         {
             "url": "telegram://token@telegram?chats=@channel",
             "alerts": [
-                { "halt_approaching": "100 blocks" },
+                { "halt_approaching": ["100 blocks"] },
                 "validator_missing_blocks"
             ]
         }
@@ -192,6 +193,9 @@ the alerts it lists. They are set in a JSON file passed with `--notify-config`:
   `halt_approaching` (see Push Notifications) and `ranking`. A target receives
   the recovery of `chain_stuck` and `validator_missing_blocks` too; the
   others, `ranking` included, are one-off events with none.
+- `show_chain` is optional: `false` leaves the chain name out of the target's
+  messages on every service (`🚨 Chain stuck` for `🚨 <chain> — Chain stuck`);
+  absent, `null` or `true` keeps it. Browser devices have no such option and keep it. The target is still known by its URL.
 - `ranking` is sent once a day, after the day's ranking is published (needs
   `--ranking`; see Ranking), once per target and day: a restart sends nothing
   again. After a restart, today's day, once stored, is served as stored when
@@ -199,7 +203,7 @@ the alerts it lists. They are set in a JSON file passed with `--notify-config`:
   today's ranking is computed again and replaces it, with no second alert that
   day. It is for targets only: a
   browser device refuses it (400 `unknown alert "ranking"`), and it takes no
-  options. The message holds:
+  options. A text message holds:
     - the title: the ranking's window and formula version;
     - one line per ranked operator: its rank (operators sharing a rank repeat
       the number), name (its short address without one), score to one
@@ -213,12 +217,20 @@ the alerts it lists. They are set in a JSON file passed with `--notify-config`:
       (`formula v<N> since the previous ranking`) or the exclusion list differs
       (`exclusion list changed since the previous ranking`);
     - with `--public-url`, a last line linking the ranking view:
-      `--public-url` followed by `/?view=ranking`.
-- `halt_approaching` needs a lead: whole minutes (`"30m"`, `"1h"`, `"1h30m"`)
-  or blocks (`"1 block"`, `"100 blocks"`; `"1 blocks"` reads too).
-- `halt_scheduled` and `halt_approaching` are sent once per target and halt. A
-  target is known by its URL: one whose token changes is a new target, and a
-  changed lead does not send again.
+      `--public-url` followed by `/?view=ranking` (on Discord, the last field
+      links the view).
+- `halt_approaching` takes a list of leads, each whole minutes (`"30m"`,
+  `"1h"`, `"1h30m"`) or blocks (`"1 block"`, `"100 blocks"`; `"1 blocks"` reads
+  too), each once (`"1h"` and `"60m"` are the same lead, refused):
+  `{ "halt_approaching": ["2h", "10m"] }`. Named alone, it sends the series
+  `["24h", "2h", "1h", "10m", "1m"]`. A lead given as a string, or an empty
+  list, is refused. Each lead is sent once per target and halt;
+  leads met at one refresh go as one message, as when gnockpit starts close to
+  the halt, and a lead added after it was met is sent at the next refresh.
+- `halt_scheduled` and each lead of `halt_approaching` are sent once per target
+  and halt. A target is known by its whole URL: one whose token or any query
+  parameter (`username`, `avatar`, …) changes is a new target, and gets a
+  pending halt's alerts again.
 - `validator_missing_blocks` alone follows every validator; with a list of
   addresses, those only.
 - The file is reread when it changes, at the next refresh (`-interval`): a
@@ -230,22 +242,87 @@ the alerts it lists. They are set in a JSON file passed with `--notify-config`:
 - A send that takes longer than `--send-timeout` (10 s by default) is given up
   and logged, for webhooks and browser pushes alike.
 - The file holds the webhooks' secrets: keep it readable by gnockpit only.
-- A message's text has a zero-width space after each `@` and `<`, its link
-  aside: a name a peer, the genesis or a profile gives, such as `@everyone`,
-  `<@id>` or `<!channel>`, mentions no one.
+- A text target's message has a zero-width space after each `@` and `<`, its
+  link aside: a name a peer, the genesis or a profile gives, such as
+  `@everyone`, `<@id>` or `<!channel>`, mentions no one. A Discord payload
+  carries `"allowed_mentions": {"parse": []}` instead, so it pings no one, and
+  shows such a name as written, the ranking's table included.
 
-The `ranking` message holds at most 2,000 characters (Unicode code points, the
+A `discord://` target gets each alert as a Discord embed, the `ranking` in a look of its own, posted through
+Shoutrrr's json mode (gnockpit sets `json=yes` in the URL's query):
+
+- the title is the alert's icon and title, `<icon> <chain> — <title>`: 🚨 for
+  a firing alert, ✅ for a recovery, 📣 for a notice; the title is no link;
+- the description is the body, its key facts in bold (the validator's name, a
+  count, a duration, a height, the time left, the version; a set change's section
+  titles), then, with `--public-url`, the line
+  `-# [Open in Gnockpit ↗](<link>)` in Discord's small text, linking the
+  dashboard; a body made of sections, as a set change's, has a blank line
+  before it;
+- the body's Markdown shows as written: a backslash
+  goes before each of ``\ * _ ~ | ` [ ] < @``, before the `:` of each `://`,
+  before a `#`, `>`, `-` or `+` that opens a line, white space before it or
+  not, and before the dot of a number that opens one (`1\.`), inside a bold key
+  fact that opens the line too (`**1\. Validator**`), so a name such as
+  `gno_validator_1` stays as it is, `[x](https://…)` is no masked link, a URL
+  with its scheme (`https://…`) is no link (a bare domain, such as
+  `node.example.com/x`, is left as it is) and `@everyone` or `<@id>` is no
+  mention (the title, the ranking's code block and a test send's message are
+  left as they are); in every Discord link (the `Open in Gnockpit ↗` line and
+  the Formula's `More info ↗`), a `(` or `)` of `--public-url` is
+  percent-encoded (`%28`, `%29`), as a `)` would end the link;
+- the colour is red for a firing alert, green for a recovery and blue for a
+  notice, as the dashboard's own; there is no footer and no timestamp, as
+  Discord dates each message;
+- the URL's `username` and `avatar` are kept, put in the payload by gnockpit;
+  `title`, `color*` and `splitLines` have no effect;
+- a body over Discord's 4,096 characters, or a message over its limits of
+  6,000 characters (titles, descriptions, and fields' names and values) and 10 embeds, continues in
+  further embeds and messages, in order; gnockpit counts them in UTF-8 bytes,
+  so it never counts fewer than Discord's characters, and leaves out a blank
+  line where one embed ends and the next begins, the break parting the
+  paragraphs;
+- a test send is one blue embed holding the message as given, with no title and
+  no link.
+
+**Test send:** with `GNOCKPIT_NOTIFY_TEST_TOKEN` set in gnockpit's environment, two endpoints answer requests carrying `Authorization: Bearer <token>`: `GET /api/notify/targets` lists the targets (`index`, `service`, `fingerprint`, `alerts`), and `POST /api/notify/test` with `{"index": N, "message": "…"}` sends the message to target N (an empty one sends `gnockpit test notification`). Both answer 401 for a wrong or missing token and 404 while the variable is unset; the test answers 204 once sent, 400 for a bad body or index, and 502 when the send fails.
+
+To a text target, the `ranking` message holds at most 2,000 characters (Unicode code points, the
 zero-width spaces counted), so a longer ranking goes as several messages, split
 at line breaks. For example:
 
 ```text
-🔔 gnoland-1 — Validator ranking, 2026-10-27 – 2026-11-25 UTC (formula v1)
+📣 gnoland-1 — Validator ranking, 2026-10-27 – 2026-11-25 UTC (formula v1)
 #1 Alice 99.0 ▲1
 #1 Bob 99.0 =
 #3 Carol 97.5 ▼2
 #4 Dave 90.0 new
 Not ranked yet: 2
 https://gnockpit.example.com/?view=ranking
+```
+
+To a `discord://` target, the `ranking` is a gold embed:
+
+- the title is `🏆 <chain> — Validator ranking · <Mon D>`, the day published (`Nov 26`); it is no link;
+- the table lists every ranked operator in an `ansi` code block, a row each: the rank in bold yellow, the name in bold, the score right-aligned, and the change, green `▲n`, red `▼n`, blue `new` or plain `=` (none when there is no earlier ranking or its formula or exclusion list differs), two spaces apart. A name over 20 characters is cut to its first 19 and `…`; a control or format character in it (an escape, a direction override, a zero-width space; the zero-width joiner stays, as an emoji such as 👩‍💻 needs it) shows as `�`, so no name colours the table, and a backtick in it has a zero-width space after it, so that no name can close the block;
+- the fields under the table make two rows of two, each closed by a blank third field: **Formula**, `v<N> · More info ↗`, and **Window**, `<Mon D> – <Mon D> UTC`; **Ranked**, `<n> validators` (`1 validator`), and **Not ranked**, `<e> excluded · <w> not ranked yet`, a zero count left out (`none` when both are);
+- the links, with `--public-url`: Formula's `More info ↗` opens the Ranking view with its "How is this ranked?" dialog open (`/?view=ranking&explain`), and a last field holds the `Open in Gnockpit ↗` line, linking `/?view=ranking`. Without `--public-url`, Formula is `v<N>` alone and there is no last field.
+
+The digest's notes (the count not ranked yet, why no change is shown) are not sent: the fields count the operators not ranked. A long ranking continues in further embeds and messages, each with its own block, the fields under the last. For example, as the embed reads:
+
+```text
+🏆 gnoland-1 — Validator ranking · Nov 26
+#1  Alice  99.0  ▲1
+#1  Bob    99.0  =
+#3  Carol  97.5  ▼2
+#4  Dave   90.0  new
+
+Formula                  Window
+v1 · More info ↗         Oct 27 – Nov 25 UTC
+Ranked                   Not ranked
+4 validators             1 excluded · 2 not ranked yet
+
+Open in Gnockpit ↗
 ```
 
 A failed send is logged with Shoutrrr's error, which can hold the URL's secrets: a network failure quotes the service's request URL (Discord: `https://discord.com/api/webhooks/<id>/<token>`), and some services echo a malformed token. `--redact-secret` strips them before they are logged or returned. Each target's URL becomes `<scheme>:<fingerprint>`, as in `/api/notify/targets` (which also lists each target's alerts), and every other URL keeps only its scheme. Every piece of 6+ characters of a target's URL becomes `[redacted]` wherever it appears. That also blanks the URL's hostnames in DNS errors, and any word that matches a piece, e.g. `telegram` in `invalid [redacted] token`. It is off by default, which keeps errors verbatim.
@@ -525,7 +602,7 @@ ranking is on, so the card opens on a saved or requested Ranking view once the
 first answer says it is. `/?view=ranking` opens the dashboard on it, as `?view=live`
 and `?view=timeline` open the others, over the view the browser saved; a
 `?view=` is never saved; a click on the switch saves its view and takes
-`?view=` out of the address, so a reload opens the view clicked. On a server without `--ranking`, `?view=ranking` opens Live. The view
+`?view=` out of the address, so a reload opens the view clicked. `/?view=ranking&explain` opens the Ranking view with the "How is this ranked?" dialog open, once, unless another dialog, such as a validator's page, is open by then; either way `explain` then leaves the address, and the addresses the browser goes back or forward to after, which keep `?view=ranking`, so a link copied from them opens no dialog. `explain` is never saved, and a click on the switch takes it out of the address too. On a server without `--ranking`, `?view=ranking` opens Live. The view
 reads `/api/ranking` when it shows, then every minute:
 
 - on the meta line, the ranking's window, heights and formula version, that
@@ -846,6 +923,8 @@ polled its sources, then an `update` at each refresh (`-interval`). Both are
 Requirements: Go, and Node 24 (`web/.nvmrc`), for `make test` and `make typecheck`.
 
 `make test` runs the Go tests, which need no browser. A few check the page's scripts with `node` and fail, naming it, when it is not on `PATH`.
+
+`go test -tags discord -count=1 -run TestDiscordExamples ./web/push/` posts every alert, then a set change caught up after downtime and an escaping check of hostile names, to the webhook in `.ignore/dev/discord-test-url`, is skipped without the file, and `make test` never runs it. The file holds the webhook's secret, and this repository's `.gitignore` does not list `.ignore/`: keep it out of commits (a global gitignore, or `.git/info/exclude`).
 
 The binary serves the page's modules from `/js/` with `Cache-Control: no-cache` and a content ETag: a browser revalidates each on load, downloads only one that changed, and so runs the scripts of the deploy that served the page.
 

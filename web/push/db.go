@@ -73,7 +73,7 @@ func initSchema(db *sql.DB) error {
 		CREATE TABLE IF NOT EXISTS push_sent (
 			owner      TEXT NOT NULL, -- device:<id> or target:<fingerprint>
 			alert_type TEXT NOT NULL,
-			key        TEXT NOT NULL, -- <chain>:<height>
+			key        TEXT NOT NULL, -- <chain>:<height>; <chain>:<height>:<lead> for a target's halt_approaching; <chain>:<day> for the ranking
 			PRIMARY KEY (owner, alert_type, key)
 		) WITHOUT ROWID;
 		CREATE TABLE IF NOT EXISTS push_reminders (

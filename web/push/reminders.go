@@ -157,9 +157,9 @@ func reminderAlert(r Reminder, s Schedule) Alert {
 	if r.Label != "" {
 		title = r.Label + ": " + title
 	}
-	var body string
+	var body Body
 	if left, ok := s.TimeLeft(r.Height); ok && s.Head < r.Height {
-		body = fmt.Sprintf("About %s left.", about(left))
+		body = Body{plain(fmt.Sprintf("About %s left.", about(left)))}
 	}
 	card := url.Values{"eta": {strconv.FormatInt(r.Height, 10)}, "since": {r.Since}}
 	if r.Label != "" {

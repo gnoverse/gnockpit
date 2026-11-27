@@ -51,9 +51,14 @@ type ScheduledHalt struct {
 // history reaches back to the first grid height, or to the oldest block the
 // source serves.
 type View struct {
-	Model    *Model
-	Halt     *ScheduledHalt
-	Complete bool
+	Model *Model
+	Halt  *ScheduledHalt
+	// HaltParam is the halt height the params named at the last successful read: ahead,
+	// reached or passed; 0 when they name none, before the first read, or
+	// after a chain change. Halt drops a halt once the head reaches it,
+	// HaltParam keeps it.
+	HaltParam int64
+	Complete  bool
 }
 
 // Tracker keeps the block-time history and the scheduled halt up to date from
@@ -148,12 +153,14 @@ func (t *Tracker) followChain(ctx context.Context, chainID string) error {
 		return err
 	}
 	t.mu.Lock()
-	t.view.Halt, t.view.Complete = nil, false
+	t.view.Halt, t.view.HaltParam, t.view.Complete = nil, 0, false
 	t.mu.Unlock()
 	return t.reload(ctx)
 }
 
-// refreshHalt publishes the halt params when they are above the head.
+// refreshHalt reads the halt params and publishes their height as HaltParam on
+// every successful read, and the scheduled halt as Halt only while that height
+// is above the head.
 func (t *Tracker) refreshHalt(ctx context.Context, head node.ChainHead) error {
 	h, err := t.source.HaltParams(ctx)
 	if err != nil {
@@ -168,7 +175,7 @@ func (t *Tracker) refreshHalt(ctx context.Context, head node.ChainHead) error {
 		scheduled = &ScheduledHalt{Height: h.Height, MinVersion: h.MinVersion, FirstSeen: seen}
 	}
 	t.mu.Lock()
-	t.view.Halt = scheduled
+	t.view.Halt, t.view.HaltParam = scheduled, h.Height
 	t.mu.Unlock()
 	return nil
 }

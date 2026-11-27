@@ -75,14 +75,21 @@ type NotifyConfig struct {
 
 // NotifyRoute is one target and the alerts it receives, with their options.
 type NotifyRoute struct {
-	URL    string
-	Alerts map[AlertType]AlertOptions
+	URL       string
+	Alerts    map[AlertType]AlertOptions
+	HideChain bool // the target's "show_chain" is false: its messages leave out the chain name
 }
 
 // AlertOptions tunes an alert for a target.
 type AlertOptions struct {
 	Validators []string // validator_missing_blocks: those followed; nil: every validator
-	Lead       Lead     // halt_approaching: how far ahead of the halt
+	Leads      []Lead   // halt_approaching: how far ahead of the halt each message goes, in the order listed
+}
+
+// defaultHaltLeads is the series of the bare halt_approaching: a day, two
+// hours, an hour, ten minutes and a minute ahead of the halt.
+func defaultHaltLeads() []Lead {
+	return []Lead{{Time: 24 * time.Hour}, {Time: 2 * time.Hour}, {Time: time.Hour}, {Time: 10 * time.Minute}, {Time: time.Minute}}
 }
 
 // Wants reports whether the route receives a, firing or recovering.
@@ -108,12 +115,16 @@ var targetAlerts = append(slices.Clone(routableAlerts), AlertRanking)
 // ParseNotifyConfig reads a notification config file:
 //
 //	{"targets": [{"url": "discord://…", "alerts": ["chain_stuck",
-//	  {"halt_approaching": "1h"}, {"validator_missing_blocks": ["g1…"]}]}]}
+//	  {"halt_approaching": ["1h", "10m"]}, {"validator_missing_blocks": ["g1…"]}],
+//	  "show_chain": false}]}
+//
+// A target's "show_chain" is true unless it says false.
 func ParseNotifyConfig(data []byte) (NotifyConfig, error) {
 	var file struct {
 		Targets []struct {
-			URL    string            `json:"url"`
-			Alerts []json.RawMessage `json:"alerts"`
+			URL       string            `json:"url"`
+			Alerts    []json.RawMessage `json:"alerts"`
+			ShowChain *bool             `json:"show_chain"`
 		} `json:"targets"`
 	}
 	dec := json.NewDecoder(bytes.NewReader(data))
@@ -130,6 +141,7 @@ func ParseNotifyConfig(data []byte) (NotifyConfig, error) {
 		if err != nil {
 			return NotifyConfig{}, fmt.Errorf("target %d: %w", i+1, err)
 		}
+		route.HideChain = t.ShowChain != nil && !*t.ShowChain
 		cfg.Targets = append(cfg.Targets, route)
 	}
 	return cfg, nil
@@ -161,10 +173,11 @@ func parseAlert(raw json.RawMessage) (AlertType, AlertOptions, error) {
 	var name string
 	if err := json.Unmarshal(raw, &name); err == nil {
 		typ, err := targetAlert(name)
+		opts := AlertOptions{}
 		if err == nil && typ == AlertHaltApproaching {
-			err = errors.New(`halt_approaching needs a lead, such as {"halt_approaching": "1h"}`)
+			opts.Leads = defaultHaltLeads()
 		}
-		return typ, AlertOptions{}, err
+		return typ, opts, err
 	}
 	var entry map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &entry); err != nil || len(entry) != 1 {
@@ -184,15 +197,25 @@ func parseAlert(raw json.RawMessage) (AlertType, AlertOptions, error) {
 func parseOptions(typ AlertType, value json.RawMessage) (AlertOptions, error) {
 	switch typ {
 	case AlertHaltApproaching:
-		var s string
-		if err := json.Unmarshal(value, &s); err != nil {
-			return AlertOptions{}, fmt.Errorf("halt_approaching: want a lead, such as \"1h\" or \"100 blocks\": %w", err)
+		var names []string
+		if err := json.Unmarshal(value, &names); err != nil {
+			return AlertOptions{}, errors.New(`halt_approaching: want a list of leads, such as ["1h", "10m"] or ["100 blocks"]`)
 		}
-		lead, err := ParseLead(s)
-		if err != nil {
-			return AlertOptions{}, fmt.Errorf("halt_approaching: %w", err)
+		if len(names) == 0 {
+			return AlertOptions{}, errors.New("halt_approaching: list at least one lead, or name the alert alone for 24h, 2h, 1h, 10m and 1m")
 		}
-		return AlertOptions{Lead: lead}, nil
+		leads := make([]Lead, 0, len(names))
+		for _, name := range names {
+			lead, err := ParseLead(name)
+			if err != nil {
+				return AlertOptions{}, fmt.Errorf("halt_approaching: %w", err)
+			}
+			if slices.Contains(leads, lead) {
+				return AlertOptions{}, fmt.Errorf("halt_approaching: lead %q listed twice", lead.String())
+			}
+			leads = append(leads, lead)
+		}
+		return AlertOptions{Leads: leads}, nil
 	case AlertValidatorMissingBlocks:
 		var validators []string
 		if err := json.Unmarshal(value, &validators); err != nil || len(validators) == 0 {

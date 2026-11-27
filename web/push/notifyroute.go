@@ -4,18 +4,22 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"slices"
 	"strings"
 	"time"
 
 	"github.com/containrrr/shoutrrr"
 	"github.com/containrrr/shoutrrr/pkg/router"
+
+	"github.com/gnoverse/gnockpit/ranking"
 )
 
 // notifyTarget is a notification config target ready to send.
 type notifyTarget struct {
 	route       NotifyRoute
 	sender      *router.ServiceRouter
-	fingerprint string // of the URL, as NotifyTargets shows it
+	fingerprint string       // of the URL, as NotifyTargets shows it
+	discord     *discordHook // nil unless the target is a Discord webhook
 }
 
 // SetNotifyConfig sends each of cfg's targets the alerts it lists, in place of
@@ -24,7 +28,11 @@ type notifyTarget struct {
 func (m *Manager) SetNotifyConfig(cfg NotifyConfig) error {
 	targets := make([]notifyTarget, 0, len(cfg.Targets))
 	for i, r := range cfg.Targets {
-		sender, err := shoutrrr.CreateSender(r.URL)
+		sendURL, hook, err := senderURL(r.URL)
+		var sender *router.ServiceRouter
+		if err == nil {
+			sender, err = shoutrrr.CreateSender(sendURL)
+		}
 		if err != nil {
 			urls := make([]string, len(cfg.Targets))
 			for j, t := range cfg.Targets {
@@ -35,7 +43,7 @@ func (m *Manager) SetNotifyConfig(cfg NotifyConfig) error {
 		if m.sendTimeout > 0 {
 			sender.Timeout = m.sendTimeout
 		}
-		targets = append(targets, notifyTarget{route: r, sender: sender, fingerprint: notifyFingerprint(r.URL)})
+		targets = append(targets, notifyTarget{route: r, sender: sender, fingerprint: notifyFingerprint(r.URL), discord: hook})
 	}
 	m.notifyMu.Lock()
 	m.targets = targets
@@ -122,7 +130,19 @@ func (m *Manager) notifyTargets(a Alert) {
 // sendTarget sends a to t, one of targets, whose URLs a failed send's log
 // is stripped of.
 func (m *Manager) sendTarget(t notifyTarget, a Alert, targets []notifyTarget) {
-	m.sendText(t, FormatAlert(m.ChainName(), m.publicURL, a), targets)
+	if t.discord != nil {
+		m.sendDiscord(t, discordAlert(m.chainOf(t), m.publicURL, a), targets)
+		return
+	}
+	m.sendText(t, FormatAlert(m.chainOf(t), m.publicURL, a), targets)
+}
+
+// chainOf is the chain name t's messages carry: none when t hides it.
+func (m *Manager) chainOf(t notifyTarget) string {
+	if t.route.HideChain {
+		return ""
+	}
+	return m.ChainName()
 }
 
 // sendText sends one message to t, one of targets, whose URLs a failed send's
@@ -143,20 +163,40 @@ const maxMessageChars = 2000
 // rankingLink is the page a tap on the ranking notification opens.
 const rankingLink = "/?view=ranking"
 
+// rankingExplainLink is the Ranking view with its "How is this ranked?"
+// dialog open, which a Discord ranking's formula links.
+const rankingExplainLink = "/?view=ranking&explain"
+
+// rankingAlert is the alert a ranking digest is sent as, its body the
+// digest's text, each name cut to alertNameLimit as every alert quotes one.
+// d's rows stay as they are.
+func rankingAlert(d ranking.Digest) Alert {
+	d.Rows = slices.Clone(d.Rows)
+	for i := range d.Rows {
+		d.Rows[i].Name = cutName(d.Rows[i].Name, alertNameLimit)
+	}
+	return Alert{Type: AlertRanking, Firing: true, Notice: true, Title: d.Title, Body: Body{plain(d.Body())}, Link: rankingLink}
+}
+
 // NotifyRanking sends the day's ranking digest to each target that lists the
-// ranking, once per key: the chain and day it ranks. A digest over
-// maxMessageChars goes as several messages, split at line breaks, in order.
-// It sends synchronously, so it holds the publisher's pass for up to the
-// targets times the parts times the send timeout, and it never calls back
-// into the publisher.
-func (m *Manager) NotifyRanking(key, title, body string) {
-	a := Alert{Type: AlertRanking, Firing: true, Notice: true, Title: title, Body: body, Link: rankingLink}
+// ranking, once per key: the chain and day it ranks. A Discord target gets it
+// as gold embeds, a coloured table and fields (discordRanking). Any other
+// target gets it as text, over maxMessageChars as several messages, split at
+// line breaks, in order. It sends synchronously, so it holds the publisher's
+// pass for up to the targets times the parts times the send timeout, and it
+// never calls back into the publisher.
+func (m *Manager) NotifyRanking(key string, d ranking.Digest) {
+	a := rankingAlert(d)
 	targets := m.currentTargets()
 	for _, t := range targets {
 		if !t.route.Wants(a) || !m.markSent("target:"+t.fingerprint, a.Type, key) {
 			continue
 		}
-		for _, part := range splitMessage(FormatAlert(m.ChainName(), m.publicURL, a), maxMessageChars) {
+		if t.discord != nil {
+			m.sendDiscord(t, discordRanking(m.chainOf(t), m.publicURL, d), targets)
+			continue
+		}
+		for _, part := range splitMessage(FormatAlert(m.chainOf(t), m.publicURL, a), maxMessageChars) {
 			m.sendText(t, part, targets)
 		}
 	}

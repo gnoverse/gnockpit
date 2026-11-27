@@ -24,48 +24,85 @@ func ranked(op, name string, rank int, score float64) Entry {
 func TestDigestLinesAndChanges(t *testing.T) {
 	prev := digestDay(1, nil, ranked("a", "A", 1, 99), ranked("b", "B", 2, 98), ranked("c", "C", 3, 97))
 	cur := digestDay(1, nil, ranked("b", "B", 1, 99.04), ranked("a", "A", 2, 98.96), ranked("d", "D", 3, 90))
-	title, body := Digest(cur, &prev)
+	d := DigestOf(cur, &prev)
+	title, body := d.Title, d.Body()
 	if want := "Validator ranking, 2026-10-27 – 2026-11-25 UTC (formula v1)"; title != want {
-		t.Errorf("Digest title = %q, want %q", title, want)
+		t.Errorf("DigestOf title = %q, want %q", title, want)
 	}
 	want := "#1 B 99.0 ▲1\n#2 A 98.9 ▼1\n#3 D 90.0 new"
 	if body != want {
-		t.Errorf("Digest body = %q, want %q", body, want)
+		t.Errorf("DigestOf body = %q, want %q", body, want)
+	}
+}
+
+func TestDigestRowsAndNotes(t *testing.T) {
+	prev := digestDay(1, nil, ranked("a", "A", 1, 99), ranked("b", "B", 2, 98), ranked("c", "C", 3, 97))
+	cur := digestDay(1, nil, ranked("b", "B", 1, 99.04), ranked("a", "A", 2, 98.96), ranked("d", "D", 3, 90))
+	d := DigestOf(cur, &prev)
+	wantRows := []DigestRow{
+		{Rank: 1, Name: "B", Score: "99.0", Change: "▲1"},
+		{Rank: 2, Name: "A", Score: "98.9", Change: "▼1"},
+		{Rank: 3, Name: "D", Score: "90.0", Change: "new"},
+	}
+	if !slices.Equal(d.Rows, wantRows) {
+		t.Errorf("DigestOf rows = %+v, want %+v", d.Rows, wantRows)
+	}
+	if len(d.Notes) != 0 {
+		t.Errorf("DigestOf notes = %q, want none", d.Notes)
+	}
+
+	d = DigestOf(cur, nil)
+	for _, r := range d.Rows {
+		if r.Change != "" {
+			t.Errorf("DigestOf(cur, nil) row %+v, want no change", r)
+		}
+	}
+	if want := []string{"Rank changes not shown: no earlier ranking"}; !slices.Equal(d.Notes, want) {
+		t.Errorf("DigestOf(cur, nil) notes = %q, want %q", d.Notes, want)
+	}
+}
+
+func TestDigestNotesOrder(t *testing.T) {
+	prev := digestDay(1, nil, ranked("a", "A", 1, 99))
+	cur := digestDay(2, nil, ranked("a", "A", 1, 99), Entry{Operator: "n", Status: NotRankedYet})
+	want := []string{"Not ranked yet: 1", "Rank changes not shown: formula v2 since the previous ranking"}
+	if got := DigestOf(cur, &prev).Notes; !slices.Equal(got, want) {
+		t.Errorf("DigestOf notes = %q, want %q", got, want)
 	}
 }
 
 func TestDigestRepeatsSharedRanksAndMarksUnchanged(t *testing.T) {
 	prev := digestDay(1, nil, ranked("a", "A", 1, 99), ranked("b", "B", 1, 99), ranked("c", "C", 3, 90))
 	cur := digestDay(1, nil, ranked("a", "A", 1, 99), ranked("b", "B", 1, 99), ranked("c", "C", 3, 90))
-	_, body := Digest(cur, &prev)
+	body := DigestOf(cur, &prev).Body()
 	if want := "#1 A 99.0 =\n#1 B 99.0 =\n#3 C 90.0 ="; body != want {
-		t.Errorf("Digest body = %q, want %q", body, want)
+		t.Errorf("DigestOf body = %q, want %q", body, want)
 	}
 }
 
 func TestDigestOmitsChangesAcrossFormulas(t *testing.T) {
 	prev := digestDay(1, nil, ranked("a", "A", 1, 99))
 	cur := digestDay(2, nil, ranked("a", "A", 1, 99))
-	_, body := Digest(cur, &prev)
+	body := DigestOf(cur, &prev).Body()
 	if want := "#1 A 99.0\nRank changes not shown: formula v2 since the previous ranking"; body != want {
-		t.Errorf("Digest body = %q, want %q", body, want)
+		t.Errorf("DigestOf body = %q, want %q", body, want)
 	}
 }
 
 func TestDigestOmitsChangesAcrossExclusionLists(t *testing.T) {
 	prev := digestDay(1, []string{"x"}, ranked("a", "A", 1, 99))
 	cur := digestDay(1, []string{"x", "y"}, ranked("a", "A", 1, 99))
-	_, body := Digest(cur, &prev)
+	body := DigestOf(cur, &prev).Body()
 	if want := "#1 A 99.0\nRank changes not shown: exclusion list changed since the previous ranking"; body != want {
-		t.Errorf("Digest body = %q, want %q", body, want)
+		t.Errorf("DigestOf body = %q, want %q", body, want)
 	}
 }
 
 func TestDigestWithoutAnEarlierRanking(t *testing.T) {
 	cur := digestDay(1, nil, ranked("a", "A", 1, 99))
-	_, body := Digest(cur, nil)
+	body := DigestOf(cur, nil).Body()
 	if want := "#1 A 99.0\nRank changes not shown: no earlier ranking"; body != want {
-		t.Errorf("Digest body = %q, want %q", body, want)
+		t.Errorf("DigestOf body = %q, want %q", body, want)
 	}
 }
 
@@ -77,29 +114,51 @@ func TestDigestCountsNotRankedYet(t *testing.T) {
 		Entry{Operator: "n1", Name: "N1", Status: NotRankedYet},
 		Entry{Operator: "n2", Name: "N2", Status: NotRankedYet},
 	)
-	_, body := Digest(cur, &prev)
+	body := DigestOf(cur, &prev).Body()
 	if want := "#1 A 99.0 =\nNot ranked yet: 2"; body != want {
-		t.Errorf("Digest body = %q, want %q", body, want)
+		t.Errorf("DigestOf body = %q, want %q", body, want)
 	}
 	if strings.Contains(body, "X") {
-		t.Errorf("Digest body = %q, lists an excluded operator", body)
+		t.Errorf("DigestOf body = %q, lists an excluded operator", body)
+	}
+}
+
+func TestDigestCarriesItsDayWindowAndCounts(t *testing.T) {
+	prev := digestDay(1, nil, ranked("a", "A", 1, 99))
+	cur := digestDay(1, nil,
+		ranked("a", "A", 1, 99),
+		Entry{Operator: "x", Name: "X", Status: Excluded, Score: 80},
+		Entry{Operator: "n1", Name: "N1", Status: NotRankedYet},
+		Entry{Operator: "n2", Name: "N2", Status: NotRankedYet},
+	)
+	// The day published follows its window's last day.
+	cur.Day = "2026-11-26"
+	d := DigestOf(cur, &prev)
+	if d.Day != "2026-11-26" || d.FirstDay != "2026-10-27" || d.LastDay != "2026-11-25" || d.Formula != 1 {
+		t.Errorf("DigestOf day, window, formula = %q, %q – %q, v%d, want 2026-11-26, 2026-10-27 – 2026-11-25, v1", d.Day, d.FirstDay, d.LastDay, d.Formula)
+	}
+	if d.Excluded != 1 || d.NotRankedYet != 2 {
+		t.Errorf("DigestOf counts = %d excluded, %d not ranked yet, want 1, 2", d.Excluded, d.NotRankedYet)
+	}
+	if body, want := d.Body(), "#1 A 99.0 =\nNot ranked yet: 2"; body != want {
+		t.Errorf("DigestOf body = %q, want %q", body, want)
 	}
 }
 
 func TestDigestWritesTheShortAddressOfAnOperatorWithoutAName(t *testing.T) {
 	cur := digestDay(1, nil, ranked("g1g0yrmdhney8pcaf9rfut4604equz604pszdsyt", "", 1, 97.5))
-	_, body := Digest(cur, nil)
+	body := DigestOf(cur, nil).Body()
 	if want := "#1 g1g0yrmd…szdsyt 97.5\nRank changes not shown: no earlier ranking"; body != want {
-		t.Errorf("Digest body = %q, want %q: the page's short form of the address", body, want)
+		t.Errorf("DigestOf body = %q, want %q: the page's short form of the address", body, want)
 	}
 }
 
 func TestDigestKeepsItsInputsIntact(t *testing.T) {
 	cur := digestDay(1, []string{"x"}, ranked("a", "A", 1, 99))
 	before := slices.Clone(cur.Entries)
-	Digest(cur, nil)
+	DigestOf(cur, nil)
 	if !slices.EqualFunc(before, cur.Entries, func(a, b Entry) bool { return a.Operator == b.Operator && a.Rank == b.Rank }) {
-		t.Errorf("Digest changed its day's entries: %+v, want %+v", cur.Entries, before)
+		t.Errorf("DigestOf changed its day's entries: %+v, want %+v", cur.Entries, before)
 	}
 }
 
@@ -108,9 +167,9 @@ func TestDigestKeepsItsInputsIntact(t *testing.T) {
 // reads 99.9, not 100.0.
 func TestDigestRoundsAScoreDown(t *testing.T) {
 	cur := digestDay(1, nil, ranked("a", "A", 1, 100), ranked("b", "B", 2, 99.96), ranked("c", "C", 3, 93.25))
-	_, body := Digest(cur, nil)
+	body := DigestOf(cur, nil).Body()
 	if want := "#1 A 100.0\n#2 B 99.9\n#3 C 93.2\nRank changes not shown: no earlier ranking"; body != want {
-		t.Errorf("Digest body = %q, want %q", body, want)
+		t.Errorf("DigestOf body = %q, want %q", body, want)
 	}
 }
 
