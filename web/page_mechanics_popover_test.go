@@ -168,11 +168,13 @@ func TestPagePopoverPlacement(t *testing.T) {
 		t.Fatalf("%s: the popover fits right of its target, want a case it does not", first)
 	}
 
-	e.must(e.Page.Keyboard().Press("End"))
-	last := "#peers-body tr:last-child td:last-child .info-btn"
-	e.must(e.Expect.Locator(e.Page.Locator(last)).ToBeInViewport())
-	hover(last)
-	mechExpectPopoverAt(e, last, true)
+	// The same popover, its target scrolled to the screen's bottom edge: no
+	// room below, however short the popover.
+	if _, err := e.Page.Locator(first).Evaluate(`(el) => el.scrollIntoView({ block: 'end' })`, nil); err != nil {
+		t.Fatalf("scroll %s to the screen's bottom edge: %v", first, err)
+	}
+	hover(first)
+	mechExpectPopoverAt(e, first, true)
 }
 
 // mechExpectPopoverAt checks that the popover sits where it should for target:
@@ -229,8 +231,9 @@ func TestPageTableHeaderPopovers(t *testing.T) {
 		{`#peers-card th[data-sort="nodeid"] > button`, "The peer's P2P node ID (bech32). Hover or click to copy the full ID."},
 		{`#peers-card th[data-sort="country"] > button`, "Country of the peer's IP (DB-IP geolocation). Hover to cross-highlight the network map."},
 		{`#peers-card th[data-sort="provider"] > button`, "Cloud provider guessed from the peer's IP (DB-IP ASN). Hover the ⓘ on a row to see the IP."},
-		{`#peers-card th[data-sort="peers"] > button`, "Number of P2P peers connected to this node (from their /net_info)"},
-		{`#peers-card th[data-sort="rpc"] > button`, "Whether this peer's RPC answered; hover a reachable peer for details"},
+		{`#peers-card th[data-sort="connected"] > button`, "How long the peer has been connected: its longest current connection to one of gnockpit's sources (their /net_info), which gnockpit's own restarts do not reset"},
+		{`#peers-card th[data-sort="online"] > button`, "Share of gnockpit's polls over the last 30 days (today and the 29 UTC days before, or since gnockpit began recording) in which a source listed the peer; hover a share for when gnockpit first saw the peer"},
+		{`#peers-card th[data-sort="rpc"] > button`, "Whether one of the peer's RPC endpoints gnockpit probes answered: open links its /status (hover for the endpoint and its height), closed otherwise"},
 	} {
 		e.showPopover(e.Page.Locator(tc.header))
 		e.must(e.expect(pagePopover).ToHaveText(tc.text))
@@ -429,7 +432,7 @@ func TestPageFocusStaysOnItsNamelessPeer(t *testing.T) {
 			snap.Peers = append(next, snap.Peers...)
 			e.publish(snap)
 			if _, err := e.Page.WaitForFunction(`(el) => !el.isConnected`, old); err != nil {
-				t.Fatalf("the ✓ focused before is still in the page: the table was not drawn again: %v", err)
+				t.Fatalf("the RPC link focused before is still in the page: the table was not drawn again: %v", err)
 			}
 			e.must(e.expect(second).ToBeFocused())
 			e.must(e.expect(pagePopover + " .t").ToHaveText(nameless[1].RPCURL))
@@ -445,7 +448,7 @@ func mechNamelessPeer(ip string) node.Peer {
 
 // TestPageFocusStaysInItsColumn checks that a redraw gives the focus back to
 // the control in the same cell when the row gains a control before it: the
-// RPC ✓ of a peer whose provider cell gets an ⓘ, as its IP becomes known.
+// RPC link of a peer whose provider cell gets an ⓘ, as its IP becomes known.
 func TestPageFocusStaysInItsColumn(t *testing.T) {
 	sc := healthyNetwork()
 	eu := slices.IndexFunc(sc.snap.Peers, func(p node.Peer) bool { return p.Moniker == "eu-node" })
@@ -453,7 +456,7 @@ func TestPageFocusStaysInItsColumn(t *testing.T) {
 	sc.snap.Peers[eu].RemoteIP = ""
 	e := openPage(t, desktop, sc)
 	row := `#peers-body tr:has(td[data-copy="eu-node"])`
-	rpc := row + " td:nth-child(6) .info-btn"
+	rpc := row + " td:nth-child(7) .info-btn"
 	focusByKeyboard(e, rpc)
 	e.must(e.expect(row + " td:nth-child(4) .info-btn").ToHaveCount(0))
 	e.must(e.expect(pagePopover + " .t").ToHaveText("http://" + ip + ":26657"))

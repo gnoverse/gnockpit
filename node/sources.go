@@ -50,20 +50,26 @@ func NewSources(rpcs []string, timeout time.Duration, names *NameRegistry, logf 
 		s.clients = append(s.clients, c)
 		s.sourceIPs = append(s.sourceIPs, rpcHostPublicIP(rpc))
 	}
-	// When an endpoint's RPC URL has no public IP (localhost or a private
-	// address), fall back to gnockpit's own public egress IP for that source's
-	// map location — correct when gnockpit is co-located with the node.
-	for _, ip := range s.sourceIPs {
-		if ip == "" {
-			s.egressIP = publicEgressIP(egressLookupTimeout)
-			break
-		}
-	}
 	return s
 }
 
-// egressLookupTimeout bounds the one-shot startup call to the public-IP echo
-// services; failure is non-fatal and simply leaves egressIP empty.
+// LookupEgressIP looks up gnockpit's own public egress IP when an endpoint's
+// RPC URL has no public IP (localhost or a private address), for
+// FillSourceEgressIP to locate that source on the map: correct when gnockpit is
+// co-located with the node. It asks public echo services over the internet,
+// bounded by egressLookupTimeout each; a failed lookup leaves the IP unknown.
+// Call it once, before polling: FillSourceEgressIP reads the IP without a lock.
+func (s *Sources) LookupEgressIP() {
+	for _, ip := range s.sourceIPs {
+		if ip == "" {
+			s.egressIP = publicEgressIP(egressLookupTimeout)
+			return
+		}
+	}
+}
+
+// egressLookupTimeout bounds each call LookupEgressIP makes to a public-IP echo
+// service.
 const egressLookupTimeout = 5 * time.Second
 
 // publicEgressIP returns this host's public IP as seen from the internet by
@@ -252,8 +258,9 @@ func blockHeight(st *Status) int64 {
 // MergePeers unions raw /net_info peers from several sources (in precedence
 // order), deduped by node ID. For each peer the resolved public IP (first valid
 // public across sources — observed remote, then advertised external host)
-// becomes RemoteIP; other fields take the first non-empty value in source order.
-// Source is set when the peer's node ID is one of our configured endpoints.
+// becomes RemoteIP; other fields take the first non-empty value in source
+// order, except ConnectedMs, which is the longest any source reports. Source is
+// set when the peer's node ID is one of our configured endpoints.
 func MergePeers(perSource [][]Peer, sourceNodeIDs map[string]bool) []Peer {
 	merged := make(map[string]*Peer)
 	var order []string
@@ -277,6 +284,7 @@ func MergePeers(perSource [][]Peer, sourceNodeIDs map[string]bool) []Peer {
 			if m.ExternalAddress == "" && IsPublicIP(p.ExternalAddress) {
 				m.ExternalAddress = p.ExternalAddress
 			}
+			m.ConnectedMs = max(m.ConnectedMs, p.ConnectedMs)
 			if m.RemoteIP == "" {
 				if ip := firstPublicIP(p.RemoteIP, p.ExternalAddress); ip != "" {
 					m.RemoteIP = ip

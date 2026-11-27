@@ -17,6 +17,7 @@ import (
 	"github.com/gnoverse/gnockpit/blocks"
 	"github.com/gnoverse/gnockpit/eta"
 	"github.com/gnoverse/gnockpit/node"
+	"github.com/gnoverse/gnockpit/presence"
 	"github.com/gnoverse/gnockpit/ranking"
 	"github.com/gnoverse/gnockpit/web"
 	"github.com/gnoverse/gnockpit/web/push"
@@ -196,7 +197,7 @@ func registerFlags(fs *flag.FlagSet) {
 	fs.StringVar(&flagWebAddr, "addr", "0.0.0.0", "web server bind address")
 	fs.IntVar(&flagWebPort, "port", 8080, "web server port")
 	nonNegativeDurationVar(fs, &flagReadHeaderTimeout, "read-header-timeout", defaultReadHeaderTimeout, "how long a client may take to send a request's headers before its connection is closed unanswered, a `duration` of 0 or more; 0 for none")
-	fs.StringVar(&flagDBPath, "db-path", "/tmp/gnockpit.db", "SQLite path for web-push subscriptions and VAPID keys, the block history and the block-ETA history; use a persistent path so they survive reboots")
+	fs.StringVar(&flagDBPath, "db-path", "/tmp/gnockpit.db", "SQLite database for push notifications, the block history, block-ETA history, peer presence and the published rankings; keep it on a persistent path so they survive reboots")
 	fs.DurationVar(&flagHistoryPace, "history-pace", blocks.DefaultPace, "wait between the batches that fill the block history from the first -rpc, back to genesis and up to the head after downtime; 0 for none")
 	fs.IntVar(&flagHistoryBatch, "history-batch", blocks.DefaultBatch, "commits asked in one JSON-RPC batch while filling the block history; halved until restart when the first -rpc refuses a batch, for 10 minutes when one times out")
 	fs.IntVar(&flagChainStuckSecs, "chain-stuck-secs", 30, "seconds without a new block before the chain-stuck alert fires")
@@ -290,6 +291,13 @@ func run() error {
 	tracker := eta.NewTracker(etaStore, sources.Primary())
 	srv.ETA = tracker
 	go tracker.Run(ctx)
+
+	// Peer presence shares the connection too; publish is its only user.
+	presenceStore, err := presence.NewStore(ctx, db.SQL())
+	if err != nil {
+		return fmt.Errorf("init peer presence: %w", err)
+	}
+	srv.Presence = presenceStore
 
 	pushMgr, err := push.NewManager(db, flagChainStuckSecs, flagMaxMissedInARow)
 	if err != nil {
@@ -387,6 +395,7 @@ func newSources(ctx context.Context) *node.Sources {
 	sources := node.NewSources(flagRPCs, 10*time.Second, names, func(format string, args ...any) {
 		fmt.Fprintf(os.Stderr, format+"\n", args...)
 	})
+	sources.LookupEgressIP()
 	if flagVerbose {
 		sources.SetRequestLogger(func(method, url string, status int, dur time.Duration, err error) {
 			if err != nil {

@@ -636,14 +636,14 @@ func TestPageDarkColorScheme(t *testing.T) {
 }
 
 // TestPageUnreachableRPCIsGrey checks that a peer card shows an unreachable
-// RPC as a grey dash, and a reachable one in green.
+// RPC as "closed" in grey, and a reachable one in green.
 func TestPageUnreachableRPCIsGrey(t *testing.T) {
 	onProfiles(t, []profile{tablet, phone}, func(t *testing.T, p profile) {
 		e := openPage(t, p, healthyNetwork())
 		card := func(moniker string) playwright.Locator {
 			return e.Page.Locator("#peers-cards .peer-card").Filter(playwright.LocatorFilterOptions{HasText: moniker}).Locator(".peer-card-rpc-val")
 		}
-		e.must(e.Expect.Locator(card("full-norpc")).ToHaveText("—"))
+		e.must(e.Expect.Locator(card("full-norpc")).ToHaveText("closed"))
 		e.must(e.Expect.Locator(card("full-norpc")).ToHaveCSS("color", "rgb(139, 148, 158)"))
 		e.must(e.Expect.Locator(card("eu-node")).ToHaveCSS("color", "rgb(63, 185, 80)"))
 	})

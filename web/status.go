@@ -86,8 +86,9 @@ type StatusPeer struct {
 	Name   string `json:"name,omitempty"`
 	NodeID string `json:"node_id,omitempty"`
 	nodeLocation
-	NPeers    int  `json:"n_peers,omitempty"`
-	Reachable bool `json:"reachable"`
+	Reachable   bool           `json:"reachable"`
+	ConnectedMs int64          `json:"connected_ms,omitempty"`
+	Presence    *node.Presence `json:"presence,omitempty"`
 }
 
 // StatusValidator is a validator's column data in the public status payload.
@@ -164,8 +165,9 @@ func (s *Server) buildStatusReport(snap *node.Snapshot, now time.Time) StatusRep
 			Name:         p.Moniker,
 			NodeID:       p.NodeID,
 			nodeLocation: locationOf(p),
-			NPeers:       p.NPeers,
 			Reachable:    p.RPCURL != "",
+			ConnectedMs:  p.ConnectedMs,
+			Presence:     p.Presence,
 		})
 	}
 	votes := s.buildVotesReport(snap)

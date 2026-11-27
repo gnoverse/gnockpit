@@ -18,7 +18,6 @@ import (
 	"github.com/gnoverse/gnockpit/blocks"
 	"github.com/gnoverse/gnockpit/node"
 	"github.com/gnoverse/gnockpit/ranking"
-	_ "modernc.org/sqlite"
 )
 
 const (
@@ -33,18 +32,6 @@ var rankNow = time.Date(2026, 11, 25, 12, 0, 0, 0, time.UTC)
 // rankingHead is the test chain's last height: a block every 6 hours from 32
 // days before rankNow's day, the last at 06:00 on rankNow's day.
 const rankingHead = 130
-
-// openRankingDB opens an empty database closed with the test.
-func openRankingDB(t *testing.T) *sql.DB {
-	t.Helper()
-	db, err := sql.Open("sqlite", ":memory:")
-	if err != nil {
-		t.Fatal(err)
-	}
-	db.SetMaxOpenConns(1)
-	t.Cleanup(func() { db.Close() })
-	return db
-}
 
 // seedRankingStore stores the test chain, two operators signing every block
 // of one validator set, in a block store over db.
@@ -87,7 +74,7 @@ func (f rankingFill) Progress() blocks.Progress { return blocks.Progress(f) }
 // rankNow, its profiles read, excluding exclude, and not yet refreshed.
 func newRankingPublisher(t *testing.T, exclude ...string) *ranking.Publisher {
 	t.Helper()
-	db := openRankingDB(t)
+	db := openTestDB(t)
 	s := seedRankingStore(t, db)
 	low, high, err := s.Range(context.Background())
 	if err != nil {

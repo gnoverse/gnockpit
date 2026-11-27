@@ -881,7 +881,7 @@ func TestPageValidatorsEmpty(t *testing.T) {
 			columns           int
 		}{
 			{"#validators-body", "#validators-cards", "no validators", 10},
-			{"#peers-body", "#peers-cards", "no peers", 6},
+			{"#peers-body", "#peers-cards", "no peers", 7},
 		} {
 			if p != desktop {
 				e.must(e.expect(tc.cards).ToHaveText(tc.text))
@@ -1165,8 +1165,9 @@ func TestPageValidatorsNamesInEnglishOrder(t *testing.T) {
 	validatorsExpectRows(e, "alpha", "Ärla", "charlie")
 	english := []string{"eu-node", "full-norpc", "Öland-node", "sentry-1 (source)"}
 	e.must(e.expect(peerNameCells).ToHaveText(english))
-	// Every peer has 5 peers of its own: they keep their own order.
-	sortTable(e, "#peers-card", "peers", true)
+	// The presence store is off, so no peer has a share of the polls: they
+	// keep their own order.
+	sortTable(e, "#peers-card", "online", true)
 	e.must(e.expect(peerNameCells).ToHaveText(english))
 }
 

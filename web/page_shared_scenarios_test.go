@@ -157,10 +157,8 @@ func healthyAt(h int) *node.Snapshot {
 
 // fullPeer is a full node named moniker that no database has located.
 func fullPeer(moniker string) node.Peer {
-	seen := pageNow.Format(time.RFC3339)
 	return node.Peer{
 		Moniker: moniker, NodeID: nodeID(moniker), Role: "full", Height: strconv.Itoa(pageHeight),
-		FirstSeen: seen, LastSeen: seen,
 	}
 }
 
@@ -333,7 +331,6 @@ func worldPeers() []node.Peer {
 		{"KE", -1.3, 36.8},
 		{loneCountry, -41.3, 174.8},
 	}
-	seen := pageNow.Format(time.RFC3339)
 	var peers []node.Peer
 	for i, c := range capitals {
 		n := 2
@@ -345,7 +342,7 @@ func worldPeers() []node.Peer {
 			ip := fmt.Sprintf("198.51.%d.%d", 100+i, 10+j)
 			peers = append(peers, node.Peer{
 				Moniker: moniker, RemoteIP: ip, NodeID: nodeID(moniker), P2PAddress: nodeID(moniker) + "@" + ip + ":26656",
-				Role: "full", Height: strconv.Itoa(pageHeight), FirstSeen: seen, LastSeen: seen,
+				Role: "full", Height: strconv.Itoa(pageHeight),
 				Lat: &c.lat, Lon: &c.lon, Country: c.cc,
 			})
 		}

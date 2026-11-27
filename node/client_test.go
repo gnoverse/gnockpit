@@ -9,6 +9,7 @@ import (
 	"maps"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"reflect"
 	"slices"
 	"strings"
@@ -104,6 +105,85 @@ func TestGetNetInfoNodeIDFromNetAddress(t *testing.T) {
 	}
 	if peers[0].ExternalAddress != "1.2.3.4" {
 		t.Errorf("peer[0].ExternalAddress = %q, want 1.2.3.4", peers[0].ExternalAddress)
+	}
+}
+
+func TestGetNetInfoReadsTheConnectionDuration(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `{"jsonrpc":"2.0","result":{
+			"n_peers":"2",
+			"peers":[
+				{"node_info":{"moniker":"peer-a","id":"id1"},"remote_ip":"1.2.3.4","connection_status":{"Duration":"273600.230558s"}},
+				{"node_info":{"moniker":"peer-b","id":"id2"},"remote_ip":"5.6.7.8"}
+			]
+		}}`)
+	}))
+	defer srv.Close()
+
+	c := NewClient(srv.URL, 5*time.Second)
+	peers, err := c.GetNetInfo(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(peers) != 2 {
+		t.Fatalf("got %d peers, want 2", len(peers))
+	}
+	if peers[0].ConnectedMs != 273600230 {
+		t.Errorf("peer-a ConnectedMs = %d, want 273600230", peers[0].ConnectedMs)
+	}
+	if peers[1].ConnectedMs != 0 {
+		t.Errorf("peer-b ConnectedMs = %d, want 0 (no connection_status)", peers[1].ConnectedMs)
+	}
+}
+
+func TestGetNetInfoRefusesAnUnreadableDuration(t *testing.T) {
+	for _, duration := range []string{"3475230558", "-5s"} {
+		t.Run(duration, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				fmt.Fprintf(w, `{"jsonrpc":"2.0","result":{
+					"n_peers":"1",
+					"peers":[
+						{"node_info":{"moniker":"peer-a","id":"id1"},"remote_ip":"1.2.3.4","connection_status":{"Duration":%q}}
+					]
+				}}`, duration)
+			}))
+			defer srv.Close()
+
+			c := NewClient(srv.URL, 5*time.Second)
+			peers, err := c.GetNetInfo(context.Background())
+			if err == nil || !strings.Contains(err.Error(), duration) || !strings.Contains(err.Error(), "id1") {
+				t.Errorf("GetNetInfo error = %v, want one naming id1 and %s", err, duration)
+			}
+			if peers != nil {
+				t.Errorf("GetNetInfo peers = %+v, want nil", peers)
+			}
+		})
+	}
+}
+
+// TestGetNetInfoNamesAPeerWithoutANodeID checks that the error on an unreadable
+// connection duration names a peer that has no node id by its moniker, or
+// without one either, by its remote IP.
+func TestGetNetInfoNamesAPeerWithoutANodeID(t *testing.T) {
+	for _, tc := range []struct {
+		name, nodeInfo, duration, want string
+	}{
+		{"by its moniker", `{"moniker":"peer-a"}`, "3475230558", `peer peer-a connection duration "3475230558"`},
+		{"by its remote ip", `{}`, "-5s", `peer 1.2.3.4 connection duration "-5s"`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				fmt.Fprintf(w, `{"jsonrpc":"2.0","result":{"peers":[
+					{"node_info":%s,"remote_ip":"1.2.3.4","connection_status":{"Duration":%q}}
+				]}}`, tc.nodeInfo, tc.duration)
+			}))
+			defer srv.Close()
+
+			c := NewClient(srv.URL, 5*time.Second)
+			if _, err := c.GetNetInfo(context.Background()); err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("GetNetInfo error = %v, want one containing %s", err, tc.want)
+			}
+		})
 	}
 }
 
@@ -452,28 +532,42 @@ func TestVerboseLogging(t *testing.T) {
 	}
 }
 
-func TestGetNPeers(t *testing.T) {
+func TestQueryAllPeersReadsNoPeerCount(t *testing.T) {
+	var mu sync.Mutex
+	requests := map[string]int{}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		requests[r.URL.Path]++
+		mu.Unlock()
+		if r.URL.Path != "/status" {
+			http.NotFound(w, r)
+			return
+		}
 		fmt.Fprint(w, `{"jsonrpc":"2.0","result":{
-			"n_peers":"5",
-			"peers":[
-				{"node_info":{"moniker":"a","id":"1"},"remote_ip":"1.1.1.1"},
-				{"node_info":{"moniker":"b","id":"2"},"remote_ip":"2.2.2.2"},
-				{"node_info":{"moniker":"c","id":"3"},"remote_ip":"3.3.3.3"},
-				{"node_info":{"moniker":"d","id":"4"},"remote_ip":"4.4.4.4"},
-				{"node_info":{"moniker":"e","id":"5"},"remote_ip":"5.5.5.5"}
-			]
+			"node_info":{"moniker":"a","network":"testchain","id":"id1"},
+			"sync_info":{"latest_block_height":"42","catching_up":false},
+			"validator_info":{"address":"g1a"}
 		}}`)
 	}))
 	defer srv.Close()
 
-	c := NewClient(srv.URL, 5*time.Second)
-	n, err := c.GetNPeers(context.Background())
+	u, err := url.Parse(srv.URL)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if n != 5 {
-		t.Errorf("got %d peers, want 5", n)
+	peers := []Peer{{NodeID: "id1", RemoteIP: "127.0.0.1"}}
+	got := QueryAllPeers(context.Background(), peers, u.Port(), 5*time.Second, false, nil, nil, NewNameRegistry())
+
+	if got[0].RPCURL != srv.URL {
+		t.Errorf("RPCURL = %q, want %q", got[0].RPCURL, srv.URL)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if requests["/status"] != 1 {
+		t.Errorf("/status requested %d times, want 1", requests["/status"])
+	}
+	if requests["/net_info"] != 0 {
+		t.Errorf("/net_info requested %d times, want 0", requests["/net_info"])
 	}
 }
 

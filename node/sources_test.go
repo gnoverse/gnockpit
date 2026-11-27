@@ -107,3 +107,21 @@ func TestMergePeersNoPublicIP(t *testing.T) {
 		t.Errorf("merged = %+v, want one peer with empty RemoteIP (no public IP)", merged)
 	}
 }
+
+func TestMergePeersKeepsTheLongestConnection(t *testing.T) {
+	src1 := []Peer{{NodeID: "a", ConnectedMs: 60_000}}
+	src2 := []Peer{{NodeID: "a", ConnectedMs: 3_600_000}, {NodeID: "b"}}
+	src3 := []Peer{{NodeID: "a", ConnectedMs: 120_000}}
+	merged := MergePeers([][]Peer{src1, src2, src3}, nil)
+
+	byID := map[string]Peer{}
+	for _, p := range merged {
+		byID[p.NodeID] = p
+	}
+	if byID["a"].ConnectedMs != 3_600_000 {
+		t.Errorf("a ConnectedMs = %d, want 3600000 (the longest)", byID["a"].ConnectedMs)
+	}
+	if byID["b"].ConnectedMs != 0 {
+		t.Errorf("b ConnectedMs = %d, want 0", byID["b"].ConnectedMs)
+	}
+}

@@ -1,7 +1,7 @@
 // The Validators and Peers cards: each a table sorted by the column the
 // viewer picks, and a card view for narrow screens.
 
-/** @import { Peer, VoteInfo } from '../types/node.js' */
+/** @import { Peer, Presence, VoteInfo } from '../types/node.js' */
 /** @import { PopRow } from './popover.js' */
 
 import { compareSortValues } from './collate.js'
@@ -12,8 +12,10 @@ import { $, $in, clearChildren, mkEl, mkLink, newTabLink } from './dom.js'
 import { focusPlace, focusPlaceIn } from './focus.js'
 import {
     formatVP,
+    pctDown,
     powerOf,
     scoreBand,
+    utcMinute,
     voteDelayClass,
     voteDelayText,
     votingPower,
@@ -314,7 +316,9 @@ function nodeListsFingerprint() {
                 p.external_address,
                 p.country,
                 p.provider,
-                p.n_peers,
+                connectedText(p),
+                onlineText(p),
+                p.presence ? firstSeenText(p.presence) : '',
                 p.rpc_url,
                 p.height,
                 p.catching_up,
@@ -324,46 +328,120 @@ function nodeListsFingerprint() {
     ])
 }
 
-// peerCountText writes peer p's own peer count: "-" without one,
-// the server leaving out a count it did not read and a count of 0.
+// connectedShown is how long peer p has been connected as the page
+// writes it, in minutes, rounded down: to the minute below a day, to
+// the hour from a day up; null when no source reports a connection
+// time, which the server leaves out at 0. The Connected column sorts
+// by it, so times that read the same tie.
+/**
+ * @param {Peer} p
+ * @returns {number | null}
+ */
+function connectedShown(p) {
+    if (!p.connected_ms) return null
+    const minutes = Math.floor(p.connected_ms / 60000)
+    return minutes < 24 * 60 ? minutes : Math.floor(minutes / 60) * 60
+}
+
+// connectedText writes connectedShown in its two largest units:
+// 3 d 4 h, 5 h 12 min, 12 min, < 1 min; "-" without it. A no-break
+// space joins each number to its unit, so a wrapping value never
+// leaves a unit alone; the space between two units' groups breaks.
 /**
  * @param {Peer} p
  * @returns {string}
  */
-function peerCountText(p) {
-    return p.n_peers ? String(p.n_peers) : '-'
+function connectedText(p) {
+    const minutes = connectedShown(p)
+    if (minutes === null) return '-'
+    if (minutes < 1) return '<\u00a01\u00a0min'
+    if (minutes < 60) return minutes + '\u00a0min'
+    const hours = Math.floor(minutes / 60)
+    if (hours < 24) return hours + '\u00a0h ' + (minutes % 60) + '\u00a0min'
+    return Math.floor(hours / 24) + '\u00a0d ' + (hours % 24) + '\u00a0h'
 }
 
-// peerRPCCell builds the Peers-table RPC cell: a plain "-" when the
-// peer's RPC was unreachable (no error, just nothing available), or a
-// green check with an on-hover summary when one of the probed RPC
-// endpoints answered: a link opening its status page, as the
-// card's RPC line does, in a new tab, which cannot reach the
-// dashboard (the page is the peer's).
+// onlineShown is peer p's share of gnockpit's polls over the window as
+// the page writes it: a percentage rounded down to a tenth, from the
+// exact counts; null without its presence. The Online column sorts by
+// it, so shares that read the same tie.
+/**
+ * @param {Peer} p
+ * @returns {number | null}
+ */
+function onlineShown(p) {
+    const pr = p.presence
+    return pr ? pctDown(pr.listed, pr.polls, 1) : null
+}
+
+// onlineText writes onlineShown joined to its unit by a no-break
+// space; "-" without it.
+/**
+ * @param {Peer} p
+ * @returns {string}
+ */
+function onlineText(p) {
+    const pct = onlineShown(p)
+    return pct === null ? '-' : pct.toFixed(1) + '\u00a0%'
+}
+
+// firstSeenText writes when gnockpit first saw a peer: the UTC minute
+// of the first stored poll that listed it, or "≤" and that poll's day
+// when it was the chain's first stored poll, the peer perhaps there
+// before.
+/**
+ * @param {Presence} pr
+ * @returns {string}
+ */
+function firstSeenText(pr) {
+    return pr.from_start
+        ? '≤ ' + pr.first_seen.slice(0, 10)
+        : utcMinute(pr.first_seen)
+}
+
+// peerOnlineCell builds the Peers-table Online cell: the peer's share
+// of the polls, when gnockpit first saw it in a popover; "-" without
+// its presence.
+/**
+ * @param {Peer} p
+ * @returns {HTMLTableCellElement}
+ */
+function peerOnlineCell(p) {
+    const td = createCell({
+        text: onlineText(p),
+        className: 'full-role peer-figure',
+    })
+    if (p.presence)
+        popRows(td, '', [[null, 'first seen', firstSeenText(p.presence)]])
+    return td
+}
+
+// peerRPCCell builds the Peers-table RPC cell: "closed" when none of
+// the peer's probed RPC endpoints answered; "open" when one did, a
+// link opening its status page, as the card's RPC line does, in a new
+// tab, which cannot reach the dashboard (the page is the peer's), the
+// endpoint and its height in a popover.
 /**
  * @param {Peer} p
  * @returns {HTMLTableCellElement}
  */
 function peerRPCCell(p) {
-    const td = document.createElement('td')
-    if (!p.rpc_url) {
-        td.textContent = '-'
-        td.className = 'full-role'
-        return td
-    }
-    /** @type {PopRow[]} */
-    const rows = [
-        [null, 'peers', peerCountText(p)],
+    if (!p.rpc_url)
+        return createCell({
+            text: 'closed',
+            className: 'full-role peer-figure',
+        })
+    const open = newTabLink(p.rpc_url + '/status', 'ok info-btn')
+    open.textContent = 'open'
+    popRows(open, p.rpc_url, [
         [
             null,
             'height',
             (p.height || '?') + (p.catching_up ? ' (syncing)' : ' (synced)'),
         ],
-    ]
-    const ok = newTabLink(p.rpc_url + '/status', 'ok info-btn')
-    ok.textContent = '✓'
-    popRows(ok, p.rpc_url, rows)
-    td.appendChild(ok)
+    ])
+    const td = mkEl('td', null, 'peer-figure')
+    td.appendChild(open)
     return td
 }
 
@@ -676,15 +754,18 @@ export function renderNodeLists() {
         peerSortKey === 'name' ||
         peerSortKey === 'provider' ||
         (peerSortKey === 'country' && !peerCountryShowsCode)
-    // No name, node id, country, provider or peer count (the
-    // server leaves a count of 0 out) is null and sorts last
-    // either way; the RPC column sorts answered (1) after
-    // unanswered (0).
+    // No name, node id, country, provider, connection time (the
+    // server leaves a time of 0 out) or presence is null and sorts
+    // last either way; Connected and Online sort by the values they
+    // show; the RPC column sorts answered (1) after unanswered (0).
     otherPeers.sort(function (a, b) {
         let va, vb
-        if (peerSortKey === 'peers') {
-            va = a.n_peers || null
-            vb = b.n_peers || null
+        if (peerSortKey === 'connected') {
+            va = connectedShown(a)
+            vb = connectedShown(b)
+        } else if (peerSortKey === 'online') {
+            va = onlineShown(a)
+            vb = onlineShown(b)
         } else if (peerSortKey === 'rpc') {
             va = a.rpc_url ? 1 : 0
             vb = b.rpc_url ? 1 : 0
@@ -793,17 +874,18 @@ export function renderNodeLists() {
             tr2.appendChild(providerCell(p.provider || '', pIPPop)) // Provider
             tr2.appendChild(
                 createCell({
-                    text: peerCountText(p),
-                    className: 'full-role',
+                    text: connectedText(p),
+                    className: 'full-role peer-figure',
                 })
-            ) // Peers
+            ) // Connected
+            tr2.appendChild(peerOnlineCell(p))
             tr2.appendChild(peerRPCCell(p))
             tbody.appendChild(tr2)
         }
     }
 
     if (!valBody.rows.length) valBody.appendChild(emptyRow('no validators', 10))
-    if (!peerBody.rows.length) peerBody.appendChild(emptyRow('no peers', 6))
+    if (!peerBody.rows.length) peerBody.appendChild(emptyRow('no peers', 7))
 
     window.scrollTo(0, scrollY)
     focusPlace(focused)
@@ -833,14 +915,14 @@ export function renderNodeLists() {
          * @property {boolean | undefined} [source]
          * @property {boolean} [minimal]
          * @property {string} [dotClass]
-         * @property {string} [healthText]
-         * @property {string} [healthCls]
          * @property {string} [nodeId]
          * @property {string} [ip]
          * @property {string} [address]
          * @property {string} [country]
          * @property {string} [provider]
-         * @property {string} [peers]
+         * @property {string} [connected]
+         * @property {string} [online]
+         * @property {string} [firstSeen]
          * @property {string} [vp]
          * @property {boolean | null} [spof]
          * @property {string} [missed100]
@@ -858,12 +940,14 @@ export function renderNodeLists() {
          */
         /**
          * A card's value: its text, or its node; its class; whether it
-         * takes a row of its own; the rows of its popover.
+         * takes a row of its own; whether it wraps, rather than clip, in
+         * a narrow column; the rows of its popover.
          * @typedef {object} CardValue
          * @property {string | undefined} [text]
          * @property {Node | undefined} [node]
          * @property {string | undefined} [cls]
          * @property {boolean} [row]
+         * @property {boolean} [wrap]
          * @property {PopRow[] | null | undefined} [split]
          */
         /**
@@ -885,11 +969,7 @@ export function renderNodeLists() {
                 dot.style.cssText =
                     'display:inline-block;width:7px;height:7px;border-radius:50%;margin-right:4px'
                 dot.style.background =
-                    data.dotClass === 'green'
-                        ? 'var(--green)'
-                        : data.dotClass === 'red'
-                          ? 'var(--red)'
-                          : 'var(--yellow)'
+                    data.dotClass === 'green' ? 'var(--green)' : 'var(--fg2)'
                 nameSpan.appendChild(dot)
             }
             nameSpan.appendChild(
@@ -900,11 +980,6 @@ export function renderNodeLists() {
             if (data.isUs || data.source)
                 nameSpan.appendChild(mkEl('span', ' (source)', 'source-tag'))
             top.appendChild(nameSpan)
-            if (data.healthText) {
-                const healthSpan = mkEl('span', data.healthText, data.healthCls)
-                healthSpan.style.fontSize = '11px'
-                top.appendChild(healthSpan)
-            }
             card.appendChild(top)
 
             // KV body
@@ -912,11 +987,16 @@ export function renderNodeLists() {
             kv.className = 'peer-card-kv'
             /** @type {Array<[string, string | CardValue]>} */
             const fields = data.minimal
-                ? [
+                ? // A peer's: pairs, then first seen, too long for a
+                  // pair, on its own row. Connected and online wrap
+                  // in the narrow columns of cards two abreast.
+                  [
                       ['node id', data.nodeId ? shortAddr(data.nodeId) : '-'],
                       ['country', data.country || '-'],
                       ['provider', data.provider || '-'],
-                      ['peers', data.peers || '-'],
+                      ['connected', { text: data.connected, wrap: true }],
+                      ['online 30d', { text: data.online, wrap: true }],
+                      ['first seen', { text: data.firstSeen, row: true }],
                   ]
                 : // A validator's: signing on its own row, then
                   // pairs, the missed counts on the left.
@@ -963,7 +1043,13 @@ export function renderNodeLists() {
                     else fv.textContent = fval.text || '-'
                     if (fval.cls) fv.className += ' ' + fval.cls
                     else if (!fval.node) fv.style.color = 'var(--fg2)'
-                    if (fval.row) fv.style.gridColumn = '2 / -1'
+                    // A value on a row of its own starts the row, its
+                    // label in the first column, and spans the rest.
+                    if (fval.row) {
+                        fk.style.gridColumn = '1'
+                        fv.style.gridColumn = '2 / -1'
+                    }
+                    if (fval.wrap) fv.style.whiteSpace = 'normal'
                     if (fval.split) popRows(fv, 'last 100 blocks', fval.split)
                 } else {
                     fv.textContent = fval || '-'
@@ -974,8 +1060,9 @@ export function renderNodeLists() {
             card.appendChild(kv)
 
             // Footer (RPC): when the peer's RPC answered, a link
-            // to its status page, opening in a tab that cannot
-            // reach the dashboard (the page is the peer's).
+            // to its status page reading its endpoint, opening in
+            // a tab that cannot reach the dashboard (the page is
+            // the peer's); "closed" otherwise.
             if (data.rpcText) {
                 const footer = data.rpcUrl
                     ? newTabLink(data.rpcUrl + '/status', 'peer-card-footer')
@@ -1086,7 +1173,7 @@ export function renderNodeLists() {
         // Peers (full nodes, sentries)
         if (otherPeers.length > 0) {
             for (const p of otherPeers) {
-                const reachable = !!p.rpc_url
+                const rpcOpen = !!p.rpc_url
                 peerContainer.appendChild(
                     makeCard({
                         key: cardKey(p),
@@ -1094,9 +1181,7 @@ export function renderNodeLists() {
                         name: p.moniker || shortAddr(p.val_address || ''),
                         isUs: false,
                         minimal: true,
-                        dotClass: reachable ? 'green' : 'yellow',
-                        healthText: reachable ? 'reachable' : 'unreachable',
-                        healthCls: reachable ? 'ok' : '',
+                        dotClass: rpcOpen ? 'green' : 'grey',
                         nodeId: p.node_id || '',
                         ip: p.external_address || p.remote_ip || '-',
                         country: p.country
@@ -1107,10 +1192,12 @@ export function renderNodeLists() {
                         provider: p.provider || '-',
                         fullAddress: p.val_address || '',
                         pubKey: p.val_pubkey || '',
-                        peers: peerCountText(p),
+                        connected: connectedText(p),
+                        online: onlineText(p),
+                        firstSeen: p.presence ? firstSeenText(p.presence) : '-',
                         rpcUrl: p.rpc_url || '',
-                        rpcText: reachable ? '\u2713 ' + p.rpc_url : '\u2014',
-                        rpcCls: reachable ? 'ok' : 'fg2',
+                        rpcText: p.rpc_url || 'closed',
+                        rpcCls: rpcOpen ? 'ok' : 'fg2',
                     })
                 )
             }

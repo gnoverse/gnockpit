@@ -2,6 +2,7 @@ package node
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/base64"
 	"encoding/json"
@@ -191,17 +192,21 @@ func (s *Status) Head() (ChainHead, error) {
 	return h, nil
 }
 
-// GetNetInfo fetches /net_info and returns the peer list.
+// GetNetInfo fetches /net_info and returns the peer list, with each peer's
+// connection time. A connection duration that does not parse fails the read.
 func (c *Client) GetNetInfo(ctx context.Context) ([]Peer, error) {
 	var result struct {
-		NPeers string `json:"n_peers"`
-		Peers  []struct {
+		Peers []struct {
 			NodeInfo struct {
 				Moniker    string `json:"moniker"`
 				ID         string `json:"id"`
 				NetAddress string `json:"net_address"`
 			} `json:"node_info"`
-			RemoteIP string `json:"remote_ip"`
+			RemoteIP         string `json:"remote_ip"`
+			ConnectionStatus struct {
+				// amino writes a time.Duration as seconds with an "s" suffix.
+				Duration string `json:"Duration"`
+			} `json:"connection_status"`
 		} `json:"peers"`
 	}
 	if err := c.rpcGetJSON(ctx, "/net_info", &result); err != nil {
@@ -215,11 +220,24 @@ func (c *Client) GetNetInfo(ctx context.Context) ([]Peer, error) {
 		if nodeID == "" {
 			nodeID = nodeIDFromNetAddress(p.NodeInfo.NetAddress)
 		}
+		var connected time.Duration
+		if s := p.ConnectionStatus.Duration; s != "" {
+			// A peer without a node id is named by its moniker, else its IP.
+			name := cmp.Or(nodeID, p.NodeInfo.Moniker, p.RemoteIP)
+			var err error
+			if connected, err = time.ParseDuration(s); err != nil {
+				return nil, fmt.Errorf("peer %s connection duration %q: %w", name, s, err)
+			}
+			if connected < 0 {
+				return nil, fmt.Errorf("peer %s connection duration %q is negative", name, s)
+			}
+		}
 		peers[i] = Peer{
 			Moniker:         p.NodeInfo.Moniker,
 			RemoteIP:        p.RemoteIP,
 			NodeID:          nodeID,
 			ExternalAddress: hostFromNetAddress(p.NodeInfo.NetAddress),
+			ConnectedMs:     connected.Milliseconds(),
 		}
 	}
 	return peers, nil
@@ -243,19 +261,6 @@ func nodeIDFromNetAddress(na string) string {
 		return na[:at]
 	}
 	return ""
-}
-
-// GetNPeers fetches /net_info and returns just the peer count.
-func (c *Client) GetNPeers(ctx context.Context) (int, error) {
-	var result struct {
-		NPeers string `json:"n_peers"`
-	}
-	if err := c.rpcGetJSON(ctx, "/net_info", &result); err != nil {
-		return 0, err
-	}
-	var n int
-	fmt.Sscanf(result.NPeers, "%d", &n)
-	return n, nil
 }
 
 // GetValidators fetches /validators and returns the validator set.
@@ -866,7 +871,7 @@ func QueryAllPeers(ctx context.Context, peers []Peer, rpcPort string, timeout ti
 		go func(idx int, peer Peer) {
 			defer wg.Done()
 
-			// Bound all per-peer RPC work (probe + peer count + consensus) to one
+			// Bound all per-peer RPC work (probe + consensus) to one
 			// timeout budget so a single slow peer can't stall the snapshot.
 			pctx, cancel := context.WithTimeout(ctx, timeout)
 			defer cancel()
@@ -909,11 +914,6 @@ func QueryAllPeers(ctx context.Context, peers []Peer, rpcPort string, timeout ti
 				}
 			} else {
 				results[idx].Role = "full"
-			}
-
-			// Reuse the working client for the peer's own peer count.
-			if n, err := pc.GetNPeers(pctx); err == nil {
-				results[idx].NPeers = n
 			}
 
 			if withConsensus {

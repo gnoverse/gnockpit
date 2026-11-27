@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"log"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -226,10 +225,7 @@ func TestETAScheduledHaltWithoutEstimate(t *testing.T) {
 	// The halt is known even when its estimate is not: without a query, the
 	// estimate's error names the halt; a question of its own gets the error
 	// alone. The status is the estimate's.
-	var logs bytes.Buffer
-	prev := log.Writer()
-	log.SetOutput(&logs)
-	t.Cleanup(func() { log.SetOutput(prev) })
+	logs := captureLog(t)
 	failing := func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusInternalServerError) }
 	for _, tc := range []struct {
 		name   string
@@ -361,10 +357,7 @@ func TestETAReachedBlockTimeIsCached(t *testing.T) {
 
 func TestETAReachedBlockTimeFailures(t *testing.T) {
 	t.Run("RPC error", func(t *testing.T) {
-		var logs bytes.Buffer
-		prev := log.Writer()
-		log.SetOutput(&logs)
-		t.Cleanup(func() { log.SetOutput(prev) })
+		logs := captureLog(t)
 		s := etaServerWithRPC(t, tipHeight, nil, func(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusInternalServerError)
 		})

@@ -354,3 +354,45 @@ func TestStatusValidatorFields(t *testing.T) {
 		}
 	}
 }
+
+func TestStatusPeersCarryConnectionAndPresence(t *testing.T) {
+	s := statusTestServer(t)
+	now := time.Date(2026, 7, 3, 12, 0, 0, 0, time.UTC)
+	snap := &node.Snapshot{
+		Status: &node.Status{NodeInfo: node.NodeInfo{Network: "test-x"}},
+		Peers: []node.Peer{
+			{
+				NodeID: "n1", ConnectedMs: 90000,
+				Presence: &node.Presence{Listed: 2, Polls: 3, FirstSeen: "2026-11-17T09:30:00Z"},
+			},
+			{NodeID: "n2"},
+		},
+	}
+
+	raw, err := json.Marshal(s.buildStatusReport(snap, now))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var body struct {
+		Peers []json.RawMessage `json:"peers"`
+	}
+	if err := json.Unmarshal(raw, &body); err != nil {
+		t.Fatal(err)
+	}
+	if len(body.Peers) != 2 {
+		t.Fatalf("peers = %d, want 2: %s", len(body.Peers), raw)
+	}
+	for _, want := range []string{
+		`"connected_ms":90000`,
+		`"presence":{"listed":2,"polls":3,"first_seen":"2026-11-17T09:30:00Z","from_start":false}`,
+	} {
+		if !strings.Contains(string(body.Peers[0]), want) {
+			t.Errorf("peer with figures = %s, want it to contain %s", body.Peers[0], want)
+		}
+	}
+	for _, key := range []string{`"connected_ms"`, `"presence"`} {
+		if strings.Contains(string(body.Peers[1]), key) {
+			t.Errorf("peer without figures = %s, want no %s", body.Peers[1], key)
+		}
+	}
+}

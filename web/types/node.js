@@ -48,6 +48,7 @@
  * @property {string} [p2p_address]
  * @property {string} [external_address]
  * @property {string} [rpc_url]
+ * @property {number} [connected_ms]
  * @property {boolean} [catching_up]
  * @property {string} [val_address]
  * @property {string} [val_pubkey]
@@ -56,9 +57,6 @@
  * @property {string} [round]
  * @property {string} [step]
  * @property {string} [error]
- * @property {string} [first_seen]
- * @property {string} [last_seen]
- * @property {number} [n_peers]
  * @property {string} [peer_height]
  * @property {string} [peer_round]
  * @property {string} [peer_step]
@@ -73,6 +71,17 @@
  * @property {string} [as_org]
  * @property {string} [provider]
  * @property {boolean} [source]
+ * @property {Presence} [presence]
+ */
+
+/**
+ * node.Presence (node/types.go): how often gnockpit's polls listed a peer
+ * over the window.
+ * @typedef {object} Presence
+ * @property {number} listed
+ * @property {number} polls
+ * @property {string} first_seen
+ * @property {boolean} from_start
  */
 
 /**

@@ -34,7 +34,8 @@ freshest reachable source each cycle, while peers are unioned across all sources
 and deduplicated by node ID — so connecting to a few well-peered seed nodes
 surfaces far more of the network than any single node sees. The configured
 endpoints appear in the peer list flagged `(source)`. When conflicting values
-appear for the same peer, the earlier `-rpc` in flag order wins.
+appear for the same peer, the earlier `-rpc` in flag order wins, except a peer's
+connection time, which is the longest any source reports.
 
 ## Flags
 
@@ -47,7 +48,7 @@ appear for the same peer, the earlier `-rpc` in flag order wins.
 | `--read-header-timeout`   | `10s`                      | How long a client may take to send a request's headers before gnockpit closes its connection unanswered; `0` for none, a negative value refused                                                                                                                                                                                                                                                                  |
 | `-interval`               | `5s`                       | Dashboard refresh interval                                                                                                                                                                                                                                                                                                                                                                                       |
 | `-v`, `--verbose`         | false                      | Verbose HTTP logging: each request to the node                                                                                                                                                                                                                                                                                                                                                                   |
-| `--db-path`               | `/tmp/gnockpit.db`         | SQLite database for push notifications, the block history, block-ETA history and the published rankings; keep it on a persistent path (see Push Notifications, Block history, Block ETA, Ranking)                                                                                                                                                                                                                |
+| `--db-path`               | `/tmp/gnockpit.db`         | SQLite database for push notifications, the block history, block-ETA history, peer presence and the published rankings; keep it on a persistent path (see Push Notifications, Block history, Block ETA, Peers, Ranking)                                                                                                                                                                                          |
 | `--history-pace`          | `1s`                       | Wait between the batches that fill the block history, back to genesis and up to the head after downtime; `0` for none (see Block history)                                                                                                                                                                                                                                                                        |
 | `--history-batch`         | `100`                      | Commits asked in one JSON-RPC batch while filling the block history; halved until restart when the first `-rpc` refuses a batch, for 10 minutes when one times out; at `1`, the backfill never completes at a node's oldest block (see Block history)                                                                                                                                                            |
 | `--chain-stuck-secs`      | `30`                       | Seconds without a new block before the chain-stuck alert fires                                                                                                                                                                                                                                                                                                                                                   |
@@ -361,6 +362,45 @@ A configured source reached over `localhost` or a private address has no public
 IP of its own; gnockpit then uses its own public egress IP for that source's map
 location, which is accurate when gnockpit runs alongside the node.
 
+## Peers
+
+The Peers card lists the peers gnockpit's sources are connected to, the
+sources' own nodes among them, tagged (source), unless `--hide-sources` hides
+them. The validators' own nodes show in the Validators card instead, and
+departed peers are not listed. Beside each peer's name, node ID, country and
+provider:
+
+- **Connected**: how long the peer has been connected, from each source's
+  `/net_info`: a peer on several sources shows the longest of their
+  connections, which gnockpit's own restarts do not reset. Rounded down, in its
+  two largest units (`3 d 4 h`, `5 h 12 min`, `12 min`, `< 1 min`); `-` when no
+  source reports one.
+- **Online (30 d)**: the share of gnockpit's polls over the last 30 days (today
+  and the 29 UTC days before) in which any source listed the peer, rounded down
+  to a tenth of a percent. A poll in which no source's `/net_info` answered is
+  not counted; a peer only a failing source lists is not listed in that poll. A
+  source's own row counts the polls in which that source answered, so it reads
+  near 100 %.
+  Its popover gives **first seen**: the first stored poll that listed the peer,
+  to the UTC minute, or `≤ <day>` when that poll was the chain's first stored
+  one, the peer perhaps there before. `-` when gnockpit
+  could not read its store, for a peer with no node ID, when no poll falls in
+  the window, and for a peer never listed.
+- **RPC**: `open`, a link to the peer's `/status`, when one of its RPC
+  endpoints gnockpit probes answered (its popover gives the endpoint and its
+  height); `closed` otherwise.
+
+On a phone each peer is a card with the same values, first seen included, its
+dot green when its RPC is open and grey when closed, and an RPC line: the
+endpoint, linking its `/status`, or `closed`.
+
+gnockpit keeps the polls in its SQLite database (`--db-path`), per chain: for
+each UTC day the number of polls and how many listed each node ID, kept 35 days
+(the 30-day window and a margin); each node ID's first listing and the chain's
+first stored poll are kept for good. On a temporary `--db-path` (the `/tmp`
+default) a reboot erases the polls, so Online and first seen start over: keep
+it on a persistent path.
+
 ## Block history
 
 gnockpit records every block since genesis in the SQLite database
@@ -447,7 +487,7 @@ calendars. Each bar or day has a popover with its numbers.
 Every tooltip in gnockpit is one popover, in two forms: text (the column headers,
 every ⓘ and the buttons' hints) and rows (a title, then label / value rows, with a colour swatch
 where a colour means something), for the Recent Blocks boxes, the address and
-node ID cells, the peer RPC ✓, the provider's IP, the map's dots, the Missed last
+node ID cells, a peer's Online share and RPC link, the provider's IP, the map's dots, the Missed last
 100 split, every chart and the Ranking view's values. Hover on a desktop, tap on a phone.
 
 ## Ranking
@@ -756,9 +796,17 @@ Each peer and validator has `name`, and where its IP resolves, `country`,
 `city`, `lat`/`lon` and cloud `provider`; a validator's are its matched peer's.
 Unknown fields are omitted; `lat` and `lon` come together, only when the IP is
 located, and one of them can be 0 (the equator, the prime meridian). Each peer
-also has `node_id`, `n_peers` (its own peer count, omitted when its RPC did not
-give one or gives 0) and `reachable` (its RPC answered). Each validator also
-has:
+also has `node_id`, `reachable` (its RPC answered), `connected_ms` (the
+longest current connection to it among the sources, in ms; omitted when no
+source reports one) and `presence`: `listed` of `polls`, the gnockpit polls over
+the last 30 UTC days (today and the 29 before) in which any source listed the peer; `first_seen`
+(the first stored poll that listed it, RFC 3339 in UTC to the second, which can predate the window: first
+listings are kept for good) and `from_start` (that poll was the chain's first
+stored one, so the peer may have been there before). A poll counts only when at
+least one source's `/net_info` answered; a peer only a failing source lists is
+not listed in that poll. `presence` is omitted when
+gnockpit could not read its store, for a peer with no node id, when no
+poll falls in the window, and for a peer never listed. Each validator also has:
 
 | Field                                            | Content                                                                                                |
 | ------------------------------------------------ | ------------------------------------------------------------------------------------------------------ |
@@ -897,7 +945,7 @@ polled its sources, then an `update` at each refresh (`-interval`). Both are
 | --------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `time`    | When the sources were polled: `HH:MM:SS`, in the server's local time.                                                                                                                                                                                                                                |
 | `status`  | The freshest source's `/status`; null while every source is down.                                                                                                                                                                                                                                    |
-| `peers`   | Every source's peers, merged, located as in `/api/status`; `[]` when the sources see no peer, null while every source is down.                                                                                                                                                                       |
+| `peers`   | Every source's peers, merged, located as in `/api/status`, with each peer's `connected_ms` and `presence`; `[]` when the sources see no peer, null while every source is down.                                                                                                                       |
 | `votes`   | The round in progress: `height`, `round`, `step`, `proposer` and each validator's votes and signing figures; null without a consensus state.                                                                                                                                                         |
 | `checks`  | `apphash_last`, the freshest source's `val_address` and `val_pubkey`, `hide_sources`, and `system`: `node_time`, the server's time as the message is built (RFC 3339 UTC to the millisecond; the dashboard sets its clock by it and warns when the drift rounds to 3 s or more), and `genesis_time`. |
 | `signing` | The signing of the last 100 blocks: `recent_blocks`, `validator_signing`, the active count and the margin; left out without it.                                                                                                                                                                      |
@@ -907,7 +955,7 @@ polled its sources, then an `update` at each refresh (`-interval`). Both are
 - Live WebSocket dashboard with real-time updates
 - Multi-source consolidation — query several RPC endpoints; peers unioned & deduped, freshest source drives chain state
 - Consensus monitoring — height, round, step, prevotes, precommits per validator
-- Peer management — validator detection, health status, RPC reachability
+- Peer management — validator detection, connection time, 30-day presence, RPC reachability
 - Network map — IP-geolocated peers, per-country list, Country + cloud-Provider columns
 - Signing stats — per-validator blocks missed in the last 100 (absent or other block; nil votes shown apart, counted as signed), vote delay, proposals missed in the last 24 h, and missed-block counts over 1h/24h/7d/30d/total
 - Validator page — a validator's status, valopers profile, uptime, proposals, recoveries after restarts, vote delay and timeline, with what the scoring counts (`/api/validator`)

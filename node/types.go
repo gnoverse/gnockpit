@@ -108,6 +108,7 @@ type Peer struct {
 	// From net_info node_info (advertised identity).
 	ExternalAddress string `json:"external_address,omitempty"` // advertised host from node_info.net_address
 	RPCURL          string `json:"rpc_url,omitempty"`          // peer RPC endpoint that answered, if any
+	ConnectedMs     int64  `json:"connected_ms,omitempty"`     // longest current connection to the peer among the sources, in ms
 	// Populated by network/consensus queries
 	CatchingUp bool   `json:"catching_up,omitempty"`
 	ValAddress string `json:"val_address,omitempty"` // validator address if known
@@ -117,9 +118,6 @@ type Peer struct {
 	Round      string `json:"round,omitempty"`
 	Step       string `json:"step,omitempty"`
 	Error      string `json:"error,omitempty"`
-	FirstSeen  string `json:"first_seen,omitempty"`
-	LastSeen   string `json:"last_seen,omitempty"`
-	NPeers     int    `json:"n_peers,omitempty"`
 	// From dump_consensus_state peer data
 	PeerHeight     string `json:"peer_height,omitempty"`
 	PeerRound      string `json:"peer_round,omitempty"`
@@ -140,6 +138,10 @@ type Peer struct {
 	// Source is true when this peer is one of gnockpit's own configured RPC
 	// endpoints (a "source" node), matched by node ID.
 	Source bool `json:"source,omitempty"`
+	// Presence is how often gnockpit's polls listed the peer; nil without a
+	// store or when it could not be read, for a peer with no node id, when no
+	// poll falls in the window, and for a peer never listed.
+	Presence *Presence `json:"presence,omitempty"`
 }
 
 // Validator represents a validator from the validator set.
@@ -265,6 +267,9 @@ type Snapshot struct {
 	Signing        *SigningStats   `json:"signing,omitempty"`
 	Timestamp      time.Time       `json:"timestamp"`
 	Error          string          `json:"error,omitempty"`
+	// PeersRead is whether at least one source's /net_info answered in this
+	// cycle, so Peers lists the network and not only the sources themselves.
+	PeersRead bool `json:"-"`
 }
 
 // VotesReport shows the prevote/precommit state.
@@ -278,4 +283,12 @@ type VotesReport struct {
 	Validators     []VoteInfo       `json:"validators"`
 	MissedSince    string           `json:"missed_since,omitempty"` // RFC3339; oldest block still in history (how far back missed counts reach)
 	Timestamp      time.Time        `json:"timestamp"`
+}
+
+// Presence is how often gnockpit's polls listed a peer over the window.
+type Presence struct {
+	Listed    int    `json:"listed"`     // polls in the window that listed the peer
+	Polls     int    `json:"polls"`      // polls in the window
+	FirstSeen string `json:"first_seen"` // RFC 3339 UTC, to the second: the first stored poll that listed the peer
+	FromStart bool   `json:"from_start"` // that poll was the chain's first stored poll
 }

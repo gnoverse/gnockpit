@@ -453,26 +453,30 @@ func TestPageShownValuesFollowTheirData(t *testing.T) {
 			},
 		},
 		{
-			name:   "peers of a peer",
-			change: peer("eu-node", func(p *node.Peer) { p.NPeers = 9 }),
-			table:  func(e *pageEnv) { e.must(e.expect(peerEntry(desktop, "eu-node") + " td:nth-child(5)").ToHaveText("9")) },
-			card:   func(e *pageEnv) { e.must(e.expect(cardValue(peerEntry(phone, "eu-node"), "peers")).ToHaveText("9")) },
+			name:   "connection time",
+			change: peer("eu-node", func(p *node.Peer) { p.ConnectedMs = 7_200_000 }),
+			table: func(e *pageEnv) {
+				e.must(e.expect(peerEntry(desktop, "eu-node") + " td:nth-child(5)").ToHaveText("2 h 0 min"))
+			},
+			card: func(e *pageEnv) {
+				e.must(e.expect(cardValue(peerEntry(phone, "eu-node"), "connected")).ToHaveText("2 h 0 min"))
+			},
 		},
 		{
 			name:   "RPC",
 			change: peer("full-norpc", func(p *node.Peer) { p.RPCURL = "http://203.0.113.14:26657" }),
 			table: func(e *pageEnv) {
-				e.must(e.expect(peerEntry(desktop, "full-norpc") + " td:nth-child(6) .info-btn").ToHaveCount(1))
+				e.must(e.expect(peerEntry(desktop, "full-norpc") + " td:nth-child(7) .info-btn").ToHaveCount(1))
 			},
 			card: func(e *pageEnv) {
-				e.must(e.expect(peerEntry(phone, "full-norpc") + " .peer-card-rpc-val").ToHaveText("✓ http://203.0.113.14:26657"))
+				e.must(e.expect(peerEntry(phone, "full-norpc") + " .peer-card-rpc-val").ToHaveText("http://203.0.113.14:26657"))
 			},
 		},
 		{
 			name:   "RPC height",
 			change: peer("eu-node", func(p *node.Peer) { p.Height = strconv.Itoa(pageHeight + 5) }),
 			table: func(e *pageEnv) {
-				e.must(e.expect(peerEntry(desktop, "eu-node")+" td:nth-child(6) .info-btn").ToHaveAttribute("data-pop-rows",
+				e.must(e.expect(peerEntry(desktop, "eu-node")+" td:nth-child(7) .info-btn").ToHaveAttribute("data-pop-rows",
 					regexp.MustCompile(fmt.Sprintf(`"%d \(synced\)"`, pageHeight+5))))
 			},
 		},
@@ -653,7 +657,6 @@ func TestPageUnshownChangesKeepTheTables(t *testing.T) {
 				}
 				for i := range next.Peers {
 					next.Peers[i].PeerHeight, next.Peers[i].PeerRound, next.Peers[i].PeerStep = strconv.Itoa(pageHeight+2), "0", "6"
-					next.Peers[i].LastSeen = pageNow.Format(time.RFC3339)
 				}
 				next.Status.SyncInfo.LatestBlockTime = pageNow.Add(-time.Second).Format(time.RFC3339Nano)
 				e.publish(next)
@@ -674,15 +677,15 @@ func TestPageUnshownChangesKeepTheTables(t *testing.T) {
 // again.
 func TestPageMapKeepsItsDrawing(t *testing.T) {
 	// liveWorld is the healthy network seeing the world's peers, the first
-	// with n peers of its own: the Peers table shows n, the map does not.
+	// connected for n minutes: the Peers table shows it, the map does not.
 	liveWorld := func(n int) *node.Snapshot {
 		snap := healthySnapshot()
 		snap.Peers = worldPeers()
-		snap.Peers[0].NPeers = n
+		snap.Peers[0].ConnectedMs = (time.Duration(n) * time.Minute).Milliseconds()
 		return snap
 	}
 	const list = "#map-country-list"
-	firstPeers := peerEntry(desktop, "node-us-0") + " td:nth-child(5)"
+	firstConnected := peerEntry(desktop, "node-us-0") + " td:nth-child(5)"
 	t.Run("popover", func(t *testing.T) {
 		sc := healthyNetwork()
 		sc.snap = liveWorld(1)
@@ -693,7 +696,7 @@ func TestPageMapKeepsItsDrawing(t *testing.T) {
 		old, err := dot.ElementHandle()
 		e.must(err)
 		e.publish(liveWorld(2))
-		e.must(e.expect(firstPeers).ToHaveText("2"))
+		e.must(e.expect(firstConnected).ToHaveText("2 min"))
 		if v, err := old.Evaluate(`(el) => el.isConnected`); err != nil || v != true {
 			t.Fatalf("the cluster is out of the page (%v, %v): the map was drawn again", v, err)
 		}
@@ -712,7 +715,7 @@ func TestPageMapKeepsItsDrawing(t *testing.T) {
 			t.Fatalf("the wheel left the list at scrollTop %d, want 120: %v", liveScrollTop(e, list), err)
 		}
 		e.publish(liveWorld(2))
-		e.must(e.expect(firstPeers).ToHaveText("2"))
+		e.must(e.expect(firstConnected).ToHaveText("2 min"))
 		if got := liveScrollTop(e, list); got != 120 {
 			t.Errorf("the list scrolled to %d after a message, want 120", got)
 		}

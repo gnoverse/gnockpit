@@ -1,6 +1,8 @@
 package web
 
 import (
+	"bytes"
+	"database/sql"
 	"encoding/json"
 	"io"
 	"log"
@@ -12,6 +14,7 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
+	_ "modernc.org/sqlite"
 
 	"github.com/gnoverse/gnockpit/node"
 )
@@ -25,6 +28,32 @@ func newSeamServer(t *testing.T) *Server {
 	srv := NewServer(client, "127.0.0.1:0", time.Hour)
 	srv.ChainStuckSecs = 30
 	return srv
+}
+
+// openTestDB opens an empty in-memory database, closed with the test.
+func openTestDB(t *testing.T) *sql.DB {
+	t.Helper()
+	db, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	db.SetMaxOpenConns(1)
+	t.Cleanup(func() {
+		if err := db.Close(); err != nil {
+			t.Errorf("close the test database: %v", err)
+		}
+	})
+	return db
+}
+
+// captureLog collects what the standard logger writes until the test ends.
+func captureLog(t *testing.T) *bytes.Buffer {
+	t.Helper()
+	var logs bytes.Buffer
+	prev := log.Writer()
+	log.SetOutput(&logs)
+	t.Cleanup(func() { log.SetOutput(prev) })
+	return &logs
 }
 
 func seamSnapshot(height string, blockTime time.Time) *node.Snapshot {

@@ -2,15 +2,12 @@ package web
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
 	"testing"
 	"time"
-
-	_ "modernc.org/sqlite"
 
 	"github.com/gnoverse/gnockpit/blocks"
 	"github.com/gnoverse/gnockpit/node"
@@ -25,16 +22,7 @@ const (
 // closed with the test.
 func openBlocksStore(t *testing.T) *blocks.Store {
 	t.Helper()
-	db, err := sql.Open("sqlite", ":memory:")
-	if err != nil {
-		t.Fatal(err)
-	}
-	db.SetMaxOpenConns(1)
-	t.Cleanup(func() {
-		if err := db.Close(); err != nil {
-			t.Errorf("close the block history: %v", err)
-		}
-	})
+	db := openTestDB(t)
 	s, err := blocks.NewStore(context.Background(), db)
 	if err != nil {
 		t.Fatal(err)

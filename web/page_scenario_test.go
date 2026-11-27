@@ -17,6 +17,7 @@ import (
 
 	"github.com/gnoverse/gnockpit/blocks"
 	"github.com/gnoverse/gnockpit/node"
+	"github.com/gnoverse/gnockpit/presence"
 	"github.com/gnoverse/gnockpit/ranking"
 )
 
@@ -43,6 +44,9 @@ type scenario struct {
 	// ranking turns the daily ranking on over the block history; nil leaves
 	// it off.
 	ranking *pageRanking
+	// presence writes the polls the peer presence store holds; nil leaves the
+	// store off.
+	presence func(t *testing.T, s *presence.Store)
 	// chainStuckSecs and maxMissedInARow are --chain-stuck-secs and
 	// --max-missed-in-a-row; main.go's defaults when zero.
 	chainStuckSecs, maxMissedInARow int
@@ -113,6 +117,11 @@ func newPageServer(t *testing.T, sc *scenario, clock *serverClock) *Server {
 	if sc.push {
 		srv.PushManager = newPushManager(t, srv.ChainStuckSecs, srv.MaxMissedInARow)
 	}
+	if sc.presence != nil {
+		store := openPresenceStore(t)
+		sc.presence(t, store)
+		srv.Presence = store
+	}
 	if sc.snap != nil {
 		publishSnapshot(t.Context(), srv, sc.snap)
 	}
@@ -129,7 +138,7 @@ func newPagePublisher(t *testing.T, sc *scenario, srv *Server, clock *serverCloc
 	if srv.Blocks == nil {
 		t.Fatal("newPagePublisher: the ranking reads the block history, which the scenario leaves disabled: set seed")
 	}
-	days, err := ranking.NewDayStore(t.Context(), openRankingDB(t))
+	days, err := ranking.NewDayStore(t.Context(), openTestDB(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -334,32 +343,39 @@ func healthyConsensus() *node.ConsensusState {
 
 // healthyPeers are the source's peers, sorted by moniker as fetchSnapshot
 // sorts them: bravo and charlie are validators, sentry-1 is a source,
-// full-norpc answers no RPC, eu-node and us-node are located.
+// full-norpc answers no RPC, eu-node and us-node are located. The sources
+// report connections to bravo and charlie of 4 d, to eu-node of
+// 5 h 12 min, to full-norpc of 12 min and to us-node of under a minute,
+// none to sentry-1.
 func healthyPeers() []node.Peer {
-	seen := pageNow.Format(time.RFC3339)
 	peer := func(moniker, ip string) node.Peer {
 		return node.Peer{
 			Moniker: moniker, RemoteIP: ip, NodeID: nodeID(moniker), P2PAddress: nodeID(moniker) + "@" + ip + ":26656",
 			RPCURL: "http://" + ip + ":26657", Role: "full", Height: strconv.Itoa(pageHeight), Round: "0", Step: "4",
-			FirstSeen: seen, LastSeen: seen, NPeers: 5,
 		}
 	}
+	fourDays := (4 * 24 * time.Hour).Milliseconds()
 	bravo := peer("bravo", "203.0.113.11")
 	bravo.Role, bravo.ValAddress, bravo.ValPubKey = "val", valBravo.address(), valBravo.pubKey().Value
+	bravo.ConnectedMs = fourDays
 	charlie := peer("charlie", "203.0.113.12")
 	charlie.Role, charlie.ValAddress, charlie.ValPubKey = "val", valCharlie.address(), valCharlie.pubKey().Value
+	charlie.ConnectedMs = fourDays
 	eu := peer("eu-node", "198.51.100.21")
 	eu.Lat, eu.Lon, eu.City, eu.Country = float64Ptr(50.11), float64Ptr(8.68), "Frankfurt am Main", "DE"
 	eu.ASN, eu.ASOrg = 24940, "Hetzner Online GmbH"
 	eu.Provider = node.Provider(eu.ASOrg)
+	eu.ConnectedMs = 18_750_000
 	noRPC := peer("full-norpc", "203.0.113.14")
 	noRPC.RPCURL = ""
+	noRPC.ConnectedMs = 779_000
 	sentry := peer("sentry-1", "203.0.113.13")
 	sentry.Source = true
 	us := peer("us-node", "198.51.100.22")
 	us.Lat, us.Lon, us.City, us.Country = float64Ptr(39.04), float64Ptr(-77.49), "Ashburn", "US"
 	us.ASN, us.ASOrg = 16509, "AMAZON-02"
 	us.Provider = node.Provider(us.ASOrg)
+	us.ConnectedMs = 59_000
 	return []node.Peer{bravo, charlie, eu, noRPC, sentry, us}
 }
 

@@ -189,12 +189,6 @@
             .dot.green {
                 background: var(--green);
             }
-            .dot.red {
-                background: var(--red);
-            }
-            .dot.yellow {
-                background: var(--yellow);
-            }
             #error-banner {
                 display: none;
                 background: rgba(248, 81, 73, 0.1);
@@ -336,15 +330,18 @@
                 opacity: 0.5;
                 user-select: none;
             }
-            /* An ⓘ or ✓ that is a link reads as its symbol. */
+            /* An ⓘ or a word that is a link reads as itself. */
             a.info-btn {
                 text-decoration: none;
             }
-            /* The ✓ of a peer whose RPC answered: green at full strength, as
-               on its card. */
+            /* The "open" of a peer whose RPC answered: green at full
+               strength, as on its card; the cell's text at the cell's size,
+               as "closed" is, not a mark after it. */
             .info-btn.ok {
                 color: var(--green);
                 opacity: 1;
+                font-size: inherit;
+                margin-left: 0;
             }
             .info-btn:hover,
             .info-btn:focus-visible {
@@ -1367,6 +1364,13 @@
                 /* A header label longer than its column goes on two lines. */
                 .node-list-card .table-wrap th {
                     white-space: normal;
+                }
+                /* The Peers table's Connected, Online and RPC hold short
+                   figures in narrow columns: a narrower padding keeps them
+                   whole from 769 px up. */
+                .node-list-card .table-wrap .peer-figure {
+                    padding-left: 8px;
+                    padding-right: 8px;
                 }
             }
             /* ---- Click-to-copy */
@@ -2850,11 +2854,12 @@
                     <div class="table-wrap">
                         <table>
                             <colgroup>
-                                <col style="width: 22%" />
-                                <col style="width: 25%" />
+                                <col style="width: 20%" />
                                 <col style="width: 15%" />
-                                <col style="width: 18%" />
-                                <col style="width: 10%" />
+                                <col style="width: 13%" />
+                                <col style="width: 15%" />
+                                <col style="width: 16%" />
+                                <col style="width: 11%" />
                                 <col style="width: 10%" />
                             </colgroup>
                             <thead>
@@ -2889,20 +2894,32 @@
                                             Provider
                                         </button>
                                     </th>
-                                    <th data-sort="peers">
+                                    <th
+                                        data-sort="connected"
+                                        class="peer-figure"
+                                    >
                                         <button
                                             type="button"
                                             class="info-btn"
-                                            data-popover="Number of P2P peers connected to this node (from their /net_info)"
+                                            data-popover="How long the peer has been connected: its longest current connection to one of gnockpit's sources (their /net_info), which gnockpit's own restarts do not reset"
                                         >
-                                            Peers
+                                            Connected
                                         </button>
                                     </th>
-                                    <th data-sort="rpc">
+                                    <th data-sort="online" class="peer-figure">
                                         <button
                                             type="button"
                                             class="info-btn"
-                                            data-popover="Whether this peer's RPC answered; hover a reachable peer for details"
+                                            data-popover="Share of gnockpit's polls over the last 30 days (today and the 29 UTC days before, or since gnockpit began recording) in which a source listed the peer; hover a share for when gnockpit first saw the peer"
+                                        >
+                                            Online (30&nbsp;d)
+                                        </button>
+                                    </th>
+                                    <th data-sort="rpc" class="peer-figure">
+                                        <button
+                                            type="button"
+                                            class="info-btn"
+                                            data-popover="Whether one of the peer's RPC endpoints gnockpit probes answered: open links its /status (hover for the endpoint and its height), closed otherwise"
                                         >
                                             RPC
                                         </button>
@@ -2911,7 +2928,7 @@
                             </thead>
                             <tbody id="peers-body">
                                 <tr>
-                                    <td colspan="6">loading...</td>
+                                    <td colspan="7">loading...</td>
                                 </tr>
                             </tbody>
                         </table>

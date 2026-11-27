@@ -20,6 +20,7 @@ import (
 
 	"github.com/gnoverse/gnockpit/blocks"
 	"github.com/gnoverse/gnockpit/node"
+	"github.com/gnoverse/gnockpit/presence"
 	"github.com/gnoverse/gnockpit/ranking"
 	"github.com/gnoverse/gnockpit/web/icon"
 	"github.com/gnoverse/gnockpit/web/push"
@@ -100,6 +101,7 @@ type Server struct {
 	Blocks          *blocks.Store      // block history: missed-block windows and /api/history (nil = disabled)
 	BlockFill       BlockFill          // fill progress of the block history for /api/history (nil = disabled)
 	ETA             ETAView            // block-time model and scheduled halt for /api/eta (nil = disabled)
+	Presence        *presence.Store    // how often the polls listed each peer (nil = disabled)
 	Ranking         *ranking.Publisher // the daily validator ranking for /api/ranking (nil = disabled)
 	// RankingHideExcluded tells /api/ranking's readers to hide the operators
 	// left out of the ranking; the answer lists them either way.
@@ -584,18 +586,14 @@ func (s *Server) fetchSnapshot(ctx context.Context) *node.Snapshot {
 		}
 		perSource = append(perSource, raw)
 	}
+	snap.PeersRead = len(perSource) > 1
 	merged := node.MergePeers(perSource, s.Sources.NodeIDs())
 	s.Sources.FillSourceEgressIP(merged)
 	enriched := node.QueryAllPeers(ctx, merged, rpcPort, peerTimeout, false, validators, best.LogFn, best.Names)
 	sort.Slice(enriched, func(i, j int) bool {
 		return enriched[i].Moniker < enriched[j].Moniker
 	})
-	now := time.Now().Format(time.RFC3339)
 	for i := range enriched {
-		enriched[i].LastSeen = now
-		if enriched[i].FirstSeen == "" {
-			enriched[i].FirstSeen = now
-		}
 		dp := node.MatchDumpPeer(enriched[i].NodeID, enriched[i].RemoteIP, dumpByNodeID, dumpByIP)
 		if dp != nil {
 			enriched[i].PeerHeight = dp.Height
@@ -809,6 +807,7 @@ func (s *Server) publish(ctx context.Context, snap *node.Snapshot) {
 	// Both run before setSnapshot so the published snapshot is complete and
 	// immutable when a WebSocket client reads it on connect.
 	s.applyValidatorHealth(snap)
+	s.refreshPresence(ctx, snap)
 	s.setSnapshot(snap)
 	s.notifySchedule()
 	s.refreshMissed(ctx)
